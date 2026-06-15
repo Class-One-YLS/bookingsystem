@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Class One Booking Manager</title>
+  <style>
+    :root {
+      --mint: #72D0A1;
+      --mint-dark: #2f9f70;
+      --ink: #17212b;
+      --muted: #667085;
+      --line: #dbe5df;
+      --soft: #f4fbf7;
+      --panel: #ffffff;
+      --warn: #fff2c6;
+      --danger: #ffe0df;
+      --ok: #dcf8ea;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f7faf8;
+      color: var(--ink);
+    }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; border: 0; }
+    .app-shell { min-height: 100vh; display: grid; grid-template-columns: 260px minmax(0, 1fr); }
+    aside { background: var(--ink); color: #fff; padding: 24px 18px; position: sticky; top: 0; height: 100vh; }
+    .brand { display: flex; gap: 12px; align-items: center; margin-bottom: 26px; }
+    .logo { width: 44px; height: 44px; border-radius: 8px; background: var(--mint); color: var(--ink); display: grid; place-items: center; font-weight: 900; }
+    .brand strong { display: block; font-size: 16px; }
+    .brand span { color: #b9c4c0; font-size: 12px; }
+    .nav-btn { width: 100%; text-align: left; color: #cbd5d1; background: transparent; padding: 12px 14px; border-radius: 8px; margin: 4px 0; font-weight: 800; font-size: 13px; }
+    .nav-btn.active { color: var(--ink); background: var(--mint); }
+    main { padding: 24px; min-width: 0; }
+    .topbar { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 20px; }
+    h1 { margin: 0; font-size: 26px; letter-spacing: 0; }
+    h2 { margin: 0 0 14px; font-size: 18px; }
+    h3 { margin: 0 0 10px; font-size: 14px; }
+    .subtle { color: var(--muted); font-size: 13px; }
+    .grid { display: grid; gap: 16px; }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .panel, .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+    .panel { padding: 18px; margin-bottom: 16px; }
+    .card { padding: 14px; }
+    label { display: block; color: var(--muted); font-weight: 800; font-size: 11px; margin-bottom: 6px; text-transform: uppercase; }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      padding: 10px 11px;
+      min-height: 40px;
+    }
+    textarea { min-height: 88px; resize: vertical; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .row.spread { justify-content: space-between; }
+    .btn { background: var(--ink); color: #fff; border-radius: 8px; min-height: 40px; padding: 0 14px; font-weight: 900; font-size: 12px; }
+    .btn.mint { background: var(--mint); color: var(--ink); }
+    .btn.ghost { background: #edf4f0; color: var(--ink); }
+    .btn.danger { background: #e5484d; color: #fff; }
+    .btn.small { min-height: 32px; padding: 0 10px; font-size: 11px; }
+    .pill { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 900; background: #edf4f0; color: var(--ink); margin: 2px; }
+    .pill.booked { background: var(--warn); }
+    .pill.completed { background: var(--ok); }
+    .pill.cancelled { background: var(--danger); }
+    .pill.available { background: var(--ok); }
+    .toolbar { display: grid; grid-template-columns: repeat(8, minmax(120px, 1fr)); gap: 12px; align-items: end; }
+    .schedule-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+    .schedule { min-width: 1040px; display: grid; grid-template-columns: 90px repeat(7, minmax(130px, 1fr)); }
+    .cell { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 8px; min-height: 74px; }
+    .cell.head { background: var(--soft); min-height: 58px; font-weight: 900; text-align: center; }
+    .time-cell { color: var(--muted); font-size: 12px; font-weight: 900; background: #fbfdfc; display: grid; place-items: center; }
+    .slot { width: 100%; text-align: left; padding: 8px; border-radius: 8px; margin-bottom: 6px; background: var(--mint); color: var(--ink); font-weight: 900; font-size: 12px; }
+    .slot.booked { background: var(--warn); }
+    .slot.fixed { background: #e8edf1; color: var(--ink); cursor: not-allowed; }
+    .slot.reserve { background: #dceafe; }
+    .slot small { display: block; color: #3d4b45; font-weight: 700; margin-top: 2px; }
+    .sales-summary { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 12px; margin-top: 14px; }
+    .metric { background: #fbfdfc; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+    .metric strong { display: block; font-size: 22px; }
+    .field-actions { display: flex; gap: 6px; align-items: center; }
+    .field-actions select, .field-actions input { min-width: 0; }
+    .field-actions .btn { flex: 0 0 auto; min-height: 40px; padding: 0 9px; }
+    .overview-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    .overview-day { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+    .overview-item { border-top: 1px solid var(--line); padding: 8px 0; font-size: 13px; }
+    .overview-item:first-of-type { border-top: 0; }
+    .teacher-card { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 12px; }
+    .avatar { width: 58px; height: 58px; border-radius: 8px; background: var(--soft); object-fit: cover; display: grid; place-items: center; font-weight: 900; color: var(--mint-dark); }
+    .list { display: grid; gap: 10px; max-height: 480px; overflow: auto; padding-right: 4px; }
+    .hide { display: none !important; }
+    .empty { padding: 24px; text-align: center; color: var(--muted); font-weight: 800; }
+    .modal {
+      position: fixed; inset: 0; background: rgba(23,33,43,.55); display: grid; place-items: center;
+      padding: 18px; z-index: 20;
+    }
+    .modal-card { width: min(680px, 100%); max-height: 92vh; overflow: auto; background: #fff; border-radius: 8px; padding: 20px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; vertical-align: top; }
+    th { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+    .report-box { white-space: pre-wrap; background: #fbfdfc; border: 1px solid var(--line); border-radius: 8px; padding: 14px; min-height: 180px; }
+    @media (max-width: 900px) {
+      .app-shell { grid-template-columns: 1fr; }
+      aside { position: static; height: auto; }
+      .toolbar, .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside>
+      <div class="brand">
+        <div class="logo">C1</div>
+        <div><strong>Booking Manager</strong><span>No Firebase edition</span></div>
+      </div>
+      <button class="nav-btn active" data-tab="schedule">Weekly Timetable</button>
+      <button class="nav-btn" data-tab="teacherOverview">Teacher Overview</button>
+      <button class="nav-btn" data-tab="teachers">Teachers</button>
+      <button class="nav-btn" data-tab="students">Students</button>
+      <button class="nav-btn" data-tab="reports">Reports</button>
+      <button class="nav-btn" data-tab="archive">Archive</button>
+      <button class="nav-btn" data-tab="settings">Sync Settings</button>
+    </aside>
+
+    <main>
+      <div class="topbar">
+        <div>
+          <h1 id="pageTitle">Weekly Timetable</h1>
+          <div class="subtle" id="statusText">Saved in this browser. Connect Google Apps Script when ready.</div>
+        </div>
+        <div class="row">
+          <button class="btn ghost" id="archivePastBtn">Archive Past Bookings</button>
+          <button class="btn mint" id="saveBtn">Save</button>
+        </div>
+      </div>
+
+      <section id="schedule" class="tab">
+        <div class="panel">
+          <div class="toolbar">
+            <div><label>Month</label><select id="monthSelect"></select></div>
+            <div><label>Year</label><input id="yearInput" type="number" min="2024" max="2035"></div>
+            <div><label>Week</label><select id="weekSelect"></select></div>
+            <div><label>Teacher</label><div class="field-actions"><select id="teacherFilter"></select><button class="btn ghost" data-clear-filter="teacherFilter">Clear</button></div></div>
+            <div><label>Subject</label><div class="field-actions"><select id="subjectFilter"></select><button class="btn ghost" data-clear-filter="subjectFilter">Clear</button></div></div>
+            <div><label>From Time</label><div class="field-actions"><input id="timeFromFilter" type="time" step="1800"><button class="btn ghost" data-clear-filter="timeFromFilter">Clear</button></div></div>
+            <div><label>To Time</label><div class="field-actions"><input id="timeToFilter" type="time" step="1800"><button class="btn ghost" data-clear-filter="timeToFilter">Clear</button></div></div>
+            <div><label>Status</label><div class="field-actions"><select id="statusFilter"><option value="all">All</option><option value="open">Open only</option><option value="booked">Booked/Fixed only</option></select><button class="btn ghost" data-clear-filter="statusFilter">Clear</button></div></div>
+            <div><label>&nbsp;</label><button class="btn ghost" id="clearSalesFiltersBtn">Clear Filters</button></div>
+          </div>
+          <div class="sales-summary" id="salesSummary"></div>
+        </div>
+        <div class="schedule-wrap"><div id="scheduleGrid" class="schedule"></div></div>
+      </section>
+
+      <section id="teacherOverview" class="tab hide">
+        <div class="panel">
+          <div class="toolbar">
+            <div><label>Teacher</label><select id="overviewTeacherFilter"></select></div>
+            <div><label>Subject</label><select id="overviewSubjectFilter"></select></div>
+            <div><label>Status</label><select id="overviewStatusFilter"><option value="all">All</option><option value="open">Open only</option><option value="booked">Booked/Fixed only</option></select></div>
+            <div><label>&nbsp;</label><button class="btn ghost" id="clearOverviewFiltersBtn">Clear Overview</button></div>
+          </div>
+        </div>
+        <div id="teacherOverviewGrid" class="overview-grid"></div>
+      </section>
+
+      <section id="teachers" class="tab hide">
+        <div class="grid two">
+          <div class="panel">
+            <h2>Teacher Profile</h2>
+            <input id="teacherId" type="hidden">
+            <div class="grid two">
+              <div><label>Name</label><input id="teacherName" placeholder="Teacher name"></div>
+              <div><label>Experience Tier</label><select id="teacherTier"><option>standard</option><option>professional</option><option>senior</option><option>master</option></select></div>
+              <div><label>Class Rate</label><input id="teacherRate" type="number" min="0" step="0.01" placeholder="0.00"></div>
+              <div><label>Profile Picture</label><input id="teacherPhoto" type="file" accept="image/*"></div>
+            </div>
+            <div style="margin-top:12px;"><label>Teaching Subjects</label><div id="teacherSubjects" class="row"></div></div>
+            <div class="row" style="margin-top:14px;">
+              <button class="btn mint" id="saveTeacherBtn">Save Teacher</button>
+              <button class="btn ghost" id="newTeacherBtn">New</button>
+            </div>
+          </div>
+          <div class="panel">
+            <h2>Teachers</h2>
+            <div id="teacherList" class="list"></div>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <div class="panel">
+            <h2>Regular Fixed Timetable</h2>
+            <div class="grid four">
+              <div><label>Teacher</label><select id="slotTeacher"></select></div>
+              <div><label>Day</label><select id="slotDay"></select></div>
+              <div><label>Start Time</label><input id="slotTime" type="time" step="1800"></div>
+              <div><label>Subject</label><select id="slotSubject"></select></div>
+            </div>
+            <div class="row" style="margin-top:12px;"><button class="btn mint" id="addSlotBtn">Add 30 Min Slot</button></div>
+            <hr style="border:0;border-top:1px solid var(--line);margin:16px 0;">
+            <h3>Fast Setup</h3>
+            <div class="grid four">
+              <div><label>Teacher</label><select id="bulkTeacher"></select></div>
+              <div><label>Days</label><select id="bulkDays"><option value="weekday">Monday to Friday</option><option value="weekend">Saturday to Sunday</option><option value="all">Whole week</option></select></div>
+              <div><label>From</label><input id="bulkStart" type="time" value="18:00" step="1800"></div>
+              <div><label>To</label><input id="bulkEnd" type="time" value="21:00" step="1800"></div>
+              <div><label>Subject</label><select id="bulkSubject"></select></div>
+            </div>
+            <div class="row" style="margin-top:12px;"><button class="btn ghost" id="bulkAddBtn">Add Range</button></div>
+          </div>
+          <div class="panel">
+            <h2>Particular Week / Date Slots</h2>
+            <div class="grid four">
+              <div><label>Teacher</label><select id="overrideTeacher"></select></div>
+              <div><label>Date</label><input id="overrideDate" type="date"></div>
+              <div><label>Start Time</label><input id="overrideTime" type="time" step="1800"></div>
+              <div><label>Subject</label><select id="overrideSubject"></select></div>
+            </div>
+            <div class="row" style="margin-top:12px;"><button class="btn mint" id="addOverrideBtn">Add Date Slot</button></div>
+            <div id="slotList" class="list" style="margin-top:16px;"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="students" class="tab hide">
+        <div class="grid two">
+          <div class="panel">
+            <h2>Student Profile</h2>
+            <input id="studentId" type="hidden">
+            <div class="grid two">
+              <div><label>Student Name</label><input id="studentName" placeholder="Student name"></div>
+              <div><label>Subject Taken</label><select id="studentSubject"></select></div>
+              <div><label>Regular Teacher</label><select id="studentTeacher"></select></div>
+              <div><label>Regular Days</label><div id="studentDayChecks" class="row"></div></div>
+              <div><label>Regular Time</label><input id="studentTime" type="time" step="1800"></div>
+              <div><label>Regular Subject</label><select id="studentRegularSubject"></select></div>
+            </div>
+            <div class="row" style="margin-top:10px;"><button class="btn ghost" id="addStudentRegularSlotBtn">Add Regular Slot</button></div>
+            <div id="studentRegularSlotList" class="list" style="margin-top:12px;max-height:220px;"></div>
+            <div class="row" style="margin-top:14px;">
+              <button class="btn mint" id="saveStudentBtn">Save Student</button>
+              <button class="btn ghost" id="newStudentBtn">New</button>
+            </div>
+          </div>
+          <div class="panel">
+            <h2>Students</h2>
+            <div id="studentList" class="list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="reports" class="tab hide">
+        <div class="panel">
+          <h2>Teacher Monthly Completed Lessons</h2>
+          <div class="toolbar">
+            <div><label>Teacher</label><select id="reportTeacher"></select></div>
+            <div><label>Month</label><select id="reportMonth"></select></div>
+            <div><label>Year</label><input id="reportYear" type="number" min="2024" max="2035"></div>
+            <div><label>Target Lessons</label><input id="targetLessons" type="number" value="80"></div>
+            <div><label>Min Attendance</label><input id="targetAttendance" type="number" value="95"></div>
+            <div><label>&nbsp;</label><button class="btn mint" id="generateReportBtn">Generate</button></div>
+          </div>
+          <div class="grid two" style="margin-top:16px;">
+            <div id="reportStats" class="card"></div>
+            <div class="report-box" id="reportText"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="archive" class="tab hide">
+        <div class="panel">
+          <h2>Archived Bookings</h2>
+          <div id="archiveList"></div>
+        </div>
+      </section>
+
+      <section id="settings" class="tab hide">
+        <div class="panel">
+          <h2>Google Apps Script Sync</h2>
+          <div class="subtle">Deploy the included Code.gs as a web app, then paste the web app URL here. The page works offline with browser storage until sync is configured.</div>
+          <div class="grid two" style="margin-top:14px;">
+            <div><label>Web App URL</label><input id="scriptUrl" placeholder="https://script.google.com/macros/s/.../exec"></div>
+            <div><label>API Key</label><input id="apiKey" placeholder="Any private key you set in Code.gs"></div>
+          </div>
+          <div class="row" style="margin-top:14px;">
+            <button class="btn mint" id="pullBtn">Pull From Sheet</button>
+            <button class="btn ghost" id="pushBtn">Push To Sheet</button>
+            <button class="btn danger" id="resetDemoBtn">Clear Browser Data</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="bookingModal" class="modal hide">
+    <div class="modal-card">
+      <div class="row spread"><h2>Book Class</h2><button class="btn ghost small" data-close>Close</button></div>
+      <input id="bookingSlot" type="hidden">
+      <div class="subtle" id="bookingInfo"></div>
+      <div class="grid two" style="margin-top:14px;">
+        <div><label>Saved Student</label><select id="bookingStudent"></select></div>
+        <div><label>Child Name</label><input id="bookingStudentName" placeholder="Type child name"></div>
+        <div><label>Subject</label><select id="bookingSubject"></select></div>
+        <div><label>Booking Type</label><select id="bookingType"></select></div>
+      </div>
+      <div class="row" style="margin-top:14px;"><button class="btn mint" id="confirmBookingBtn">Confirm Booking</button></div>
+    </div>
+  </div>
+
+  <script>
+    const SUBJECTS = ["CN", "BM", "PK", "SOK", "CREATIVE MATHS", "PHONICS"];
+    const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    const BOOKING_TYPES = ["exam", "assessment", "trial class", "replacement class", "reserve", "new students", "regular class"];
+    const STORE_KEY = "classOneBookingRevamp.v1";
+    const state = {
+      teachers: [],
+      students: [],
+      bookings: [],
+      settings: { scriptUrl: "", apiKey: "" }
+    };
+    let studentRegularSlotsDraft = [];
+    const $ = (id) => document.getElementById(id);
+    const uid = (prefix) => prefix + "_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    const localISO = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    const parseISODate = (value) => {
+      const [y, m, d] = String(value).split("-").map(Number);
+      return new Date(y, (m || 1) - 1, d || 1);
+    };
+    const todayISO = () => localISO(new Date());
+    const timeLabel = (t) => {
+      if (!t) return "";
+      const [hh, mm] = t.split(":").map(Number);
+      const suffix = hh >= 12 ? "PM" : "AM";
+      const h = ((hh + 11) % 12) + 1;
+      return `${h}:${String(mm || 0).padStart(2, "0")} ${suffix}`;
+    };
+    const minutes = (t) => {
+      const [h, m] = String(t || "00:00").split(":").map(Number);
+      return h * 60 + m;
+    };
+    const teacherById = (id) => state.teachers.find(t => t.id === id);
+    const studentById = (id) => state.students.find(s => s.id === id);
+    const escapeHtml = (text) => String(text ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
+
+    function load() {
+      const saved = localStorage.getItem(STORE_KEY);
+      if (saved) Object.assign(state, JSON.parse(saved));
+      $("scriptUrl").value = state.settings.scriptUrl || "";
+      $("apiKey").value = state.settings.apiKey || "";
+      archivePast(false);
+    }
+
+    function save(show = true) {
+      state.settings.scriptUrl = $("scriptUrl").value.trim();
+      state.settings.apiKey = $("apiKey").value.trim();
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+      if (show) setStatus("Saved.");
+      renderAll();
+    }
+
+    function setStatus(msg) { $("statusText").textContent = msg; }
+
+    function fillSelect(el, values, allLabel) {
+      el.innerHTML = (allLabel ? `<option value="all">${allLabel}</option>` : "") + values.map(v => `<option value="${escapeHtml(v.value ?? v)}">${escapeHtml(v.label ?? v)}</option>`).join("");
+    }
+
+    function hydrateSelects() {
+      const teacherOptions = state.teachers.map(t => ({ value: t.id, label: `${t.name} (${(t.subjects || []).join(", ") || "No subject"})` }));
+      const studentOptions = state.students.map(s => ({ value: s.id, label: s.name }));
+      ["monthSelect", "reportMonth"].forEach(id => fillSelect($(id), Array.from({ length: 12 }, (_, i) => ({ value: i, label: new Date(2026, i, 1).toLocaleString("en", { month: "long" }) }))));
+      ["teacherFilter"].forEach(id => fillSelect($(id), teacherOptions, "All Teachers"));
+      ["overviewTeacherFilter"].forEach(id => fillSelect($(id), teacherOptions, "Choose Teacher"));
+      ["slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher", "reportTeacher"].forEach(id => fillSelect($(id), teacherOptions));
+      ["subjectFilter", "overviewSubjectFilter"].forEach(id => fillSelect($(id), SUBJECTS, "All Subjects"));
+      ["slotSubject", "bulkSubject", "overrideSubject", "studentSubject", "studentRegularSubject", "bookingSubject"].forEach(id => fillSelect($(id), SUBJECTS));
+      fillSelect($("bookingType"), BOOKING_TYPES);
+      fillSelect($("bookingStudent"), studentOptions, "Choose or type name");
+      fillSelect($("slotDay"), DAYS);
+      $("studentDayChecks").innerHTML = DAYS.map(day => `<label class="pill"><input type="checkbox" value="${day}" style="width:auto;min-height:0;margin-right:6px;"> ${day.slice(0, 3)}</label>`).join("");
+      $("teacherSubjects").innerHTML = SUBJECTS.map(s => `<label class="pill"><input type="checkbox" value="${s}" style="width:auto;min-height:0;margin-right:6px;"> ${s}</label>`).join("");
+    }
+
+    function setupMonths() {
+      const now = new Date();
+      $("monthSelect").value = now.getMonth();
+      $("reportMonth").value = now.getMonth();
+      $("yearInput").value = now.getFullYear();
+      $("reportYear").value = now.getFullYear();
+      refreshWeeks();
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+      const currentWeekValue = localISO(monday);
+      if ([...$("weekSelect").options].some(o => o.value === currentWeekValue)) $("weekSelect").value = currentWeekValue;
+    }
+
+    function refreshWeeks() {
+      const y = Number($("yearInput").value);
+      const m = Number($("monthSelect").value);
+      const weeks = [];
+      const cursor = new Date(y, m, 1);
+      cursor.setDate(cursor.getDate() - ((cursor.getDay() + 6) % 7));
+      while (cursor.getMonth() <= m || weeks.length === 0) {
+        const start = new Date(cursor);
+        const end = new Date(cursor);
+        end.setDate(end.getDate() + 6);
+        weeks.push({ value: localISO(start), label: `${start.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })} - ${end.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}` });
+        cursor.setDate(cursor.getDate() + 7);
+        if (cursor.getFullYear() > y && m < 11) break;
+        if (weeks.length > 6) break;
+      }
+      fillSelect($("weekSelect"), weeks);
+    }
+
+    function weekDates() {
+      const start = parseISODate($("weekSelect").value);
+      return DAYS.map((_, i) => {
+        const d = new Date(start);
+        d.setDate(start.getDate() + i);
+        return d;
+      });
+    }
+
+    function collectSlotsForDate(date) {
+      const dateStr = localISO(date);
+      const day = DAYS[(date.getDay() + 6) % 7];
+      const slots = [];
+      state.teachers.forEach(t => {
+        (t.regularSlots || []).filter(s => s.day === day).forEach(s => slots.push({ ...s, id: s.id, teacherId: t.id, date: dateStr, source: s.source || "regular" }));
+        (t.overrideSlots || []).filter(s => s.date === dateStr).forEach(s => slots.push({ ...s, id: s.id, teacherId: t.id, date: dateStr, source: "override" }));
+      });
+      return slots;
+    }
+
+    function activeBookings() {
+      return state.bookings.filter(b => !b.archived && b.status !== "cancelled");
+    }
+
+    function findBooking(slot) {
+      return activeBookings().find(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
+    }
+
+    function slotMatchesSubject(slot, subjectFilter) {
+      if (subjectFilter === "all") return true;
+      const teacher = teacherById(slot.teacherId);
+      return slot.subject === subjectFilter || (teacher && (teacher.subjects || []).includes(subjectFilter));
+    }
+
+    function slotMatchesTimeRange(slot, from, to) {
+      const value = minutes(slot.time);
+      return (!from || value >= minutes(from)) && (!to || value < minutes(to));
+    }
+
+    function renderSchedule() {
+      const dates = weekDates();
+      const times = new Set();
+      dates.flatMap(collectSlotsForDate).forEach(s => times.add(s.time));
+      activeBookings().forEach(b => {
+        if (dates.some(d => localISO(d) === b.date)) times.add(b.time);
+      });
+      const sortedTimes = [...times].sort((a, b) => minutes(a) - minutes(b));
+      const summary = { open: 0, booked: 0, fixed: 0, visibleTeachers: new Set() };
+      let html = `<div class="cell head"></div>${dates.map(d => `<div class="cell head">${DAYS[(d.getDay() + 6) % 7].slice(0, 3)}<br><span class="subtle">${d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span></div>`).join("")}`;
+      sortedTimes.forEach(t => {
+        html += `<div class="cell time-cell">${timeLabel(t)}</div>`;
+        dates.forEach(d => {
+          const teacherFilter = $("teacherFilter").value;
+          const subjectFilter = $("subjectFilter").value;
+          const statusFilter = $("statusFilter").value;
+          const timeFrom = $("timeFromFilter").value;
+          const timeTo = $("timeToFilter").value;
+          let slots = collectSlotsForDate(d).filter(s => s.time === t);
+          slots = slots.filter(s => teacherFilter === "all" || s.teacherId === teacherFilter);
+          slots = slots.filter(s => slotMatchesSubject(s, subjectFilter));
+          slots = slots.filter(s => slotMatchesTimeRange(s, timeFrom, timeTo));
+          const items = slots.map(s => ({ slot: s, booking: findBooking(s) }));
+          let filtered = items.filter(x => {
+            const isBooked = Boolean(x.booking || x.slot.locked);
+            return statusFilter === "all" || (statusFilter === "open" && !isBooked) || (statusFilter === "booked" && isBooked);
+          });
+          filtered.forEach(x => {
+            summary.visibleTeachers.add(x.slot.teacherId);
+            if (x.booking) summary.booked += 1;
+            else if (x.slot.locked) summary.fixed += 1;
+            else summary.open += 1;
+          });
+          html += `<div class="cell">${filtered.map(x => slotHtml(x.slot, x.booking)).join("") || ""}</div>`;
+        });
+      });
+      $("scheduleGrid").innerHTML = html || `<div class="empty">No slots yet.</div>`;
+      renderSalesSummary(summary);
+    }
+
+    function renderTeacherOverview() {
+      const teacherId = $("overviewTeacherFilter").value;
+      const subjectFilter = $("overviewSubjectFilter").value;
+      const statusFilter = $("overviewStatusFilter").value;
+      if (!teacherId || teacherId === "all") {
+        $("teacherOverviewGrid").innerHTML = `<div class="empty">Choose one teacher to view their timetable overview.</div>`;
+        return;
+      }
+      const teacher = teacherById(teacherId);
+      if (!teacher) {
+        $("teacherOverviewGrid").innerHTML = `<div class="empty">Teacher not found.</div>`;
+        return;
+      }
+      const dates = weekDates();
+      $("teacherOverviewGrid").innerHTML = dates.map(date => {
+        const dateStr = localISO(date);
+        let rows = collectSlotsForDate(date)
+          .filter(slot => slot.teacherId === teacherId)
+          .filter(slot => slotMatchesSubject(slot, subjectFilter))
+          .map(slot => ({ slot, booking: findBooking(slot) }))
+          .filter(item => {
+            const isBooked = Boolean(item.booking || item.slot.locked);
+            return statusFilter === "all" || (statusFilter === "open" && !isBooked) || (statusFilter === "booked" && isBooked);
+          })
+          .sort((a, b) => minutes(a.slot.time) - minutes(b.slot.time));
+        return `<div class="overview-day">
+          <h3>${DAYS[(date.getDay() + 6) % 7]} <span class="subtle">${date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span></h3>
+          ${rows.map(item => overviewItemHtml(item.slot, item.booking)).join("") || `<div class="subtle">No matching slots.</div>`}
+        </div>`;
+      }).join("");
+    }
+
+    function overviewItemHtml(slot, booking) {
+      const subject = slot.subject || "";
+      if (booking) return `<div class="overview-item"><strong>${timeLabel(slot.time)}</strong> <span class="pill booked">Booked</span><div class="subtle">${escapeHtml(booking.studentName)} | ${escapeHtml(booking.type)} | ${escapeHtml(subject)}</div></div>`;
+      if (slot.locked) return `<div class="overview-item"><strong>${timeLabel(slot.time)}</strong> <span class="pill booked">Fixed Regular</span><div class="subtle">${escapeHtml(slot.studentName || "occupied")} | ${escapeHtml(subject)}</div></div>`;
+      return `<div class="overview-item"><strong>${timeLabel(slot.time)}</strong> <span class="pill available">Available</span><div class="subtle">${escapeHtml(subject)} | sales can propose</div></div>`;
+    }
+
+    function renderSalesSummary(summary) {
+      $("salesSummary").innerHTML = `
+        <div class="metric"><span class="subtle">Open slots sales can propose</span><strong>${summary.open}</strong></div>
+        <div class="metric"><span class="subtle">Booked special sessions</span><strong>${summary.booked}</strong></div>
+        <div class="metric"><span class="subtle">Fixed regular classes</span><strong>${summary.fixed}</strong></div>
+        <div class="metric"><span class="subtle">Teachers visible</span><strong>${summary.visibleTeachers.size}</strong></div>
+      `;
+    }
+
+    function slotHtml(slot, booking) {
+      const teacher = teacherById(slot.teacherId);
+      if (!teacher) return "";
+      const subject = slot.subject || (teacher.subjects || [])[0] || "";
+      if (booking) {
+        const reserveClass = booking.type === "reserve" ? " reserve" : "";
+        return `<button class="slot booked${reserveClass}" data-booking-id="${booking.id}">${escapeHtml(teacher.name)}<small>Booked by ${escapeHtml(booking.studentName)} | ${escapeHtml(booking.type)} | ${escapeHtml(subject)}</small></button>`;
+      }
+      if (slot.locked) {
+        return `<button class="slot fixed" disabled>${escapeHtml(teacher.name)}<small>Fixed regular: ${escapeHtml(slot.studentName || "occupied")} | ${escapeHtml(subject)}</small></button>`;
+      }
+      return `<button class="slot" data-slot="${escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject }))}">${escapeHtml(teacher.name)}<small>Available | ${escapeHtml(subject)} | 30 min slot, 25 min class</small></button>`;
+    }
+
+    function renderTeachers() {
+      $("teacherList").innerHTML = state.teachers.map(t => `
+        <div class="card teacher-card">
+          ${t.photo ? `<img class="avatar" src="${t.photo}" alt="">` : `<div class="avatar">${escapeHtml((t.name || "?").slice(0, 1))}</div>`}
+          <div>
+            <div class="row spread"><strong>${escapeHtml(t.name)}</strong><span class="pill">${escapeHtml(t.tier)}</span></div>
+            <div>${(t.subjects || []).map(s => `<span class="pill">${escapeHtml(s)}</span>`).join("")}</div>
+            <div class="subtle">Rate: ${Number(t.rate || 0).toFixed(2)} | Slots: ${(t.regularSlots || []).length} regular, ${(t.overrideSlots || []).length} date-specific${(t.regularSlots || []).some(s => s.source === "teacher-sheet") ? " | Imported from teacher sheet" : ""}</div>
+            <div class="row" style="margin-top:8px;"><button class="btn small ghost" data-edit-teacher="${t.id}">Edit</button><button class="btn small danger" data-delete-teacher="${t.id}">Delete</button></div>
+          </div>
+        </div>`).join("") || `<div class="empty">Add your first tutor profile.</div>`;
+      renderSlotList();
+    }
+
+    function renderSlotList() {
+      const rows = [];
+      state.teachers.forEach(t => {
+        (t.regularSlots || []).forEach(s => rows.push(`<div class="card"><strong>${escapeHtml(t.name)}</strong> <span class="pill">Regular</span>${s.locked ? `<span class="pill booked">Occupied</span>` : ""}${s.source === "teacher-sheet" ? `<span class="pill">Sheet</span>` : ""}<div class="subtle">${s.day} ${timeLabel(s.time)} | ${s.subject}${s.studentName ? " | " + escapeHtml(s.studentName) : ""}</div><button class="btn small danger" data-delete-slot="${t.id}|regular|${s.id}">Delete</button></div>`));
+        (t.overrideSlots || []).forEach(s => rows.push(`<div class="card"><strong>${escapeHtml(t.name)}</strong> <span class="pill">Date</span><div class="subtle">${s.date} ${timeLabel(s.time)} | ${s.subject}</div><button class="btn small danger" data-delete-slot="${t.id}|override|${s.id}">Delete</button></div>`));
+      });
+      $("slotList").innerHTML = rows.join("") || `<div class="empty">No slots created yet.</div>`;
+    }
+
+    function renderStudents() {
+      $("studentList").innerHTML = state.students.map(s => {
+        const regularSlots = getStudentRegularSlots(s);
+        const lines = regularSlots.map(slot => {
+          const t = teacherById(slot.teacherId);
+          return `${slot.day} ${timeLabel(slot.time)} | ${slot.subject} | ${t ? t.name : "No teacher"}`;
+        });
+        return `<div class="card"><div class="row spread"><strong>${escapeHtml(s.name)}</strong><span class="pill">${escapeHtml(s.subject)}</span></div><div class="subtle">${lines.map(escapeHtml).join("<br>") || "No regular slots"}</div><div class="row" style="margin-top:8px;"><button class="btn small ghost" data-edit-student="${s.id}">Edit</button><button class="btn small danger" data-delete-student="${s.id}">Delete</button></div></div>`;
+      }).join("") || `<div class="empty">Add student names, subjects, and regular weekly slots.</div>`;
+    }
+
+    function getStudentRegularSlots(student) {
+      if (Array.isArray(student.regularSlots)) return student.regularSlots;
+      if (student.day || student.time || student.teacherId) {
+        return [{ teacherId: student.teacherId || "", day: student.day || "", time: student.time || "", subject: student.subject || "" }];
+      }
+      return [];
+    }
+
+    function renderStudentRegularSlotDraft() {
+      $("studentRegularSlotList").innerHTML = studentRegularSlotsDraft.map(slot => {
+        const teacher = teacherById(slot.teacherId);
+        return `<div class="card"><strong>${escapeHtml(slot.day)} ${timeLabel(slot.time)}</strong><div class="subtle">${escapeHtml(slot.subject)} | ${escapeHtml(teacher ? teacher.name : "No teacher")}</div><button class="btn small danger" data-remove-student-regular="${slot.id}">Remove</button></div>`;
+      }).join("") || `<div class="empty">No regular slots added yet.</div>`;
+    }
+
+    function selectedStudentRegularDays() {
+      return [...document.querySelectorAll("#studentDayChecks input:checked")].map(input => input.value);
+    }
+
+    function setSelectedStudentRegularDays(days) {
+      document.querySelectorAll("#studentDayChecks input").forEach(input => {
+        input.checked = days.includes(input.value);
+      });
+    }
+
+    function renderArchive() {
+      const rows = state.bookings.filter(b => b.archived || b.status === "cancelled").sort((a,b) => b.date.localeCompare(a.date)).map(b => {
+        const t = teacherById(b.teacherId);
+        return `<tr><td>${escapeHtml(b.date)}</td><td>${timeLabel(b.time)}</td><td>${escapeHtml(t ? t.name : "")}</td><td>${escapeHtml(b.studentName)}</td><td>${escapeHtml(b.subject)}</td><td><span class="pill ${escapeHtml(b.status)}">${escapeHtml(b.status)}</span></td></tr>`;
+      }).join("");
+      $("archiveList").innerHTML = `<table><thead><tr><th>Date</th><th>Time</th><th>Teacher</th><th>Student</th><th>Subject</th><th>Status</th></tr></thead><tbody>${rows || `<tr><td colspan="6">No archived records yet.</td></tr>`}</tbody></table>`;
+    }
+
+    function renderReport() {
+      const teacherId = $("reportTeacher").value;
+      const teacher = teacherById(teacherId);
+      if (!teacher) {
+        $("reportStats").innerHTML = "Select a teacher.";
+        $("reportText").textContent = "";
+        return;
+      }
+      const month = Number($("reportMonth").value);
+      const year = Number($("reportYear").value);
+      const completed = state.bookings.filter(b => b.teacherId === teacherId && b.status === "completed" && new Date(b.date + "T00:00:00").getMonth() === month && new Date(b.date + "T00:00:00").getFullYear() === year);
+      const lessonCount = completed.length;
+      const amount = lessonCount * Number(teacher.rate || 0);
+      const target = Number($("targetLessons").value || 0);
+      const remaining = Math.max(target - lessonCount, 0);
+      $("reportStats").innerHTML = `<h3>${escapeHtml(teacher.name)}</h3><p><strong>${lessonCount}</strong> completed lessons</p><p>Estimated payout: <strong>${amount.toFixed(2)}</strong></p><p>Current tier: <strong>${escapeHtml(teacher.tier)}</strong></p><p>Lessons to target: <strong>${remaining}</strong></p>`;
+      $("reportText").textContent = `Hi ${teacher.name},\n\nHere is your ${new Date(year, month, 1).toLocaleString("en", { month: "long", year: "numeric" })} teaching summary.\n\nCompleted lessons: ${lessonCount}\nCurrent tier: ${teacher.tier}\nClass rate: ${Number(teacher.rate || 0).toFixed(2)}\nEstimated lesson payout: ${amount.toFixed(2)}\n\nNext-tier progress:\n- Target lessons entered by admin: ${target}\n- Remaining lessons to target: ${remaining}\n- Attendance target entered by admin: ${$("targetAttendance").value}%\n\nTeacher rating criteria can be added here after you send the final upgrade rules.`;
+    }
+
+    function renderAll() {
+      const old = Object.fromEntries(["monthSelect", "reportMonth", "weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "overviewTeacherFilter", "overviewSubjectFilter", "overviewStatusFilter", "slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher", "reportTeacher"].map(id => [id, $(id)?.value]));
+      hydrateSelects();
+      Object.entries(old).forEach(([id, value]) => { if ($(id) && value) $(id).value = value; });
+      renderSchedule();
+      renderTeachers();
+      renderStudents();
+      renderArchive();
+      renderReport();
+      renderTeacherOverview();
+      renderStudentRegularSlotDraft();
+    }
+
+    function clearTeacherForm() {
+      $("teacherId").value = "";
+      $("teacherName").value = "";
+      $("teacherRate").value = "";
+      $("teacherTier").value = "standard";
+      $("teacherPhoto").value = "";
+      document.querySelectorAll("#teacherSubjects input").forEach(cb => cb.checked = false);
+    }
+
+    function saveTeacher() {
+      const name = $("teacherName").value.trim();
+      if (!name) return alert("Teacher name is required.");
+      const id = $("teacherId").value || uid("teacher");
+      const existing = teacherById(id) || { id, regularSlots: [], overrideSlots: [] };
+      existing.name = name;
+      existing.tier = $("teacherTier").value;
+      existing.rate = Number($("teacherRate").value || 0);
+      existing.subjects = [...document.querySelectorAll("#teacherSubjects input:checked")].map(cb => cb.value);
+      if (!state.teachers.some(t => t.id === id)) state.teachers.push(existing);
+      save();
+      clearTeacherForm();
+    }
+
+    function addSlot(teacherId, day, time, subject, date) {
+      const teacher = teacherById(teacherId);
+      if (!teacher || !time || !subject) return;
+      const listName = date ? "overrideSlots" : "regularSlots";
+      teacher[listName] ||= [];
+      const duplicate = teacher[listName].some(s => (date ? s.date === date : s.day === day) && s.time === time && s.subject === subject);
+      if (!duplicate) teacher[listName].push({ id: uid("slot"), day, date, time, subject });
+    }
+
+    function archivePast(show = true) {
+      const today = todayISO();
+      state.bookings.forEach(b => {
+        if (!b.archived && b.status === "booked" && b.date < today) {
+          b.status = "completed";
+          b.archived = true;
+        }
+      });
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+      if (show) setStatus("Past bookings archived as completed.");
+    }
+
+    async function syncPull() {
+      const url = $("scriptUrl").value.trim();
+      if (!url) return alert("Paste your Apps Script web app URL first.");
+      const res = await fetch(`${url}?action=read&key=${encodeURIComponent($("apiKey").value.trim())}`);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Pull failed");
+      Object.assign(state, data.payload);
+      save(false);
+      setStatus("Pulled latest data from Google Sheet.");
+    }
+
+    async function syncPush() {
+      const url = $("scriptUrl").value.trim();
+      if (!url) return alert("Paste your Apps Script web app URL first.");
+      const res = await fetch(url, { method: "POST", body: JSON.stringify({ action: "write", key: $("apiKey").value.trim(), payload: state }) });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "Push failed");
+      save(false);
+      setStatus("Pushed data to Google Sheet.");
+    }
+
+    async function autoPushIfConfigured(successMessage) {
+      const url = $("scriptUrl").value.trim();
+      const key = $("apiKey").value.trim();
+      if (!url || !key) {
+        setStatus(`${successMessage} Saved in this browser. Add sync settings to share it.`);
+        return;
+      }
+      try {
+        const res = await fetch(url, { method: "POST", body: JSON.stringify({ action: "write", key, payload: state }) });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "Push failed");
+        setStatus(`${successMessage} Synced to Google Sheet.`);
+      } catch (err) {
+        setStatus(`${successMessage} Sync failed: ${err.message}`);
+      }
+    }
+
+    document.addEventListener("click", (e) => {
+      const nav = e.target.closest(".nav-btn");
+      if (nav) {
+        document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b === nav));
+        document.querySelectorAll(".tab").forEach(t => t.classList.toggle("hide", t.id !== nav.dataset.tab));
+        $("pageTitle").textContent = nav.textContent;
+      }
+      const slot = e.target.closest("[data-slot]");
+      if (slot) {
+        const data = JSON.parse(slot.dataset.slot);
+        $("bookingSlot").value = JSON.stringify(data);
+        const teacher = teacherById(data.teacherId);
+        $("bookingInfo").textContent = `${teacher.name} | ${data.date} | ${timeLabel(data.time)} | ${data.subject}`;
+        if ([...$("bookingSubject").options].some(o => o.value === data.subject)) $("bookingSubject").value = data.subject;
+        $("bookingStudent").value = "all";
+        $("bookingStudentName").value = "";
+        $("bookingType").value = "trial class";
+        $("bookingModal").classList.remove("hide");
+      }
+      const bookingBtn = e.target.closest("[data-booking-id]");
+      if (bookingBtn) {
+        const booking = state.bookings.find(b => b.id === bookingBtn.dataset.bookingId);
+        if (booking && confirm(`Cancel booking for ${booking.studentName}?`)) {
+          booking.status = "cancelled";
+          booking.archived = true;
+          save();
+        }
+      }
+      const close = e.target.closest("[data-close]");
+      if (close) close.closest(".modal").classList.add("hide");
+      const editTeacher = e.target.closest("[data-edit-teacher]");
+      if (editTeacher) {
+        const t = teacherById(editTeacher.dataset.editTeacher);
+        $("teacherId").value = t.id; $("teacherName").value = t.name; $("teacherRate").value = t.rate || ""; $("teacherTier").value = t.tier || "standard";
+        document.querySelectorAll("#teacherSubjects input").forEach(cb => cb.checked = (t.subjects || []).includes(cb.value));
+      }
+      const delTeacher = e.target.closest("[data-delete-teacher]");
+      if (delTeacher && confirm("Delete this teacher profile and slots?")) {
+        state.teachers = state.teachers.filter(t => t.id !== delTeacher.dataset.deleteTeacher);
+        save();
+      }
+      const editStudent = e.target.closest("[data-edit-student]");
+      if (editStudent) {
+        const s = studentById(editStudent.dataset.editStudent);
+        studentRegularSlotsDraft = getStudentRegularSlots(s).map(slot => ({ ...slot, id: slot.id || uid("student_slot") }));
+        $("studentId").value = s.id; $("studentName").value = s.name; $("studentSubject").value = s.subject; $("studentTeacher").value = s.teacherId || studentRegularSlotsDraft[0]?.teacherId || ""; $("studentTime").value = s.time || studentRegularSlotsDraft[0]?.time || "";
+        $("studentRegularSubject").value = studentRegularSlotsDraft[0]?.subject || s.subject || "CN";
+        setSelectedStudentRegularDays([...new Set(studentRegularSlotsDraft.map(slot => slot.day).filter(Boolean))]);
+        renderStudentRegularSlotDraft();
+      }
+      const delStudent = e.target.closest("[data-delete-student]");
+      if (delStudent && confirm("Delete this student?")) {
+        state.students = state.students.filter(s => s.id !== delStudent.dataset.deleteStudent);
+        save();
+      }
+      const delSlot = e.target.closest("[data-delete-slot]");
+      if (delSlot) {
+        const [teacherId, type, slotId] = delSlot.dataset.deleteSlot.split("|");
+        const teacher = teacherById(teacherId);
+        const key = type === "regular" ? "regularSlots" : "overrideSlots";
+        teacher[key] = (teacher[key] || []).filter(s => s.id !== slotId);
+        save();
+      }
+      const removeStudentRegular = e.target.closest("[data-remove-student-regular]");
+      if (removeStudentRegular) {
+        studentRegularSlotsDraft = studentRegularSlotsDraft.filter(slot => slot.id !== removeStudentRegular.dataset.removeStudentRegular);
+        renderStudentRegularSlotDraft();
+      }
+    });
+
+    $("saveBtn").onclick = () => save();
+    $("archivePastBtn").onclick = () => { archivePast(); renderAll(); };
+    $("saveTeacherBtn").onclick = saveTeacher;
+    $("newTeacherBtn").onclick = clearTeacherForm;
+    $("teacherPhoto").onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const id = $("teacherId").value || uid("teacher");
+        $("teacherId").value = id;
+        let teacher = teacherById(id);
+        if (!teacher) { teacher = { id, name: $("teacherName").value || "New Teacher", subjects: [], regularSlots: [], overrideSlots: [] }; state.teachers.push(teacher); }
+        teacher.photo = reader.result;
+        save(false);
+      };
+      reader.readAsDataURL(file);
+    };
+    $("addSlotBtn").onclick = () => { addSlot($("slotTeacher").value, $("slotDay").value, $("slotTime").value, $("slotSubject").value); save(); };
+    $("bulkAddBtn").onclick = () => {
+      const groups = { weekday: DAYS.slice(0, 5), weekend: DAYS.slice(5), all: DAYS };
+      const start = minutes($("bulkStart").value), end = minutes($("bulkEnd").value);
+      groups[$("bulkDays").value].forEach(day => {
+        for (let m = start; m < end; m += 30) addSlot($("bulkTeacher").value, day, `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`, $("bulkSubject").value);
+      });
+      save();
+    };
+    $("addOverrideBtn").onclick = () => {
+      const d = new Date($("overrideDate").value + "T00:00:00");
+      addSlot($("overrideTeacher").value, DAYS[(d.getDay() + 6) % 7], $("overrideTime").value, $("overrideSubject").value, $("overrideDate").value);
+      save();
+    };
+    $("saveStudentBtn").onclick = () => {
+      const name = $("studentName").value.trim();
+      if (!name) return alert("Student name is required.");
+      const id = $("studentId").value || uid("student");
+      const existing = studentById(id) || { id };
+      Object.assign(existing, { name, subject: $("studentSubject").value, regularSlots: studentRegularSlotsDraft.map(slot => ({ ...slot })) });
+      delete existing.teacherId;
+      delete existing.day;
+      delete existing.time;
+      if (!state.students.some(s => s.id === id)) state.students.push(existing);
+      $("studentId").value = ""; $("studentName").value = ""; $("studentTime").value = "";
+      studentRegularSlotsDraft = [];
+      save();
+    };
+    $("newStudentBtn").onclick = () => { $("studentId").value = ""; $("studentName").value = ""; $("studentTime").value = ""; setSelectedStudentRegularDays([]); studentRegularSlotsDraft = []; renderStudentRegularSlotDraft(); };
+    $("addStudentRegularSlotBtn").onclick = () => {
+      const days = selectedStudentRegularDays();
+      if (!$("studentTeacher").value || !days.length || !$("studentTime").value) return alert("Choose teacher, at least one day, and time first.");
+      days.forEach(day => {
+        const item = {
+          id: uid("student_slot"),
+          teacherId: $("studentTeacher").value,
+          day,
+          time: $("studentTime").value,
+          subject: $("studentRegularSubject").value || $("studentSubject").value
+        };
+        const exists = studentRegularSlotsDraft.some(slot => slot.teacherId === item.teacherId && slot.day === item.day && slot.time === item.time && slot.subject === item.subject);
+        if (!exists) studentRegularSlotsDraft.push(item);
+      });
+      renderStudentRegularSlotDraft();
+    };
+    $("confirmBookingBtn").onclick = async () => {
+      const slot = JSON.parse($("bookingSlot").value);
+      const student = studentById($("bookingStudent").value);
+      const studentName = $("bookingStudentName").value.trim() || (student ? student.name : "");
+      if (!studentName) return alert("Choose a student or type a student name.");
+      const duplicate = activeBookings().find(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
+      if (duplicate) return alert(`This slot is already booked by ${duplicate.studentName}.`);
+      state.bookings.push({ id: uid("booking"), ...slot, studentId: student ? student.id : "", studentName, subject: $("bookingSubject").value, type: $("bookingType").value, status: "booked", archived: false, minutes: 25, createdAt: new Date().toISOString() });
+      $("bookingModal").classList.add("hide");
+      save(false);
+      renderAll();
+      await autoPushIfConfigured("Booking confirmed.");
+    };
+    ["monthSelect", "yearInput"].forEach(id => $(id).addEventListener("change", () => { refreshWeeks(); renderSchedule(); }));
+    ["weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter"].forEach(id => $(id).addEventListener("change", renderSchedule));
+    ["weekSelect", "overviewTeacherFilter", "overviewSubjectFilter", "overviewStatusFilter"].forEach(id => $(id).addEventListener("change", renderTeacherOverview));
+    $("clearOverviewFiltersBtn").onclick = () => {
+      $("overviewTeacherFilter").value = "all";
+      $("overviewSubjectFilter").value = "all";
+      $("overviewStatusFilter").value = "all";
+      renderTeacherOverview();
+    };
+    $("clearSalesFiltersBtn").onclick = () => {
+      $("teacherFilter").value = "all";
+      $("subjectFilter").value = "all";
+      $("timeFromFilter").value = "";
+      $("timeToFilter").value = "";
+      $("statusFilter").value = "all";
+      renderSchedule();
+    };
+    document.querySelectorAll("[data-clear-filter]").forEach(btn => {
+      btn.onclick = () => {
+        const id = btn.dataset.clearFilter;
+        $(id).value = id === "statusFilter" || id.endsWith("Filter") && $(id).tagName === "SELECT" ? "all" : "";
+        renderSchedule();
+      };
+    });
+    ["reportTeacher", "reportMonth", "reportYear", "targetLessons", "targetAttendance"].forEach(id => $(id).addEventListener("change", renderReport));
+    $("generateReportBtn").onclick = renderReport;
+    $("pullBtn").onclick = () => syncPull().catch(err => alert(err.message));
+    $("pushBtn").onclick = () => syncPush().catch(err => alert(err.message));
+    $("resetDemoBtn").onclick = () => { if (confirm("Clear all browser data for this app?")) { localStorage.removeItem(STORE_KEY); location.reload(); } };
+
+    load();
+    hydrateSelects();
+    setupMonths();
+    renderAll();
+  </script>
+</body>
+</html>
