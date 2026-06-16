@@ -94,6 +94,8 @@
     .time-cell { color: var(--muted); font-size: 12px; font-weight: 900; background: #fbfdfc; display: grid; place-items: center; }
     .slot { width: 100%; text-align: left; padding: 8px; border-radius: 8px; margin-bottom: 6px; background: var(--mint); color: var(--ink); font-weight: 900; font-size: 12px; }
     .slot.booked { background: var(--warn); }
+    .slot.booked.type-assessment, .slot.booked.type-exam, .slot.booked.type-trial-class { background: #fff2a8; }
+    .slot.booked.type-replacement-class { background: #dceafe; }
     .slot.fixed { background: #e8edf1; color: var(--ink); cursor: not-allowed; }
     .slot.reserve { background: #dceafe; }
     .slot small { display: block; color: #3d4b45; font-weight: 700; margin-top: 2px; }
@@ -107,6 +109,12 @@
     .overview-day { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
     .overview-item { border-top: 1px solid var(--line); padding: 8px 0; font-size: 13px; }
     .overview-item:first-of-type { border-top: 0; }
+    .lead-card { border-left: 4px solid var(--mint); }
+    .lead-card.hot { border-left-color: #e5484d; }
+    .lead-card.warm { border-left-color: #f5a524; }
+    .lead-card.cold { border-left-color: #6690ff; }
+    .guide-list { display: grid; gap: 10px; }
+    .guide-list li { background: #fbfdfc; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
     .teacher-card { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 12px; }
     .avatar { width: 58px; height: 58px; border-radius: 8px; background: var(--soft); object-fit: cover; display: grid; place-items: center; font-weight: 900; color: var(--mint-dark); }
     .list { display: grid; gap: 10px; max-height: 480px; overflow: auto; padding-right: 4px; }
@@ -135,10 +143,12 @@
       <button class="btn ghost side-toggle" id="sidebarToggle">Hide Sidebar</button>
       <div class="brand">
         <img class="logo" src="classone-logo.jpeg" alt="Class One logo">
-        <div><strong>Booking Manager</strong><span>No Firebase edition</span></div>
+         <div><strong>Booking Manager</strong></div>
       </div>
       <button class="nav-btn active" data-tab="schedule" data-short="Week">Weekly Timetable</button>
       <button class="nav-btn" data-tab="teacherOverview" data-short="Tutor">Teacher Overview</button>
+      <button class="nav-btn" data-tab="crm" data-short="CRM">CRM Leads</button>
+      <button class="nav-btn" data-tab="guidance" data-short="Guide">Guidance</button>
       <button class="nav-btn" data-tab="teachers" data-short="Teach">Teachers</button>
       <button class="nav-btn" data-tab="students" data-short="Stu">Students</button>
       <button class="nav-btn" data-tab="reports" data-short="Rpt">Reports</button>
@@ -188,6 +198,87 @@
         <div id="teacherOverviewGrid" class="overview-grid"></div>
       </section>
 
+      <section id="crm" class="tab hide">
+        <div class="grid two">
+          <div class="panel">
+            <h2>Lead Profile</h2>
+            <input id="leadId" type="hidden">
+            <div class="grid two">
+              <div><label>Parent Name</label><input id="leadParentName" placeholder="Parent name"></div>
+              <div><label>Parent Phone</label><input id="leadParentPhone" placeholder="Phone / WhatsApp"></div>
+              <div><label>Child Name</label><input id="leadChildName" placeholder="Child name"></div>
+              <div><label>Child Age / Year</label><input id="leadChildAge" placeholder="Age or school year"></div>
+              <div><label>Source</label><input id="leadSource" list="leadSourceOptions" placeholder="Facebook Ads"></div>
+              <div><label>Salesperson</label><input id="leadSalesperson" placeholder="Salesperson name"></div>
+              <div><label>Status</label><select id="leadStatus"></select></div>
+              <div><label>Urgency</label><select id="leadUrgency"></select></div>
+              <div><label>Mother Tongue</label><input id="leadMotherTongue" placeholder="Mandarin / English / BM"></div>
+              <div><label>Package Interested</label><input id="leadPackage" list="packageOptions" placeholder="Package"></div>
+              <div><label>Preferred Class Day / Time</label><input id="leadPreferredTime" placeholder="Example: Mon 6pm"></div>
+              <div><label>Next Follow-up Date</label><input id="leadNextFollowUp" type="date"></div>
+            </div>
+            <div style="margin-top:12px;"><label>Subject Interested</label><div id="leadSubjectChecks" class="row"></div></div>
+            <div style="margin-top:12px;"><label>Notes / Conversation Summary</label><textarea id="leadNotes" placeholder="Latest WhatsApp/call notes"></textarea></div>
+            <datalist id="leadSourceOptions"><option value="Facebook Ads"></option><option value="Instagram"></option><option value="Referral"></option><option value="Walk-in"></option><option value="WhatsApp"></option></datalist>
+            <div class="row" style="margin-top:14px;">
+              <button class="btn mint" id="saveLeadBtn">Save Lead</button>
+              <button class="btn ghost" id="newLeadBtn">New Lead</button>
+              <button class="btn ghost" id="createStudentFromLeadBtn">Create Student From Lead</button>
+            </div>
+          </div>
+          <div class="panel">
+            <h2>Lead List</h2>
+            <div class="grid three">
+              <div><label>Status</label><select id="leadFilterStatus"></select></div>
+              <div><label>Urgency</label><select id="leadFilterUrgency"></select></div>
+              <div><label>Search</label><input id="leadSearch" placeholder="Parent / child / phone"></div>
+            </div>
+            <div id="leadList" class="list" style="margin-top:14px;"></div>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <div class="panel">
+            <h2>Book Assessment</h2>
+            <div class="grid four">
+              <div><label>Student / Child</label><select id="assessmentStudent"></select></div>
+              <div><label>Date</label><input id="assessmentDate" type="date"></div>
+              <div><label>Time</label><input id="assessmentTime" type="time" step="1800"></div>
+              <div><label>Teacher</label><select id="assessmentTeacher"></select></div>
+              <div><label>Subject</label><select id="assessmentSubject"></select></div>
+            </div>
+            <div class="row" style="margin-top:12px;"><button class="btn mint" id="bookAssessmentBtn">Book Assessment</button></div>
+          </div>
+          <div class="panel">
+            <h2>Book Trial Class</h2>
+            <div class="grid four">
+              <div><label>Student / Child</label><select id="trialStudent"></select></div>
+              <div><label>Date</label><input id="trialDate" type="date"></div>
+              <div><label>Time</label><input id="trialTime" type="time" step="1800"></div>
+              <div><label>Teacher</label><select id="trialTeacher"></select></div>
+              <div><label>Subject</label><select id="trialSubject"></select></div>
+            </div>
+            <div class="row" style="margin-top:12px;"><button class="btn mint" id="bookTrialBtn">Book Trial</button></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="guidance" class="tab hide">
+        <div class="panel">
+          <h2>Sales Guide</h2>
+          <ol class="guide-list">
+            <li>Add every new parent contact in CRM Leads, including parent phone, child name, source, urgency, and interested subjects.</li>
+            <li>Set status as New Contact first, then update it after every WhatsApp/call.</li>
+            <li>Always write a short note after speaking with the parent and set the next follow-up date before leaving the lead.</li>
+            <li>Use Weekly Timetable or Teacher Overview to check available teacher slots before proposing times.</li>
+            <li>When parent agrees to assessment, choose child, date, time, teacher, and subject, then click Book Assessment.</li>
+            <li>When parent agrees to trial class, choose child, date, time, teacher, and subject, then click Book Trial.</li>
+            <li>Assessment and trial bookings block the teacher's 30-minute slot and show in the timetable as 25-minute sessions.</li>
+            <li>After the child enrolls, update lead status to Enrolled and create/update the Student Profile with package and regular class slots.</li>
+          </ol>
+        </div>
+      </section>
+
       <section id="teachers" class="tab hide">
         <div class="grid two">
           <div class="panel">
@@ -199,7 +290,7 @@
               <div><label>Class Rate</label><input id="teacherRate" type="number" min="0" step="0.01" placeholder="0.00"></div>
               <div><label>Profile Picture</label><input id="teacherPhoto" type="file" accept="image/*"></div>
             </div>
-          <div style="margin-top:12px;"><label>Teaching Subjects</label><div id="teacherSubjects" class="row"></div></div>
+            <div style="margin-top:12px;"><label>Teaching Subjects</label><div id="teacherSubjects" class="row"></div></div>
             <div class="row" style="margin-top:14px;">
               <button class="btn mint" id="saveTeacherBtn">Save Teacher</button>
               <button class="btn ghost" id="newTeacherBtn">New</button>
@@ -234,7 +325,7 @@
           </div>
           <div class="panel">
             <h2>Particular Week / Date Slots</h2>
-          <div class="grid four">
+            <div class="grid four">
               <div><label>Teacher</label><select id="overrideTeacher"></select></div>
               <div><label>Date</label><input id="overrideDate" type="date"></div>
               <div><label>Start Time</label><input id="overrideTime" type="time" step="1800"></div>
@@ -270,6 +361,7 @@
           </div>
           <div class="panel">
             <h2>Students</h2>
+            <div><label>Search Student</label><input id="studentSearch" placeholder="Search student name"></div>
             <div id="studentList" class="list"></div>
           </div>
         </div>
@@ -313,6 +405,17 @@
             <button class="btn ghost" id="pushBtn">Push To Sheet</button>
             <button class="btn danger" id="resetDemoBtn">Clear Browser Data</button>
           </div>
+          <hr style="border:0;border-top:1px solid var(--line);margin:18px 0;">
+          <h2>CRM Leads Sync</h2>
+          <div class="subtle">Use a separate Google Sheet and the CRM Apps Script for parent leads.</div>
+          <div class="grid two" style="margin-top:14px;">
+            <div><label>CRM Web App URL</label><input id="crmScriptUrl" placeholder="https://script.google.com/macros/s/.../exec"></div>
+            <div><label>CRM API Key</label><input id="crmApiKey" placeholder="Private key for CRM sheet"></div>
+          </div>
+          <div class="row" style="margin-top:14px;">
+            <button class="btn mint" id="crmPullBtn">Pull CRM Leads</button>
+            <button class="btn ghost" id="crmPushBtn">Push CRM Leads</button>
+          </div>
         </div>
       </section>
     </main>
@@ -335,14 +438,18 @@
 
 <script>
     const SUBJECTS = ["CN", "BM", "PK", "SOK", "CREATIVE MATHS", "PHONICS"];
+    const LEAD_SUBJECTS = ["BC", "BM", "PK", "SOK", "Phonics"];
     const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
     const BOOKING_TYPES = ["exam", "assessment", "trial class", "replacement class", "reserve", "new students", "regular class"];
+    const LEAD_STATUSES = ["New Contact", "Follow Up", "No Response", "Assessment", "Trial Class", "Enrolled", "Lost"];
+    const URGENCIES = ["hot", "warm", "cold"];
     const STORE_KEY = "classOneBookingRevamp.v1";
     const state = {
       teachers: [],
       students: [],
+      leads: [],
       bookings: [],
-      settings: { scriptUrl: "", apiKey: "" }
+      settings: { scriptUrl: "", apiKey: "", crmScriptUrl: "", crmApiKey: "" }
     };
     let studentRegularSlotsDraft = [];
     const $ = (id) => document.getElementById(id);
@@ -368,17 +475,21 @@
     const studentById = (id) => state.students.find(s => s.id === id);
     const escapeHtml = (text) => String(text ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
 
-    function load() {
+     function load() {
       const saved = localStorage.getItem(STORE_KEY);
       if (saved) Object.assign(state, JSON.parse(saved));
       $("scriptUrl").value = state.settings.scriptUrl || "";
       $("apiKey").value = state.settings.apiKey || "";
+      $("crmScriptUrl").value = state.settings.crmScriptUrl || "";
+      $("crmApiKey").value = state.settings.crmApiKey || "";
       archivePast(false);
     }
 
     function save(show = true) {
       state.settings.scriptUrl = $("scriptUrl").value.trim();
       state.settings.apiKey = $("apiKey").value.trim();
+      state.settings.crmScriptUrl = $("crmScriptUrl").value.trim();
+      state.settings.crmApiKey = $("crmApiKey").value.trim();
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
       if (show) setStatus("Saved.");
       renderAll();
@@ -398,17 +509,25 @@
       ["teacherFilter"].forEach(id => fillSelect($(id), teacherOptions, "All Teachers"));
       ["overviewTeacherFilter"].forEach(id => fillSelect($(id), teacherOptions, "Choose Teacher"));
       ["slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher", "reportTeacher"].forEach(id => fillSelect($(id), teacherOptions));
+      ["assessmentTeacher", "trialTeacher"].forEach(id => fillSelect($(id), teacherOptions));
       ["subjectFilter", "overviewSubjectFilter"].forEach(id => fillSelect($(id), SUBJECTS, "All Subjects"));
-      ["slotSubject", "bulkSubject", "overrideSubject", "studentSubject", "studentRegularSubject", "bookingSubject"].forEach(id => fillSelect($(id), SUBJECTS));
+      ["slotSubject", "bulkSubject", "overrideSubject", "studentSubject", "studentRegularSubject", "bookingSubject", "assessmentSubject", "trialSubject"].forEach(id => fillSelect($(id), SUBJECTS));
+      fillSelect($("leadStatus"), LEAD_STATUSES);
+      fillSelect($("leadUrgency"), URGENCIES);
+      fillSelect($("leadFilterStatus"), LEAD_STATUSES, "All Status");
+      fillSelect($("leadFilterUrgency"), URGENCIES, "All Urgency");
       fillSelect($("bookingType"), BOOKING_TYPES);
       fillSelect($("bookingStudent"), studentOptions, "Choose or type name");
+      fillSelect($("assessmentStudent"), studentOptions, "Choose student");
+      fillSelect($("trialStudent"), studentOptions, "Choose student");
       $("packageOptions").innerHTML = packageOptions.map(pkg => `<option value="${escapeHtml(pkg)}"></option>`).join("");
       fillSelect($("slotDay"), DAYS);
       $("studentDayChecks").innerHTML = DAYS.map(day => `<label class="pill"><input type="checkbox" value="${day}" style="width:auto;min-height:0;margin-right:6px;"> ${day.slice(0, 3)}</label>`).join("");
+      $("leadSubjectChecks").innerHTML = LEAD_SUBJECTS.map(s => `<label class="pill"><input type="checkbox" value="${s}" style="width:auto;min-height:0;margin-right:6px;"> ${s}</label>`).join("");
       $("teacherSubjects").innerHTML = SUBJECTS.map(s => `<label class="pill"><input type="checkbox" value="${s}" style="width:auto;min-height:0;margin-right:6px;"> ${s}</label>`).join("");
     }
 
-    function setupMonths() {
+  function setupMonths() {
       const now = new Date();
       $("monthSelect").value = now.getMonth();
       $("reportMonth").value = now.getMonth();
@@ -420,7 +539,7 @@
       const currentWeekValue = localISO(monday);
       if ([...$("weekSelect").options].some(o => o.value === currentWeekValue)) $("weekSelect").value = currentWeekValue;
     }
-          
+  
     function refreshWeeks() {
       const y = Number($("yearInput").value);
       const m = Number($("monthSelect").value);
@@ -572,6 +691,7 @@
       const subject = slot.subject || (teacher.subjects || [])[0] || "";
       if (booking) {
         const reserveClass = booking.type === "reserve" ? " reserve" : "";
+        const typeClass = ` type-${String(booking.type || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
         return `<button class="slot booked${reserveClass}" data-booking-id="${booking.id}">${escapeHtml(teacher.name)}<small>Booked by ${escapeHtml(booking.studentName)} | ${escapeHtml(booking.type)} | ${escapeHtml(subject)}</small></button>`;
       }
       if (slot.locked) {
@@ -604,7 +724,8 @@
     }
 
     function renderStudents() {
-      $("studentList").innerHTML = state.students.map(s => {
+      const search = ($("studentSearch")?.value || "").trim().toLowerCase();
+      $("studentList").innerHTML = state.students.filter(s => !search || String(s.name || "").toLowerCase().includes(search)).map(s => {
         const regularSlots = getStudentRegularSlots(s);
         const lines = regularSlots.map(slot => {
           const t = teacherById(slot.teacherId);
@@ -638,6 +759,49 @@
       document.querySelectorAll("#studentDayChecks input").forEach(input => {
         input.checked = days.includes(input.value);
       });
+    }
+  
+  function selectedLeadSubjects() {
+      return [...document.querySelectorAll("#leadSubjectChecks input:checked")].map(input => input.value);
+    }
+
+    function setSelectedLeadSubjects(subjects) {
+      document.querySelectorAll("#leadSubjectChecks input").forEach(input => {
+        input.checked = (subjects || []).includes(input.value);
+      });
+    }
+
+  function clearLeadForm() {
+      ["leadId", "leadParentName", "leadParentPhone", "leadChildName", "leadChildAge", "leadSource", "leadSalesperson", "leadMotherTongue", "leadPackage", "leadPreferredTime", "leadNextFollowUp", "leadNotes"].forEach(id => $(id).value = "");
+      $("leadStatus").value = "New Contact";
+      $("leadUrgency").value = "warm";
+      setSelectedLeadSubjects([]);
+    }
+
+    function renderLeads() {
+      const status = $("leadFilterStatus").value;
+      const urgency = $("leadFilterUrgency").value;
+      const search = $("leadSearch").value.trim().toLowerCase();
+      const leads = state.leads
+        .filter(lead => !lead.archived)
+        .filter(lead => status === "all" || lead.status === status)
+        .filter(lead => urgency === "all" || lead.urgency === urgency)
+        .filter(lead => !search || [lead.parentName, lead.parentPhone, lead.childName, lead.source, lead.salesperson].some(v => String(v || "").toLowerCase().includes(search)))
+        .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+      $("leadList").innerHTML = leads.map(lead => `
+        <div class="card lead-card ${escapeHtml(lead.urgency || "warm")}">
+          <div class="row spread"><strong>${escapeHtml(lead.childName || "Unnamed Child")}</strong><span><span class="pill">${escapeHtml(lead.status || "New Contact")}</span><span class="pill">${escapeHtml(lead.urgency || "warm")}</span></span></div>
+          <div class="subtle">
+            Parent: ${escapeHtml(lead.parentName || "")} | ${escapeHtml(lead.parentPhone || "")}<br>
+            Subject: ${(lead.subjects || []).map(escapeHtml).join(", ") || "-"} | Source: ${escapeHtml(lead.source || "-")}<br>
+            Follow-up: ${escapeHtml(lead.nextFollowUp || "-")} | Package: ${escapeHtml(lead.packageInterested || "-")}
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <button class="btn small ghost" data-edit-lead="${lead.id}">Edit</button>
+            <button class="btn small ghost" data-archive-lead="${lead.id}">Archive</button>
+            <button class="btn small danger" data-delete-lead="${lead.id}">Delete</button>
+          </div>
+        </div>`).join("") || `<div class="empty">No matching leads.</div>`;
     }
           
     function renderArchive() {
@@ -678,6 +842,7 @@
       renderReport();
       renderTeacherOverview();
       renderStudentRegularSlotDraft();
+      renderLeads();
     }
 
     function clearTeacherForm() {
@@ -745,6 +910,27 @@
       setStatus("Pushed data to Google Sheet.");
     }
 
+  async function crmPull() {
+      const url = $("crmScriptUrl").value.trim();
+      if (!url) return alert("Paste your CRM Apps Script web app URL first.");
+      const res = await fetch(`${url}?action=read&key=${encodeURIComponent($("crmApiKey").value.trim())}`);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "CRM pull failed");
+      state.leads = data.leads || [];
+      save(false);
+      setStatus("Pulled CRM leads from Google Sheet.");
+    }
+  
+  async function crmPush() {
+      const url = $("crmScriptUrl").value.trim();
+      if (!url) return alert("Paste your CRM Apps Script web app URL first.");
+      const res = await fetch(url, { method: "POST", body: JSON.stringify({ action: "write", key: $("crmApiKey").value.trim(), leads: state.leads || [] }) });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "CRM push failed");
+      save(false);
+      setStatus("Pushed CRM leads to Google Sheet.");
+    }
+
     async function autoPushIfConfigured(successMessage) {
       const url = $("scriptUrl").value.trim();
       const key = $("apiKey").value.trim();
@@ -760,6 +946,49 @@
       } catch (err) {
         setStatus(`${successMessage} Sync failed: ${err.message}`);
       }
+    }
+
+  async function autoPushCrmIfConfigured() {
+      const url = $("crmScriptUrl").value.trim();
+      const key = $("crmApiKey").value.trim();
+      if (!url || !key) return;
+      try {
+        await fetch(url, { method: "POST", body: JSON.stringify({ action: "write", key, leads: state.leads || [] }) });
+      } catch (err) {
+        setStatus(`CRM sync failed: ${err.message}`);
+      }
+    }
+
+  async function createCrmBooking(kind) {
+      const prefix = kind === "assessment" ? "assessment" : "trial";
+      const student = studentById($(prefix + "Student").value);
+      const teacherId = $(prefix + "Teacher").value;
+      const date = $(prefix + "Date").value;
+      const time = $(prefix + "Time").value;
+      const subject = $(prefix + "Subject").value;
+      if (!student || !teacherId || !date || !time || !subject) return alert("Choose student, date, time, teacher, and subject first.");
+      const d = parseISODate(date);
+      const day = DAYS[(d.getDay() + 6) % 7];
+      const lockedSlot = collectSlotsForDate(d).find(slot => slot.teacherId === teacherId && slot.time === time && slot.locked);
+      if (lockedSlot) return alert("This teacher slot is a fixed regular class and cannot be booked.");
+      const duplicate = activeBookings().find(b => b.teacherId === teacherId && b.date === date && b.time === time);
+      if (duplicate) return alert(`This slot is already booked by ${duplicate.studentName}.`);
+      const booking = { id: uid("booking"), teacherId, date, day, time, subject, studentId: student.id, studentName: student.name, type: kind === "assessment" ? "assessment" : "trial class", status: "booked", archived: false, minutes: 25, createdAt: new Date().toISOString() };
+      state.bookings.push(booking);
+      const lead = state.leads.find(item => String(item.childName || "").toLowerCase() === String(student.name || "").toLowerCase());
+      if (lead) {
+        lead.status = kind === "assessment" ? "Assessment" : "Trial Class";
+        lead.updatedAt = new Date().toISOString();
+        lead[kind + "Date"] = date;
+        lead[kind + "Time"] = time;
+        lead[kind + "TeacherId"] = teacherId;
+        lead[kind + "Subject"] = subject;
+        lead[kind + "BookingId"] = booking.id;
+      }
+      save(false);
+      renderAll();
+      await autoPushIfConfigured(`${kind === "assessment" ? "Assessment" : "Trial"} booked.`);
+      await autoPushCrmIfConfigured();
     }
           
     async function animateClick(button, action) {
@@ -855,6 +1084,41 @@
         studentRegularSlotsDraft = studentRegularSlotsDraft.filter(slot => slot.id !== removeStudentRegular.dataset.removeStudentRegular);
         renderStudentRegularSlotDraft();
       }
+      const editLead = e.target.closest("[data-edit-lead]");
+      if (editLead) {
+        const lead = state.leads.find(item => item.id === editLead.dataset.editLead);
+        if (lead) {
+          $("leadId").value = lead.id;
+          $("leadParentName").value = lead.parentName || "";
+          $("leadParentPhone").value = lead.parentPhone || "";
+          $("leadChildName").value = lead.childName || "";
+          $("leadChildAge").value = lead.childAge || "";
+          $("leadSource").value = lead.source || "";
+          $("leadSalesperson").value = lead.salesperson || "";
+          $("leadStatus").value = lead.status || "New Contact";
+          $("leadUrgency").value = lead.urgency || "warm";
+          $("leadMotherTongue").value = lead.motherTongue || "";
+          $("leadPackage").value = lead.packageInterested || "";
+          $("leadPreferredTime").value = lead.preferredTime || "";
+          $("leadNextFollowUp").value = lead.nextFollowUp || "";
+          $("leadNotes").value = lead.notes || "";
+          setSelectedLeadSubjects(lead.subjects || []);
+        }
+      }
+      const archiveLead = e.target.closest("[data-archive-lead]");
+      if (archiveLead) {
+        const lead = state.leads.find(item => item.id === archiveLead.dataset.archiveLead);
+        if (lead) {
+          lead.archived = true;
+          lead.updatedAt = new Date().toISOString();
+          save();
+        }
+      }
+      const deleteLead = e.target.closest("[data-delete-lead]");
+      if (deleteLead && confirm("Delete this lead?")) {
+        state.leads = state.leads.filter(item => item.id !== deleteLead.dataset.deleteLead);
+        save();
+      }
     });
 
     $("saveBtn").onclick = () => save();
@@ -922,6 +1186,48 @@
       });
       renderStudentRegularSlotDraft();
     };
+  $("saveLeadBtn").onclick = () => {
+      const parentName = $("leadParentName").value.trim();
+      const parentPhone = $("leadParentPhone").value.trim();
+      const childName = $("leadChildName").value.trim();
+      if (!parentName || !parentPhone || !childName) return alert("Parent name, phone, and child name are required.");
+      const now = new Date().toISOString();
+      const id = $("leadId").value || uid("lead");
+      const existing = state.leads.find(lead => lead.id === id) || { id, createdAt: now };
+      Object.assign(existing, {
+        parentName,
+        parentPhone,
+        childName,
+        childAge: $("leadChildAge").value.trim(),
+        subjects: selectedLeadSubjects(),
+        source: $("leadSource").value.trim(),
+        salesperson: $("leadSalesperson").value.trim(),
+        status: $("leadStatus").value,
+        urgency: $("leadUrgency").value,
+        motherTongue: $("leadMotherTongue").value.trim(),
+        packageInterested: $("leadPackage").value.trim(),
+        preferredTime: $("leadPreferredTime").value.trim(),
+        nextFollowUp: $("leadNextFollowUp").value,
+        notes: $("leadNotes").value.trim(),
+        updatedAt: now,
+        archived: false
+      });
+      if (!state.leads.some(lead => lead.id === id)) state.leads.push(existing);
+      save();
+      clearLeadForm();
+      autoPushCrmIfConfigured();
+    };
+    $("newLeadBtn").onclick = clearLeadForm;
+    $("createStudentFromLeadBtn").onclick = () => {
+      const childName = $("leadChildName").value.trim();
+      const packageName = $("leadPackage").value.trim();
+      if (!childName || !packageName) return alert("Child name and package interested are required first.");
+      const existing = state.students.find(s => String(s.name || "").toLowerCase() === childName.toLowerCase());
+      if (existing) return alert("This child already exists in the student list.");
+      state.students.push({ id: uid("student"), name: childName, subject: "CN", package: packageName, status: "active", regularSlots: [] });
+      save();
+      setStatus("Student created from lead.");
+    };
     $("confirmBookingBtn").onclick = async () => {
       const slot = JSON.parse($("bookingSlot").value);
       const student = studentById($("bookingStudent").value);
@@ -959,13 +1265,20 @@
         renderSchedule();
       };
     });
-    ["reportTeacher", "reportMonth", "reportYear", "targetLessons", "targetAttendance"].forEach(id => $(id).addEventListener("change", renderReport));
+     ["reportTeacher", "reportMonth", "reportYear", "targetLessons", "targetAttendance"].forEach(id => $(id).addEventListener("change", renderReport));
+    $("studentSearch").addEventListener("input", renderStudents);
+    ["leadFilterStatus", "leadFilterUrgency"].forEach(id => $(id).addEventListener("change", renderLeads));
+    $("leadSearch").addEventListener("input", renderLeads);
     $("generateReportBtn").onclick = renderReport;
     $("pullBtn").onclick = () => animateClick($("pullBtn"), () => syncPull().catch(err => alert(err.message)));
     $("pushBtn").onclick = () => animateClick($("pushBtn"), () => syncPush().catch(err => alert(err.message)));
+    $("crmPullBtn").onclick = () => animateClick($("crmPullBtn"), () => crmPull().catch(err => alert(err.message)));
+    $("crmPushBtn").onclick = () => animateClick($("crmPushBtn"), () => crmPush().catch(err => alert(err.message)));
+    $("bookAssessmentBtn").onclick = () => createCrmBooking("assessment");
+    $("bookTrialBtn").onclick = () => createCrmBooking("trial");
     $("resetDemoBtn").onclick = () => animateClick($("resetDemoBtn"), async () => { if (confirm("Clear all browser data for this app?")) { localStorage.removeItem(STORE_KEY); location.reload(); } });
     $("sidebarToggle").onclick = () => setSidebarCollapsed(!document.querySelector(".app-shell").classList.contains("sidebar-collapsed"));
-
+  
           load();
     setSidebarCollapsed(localStorage.getItem("classOneSidebarCollapsed") === "1");
     hydrateSelects();
