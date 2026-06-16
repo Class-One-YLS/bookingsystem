@@ -124,6 +124,12 @@
     .lead-table td { vertical-align: top; }
     .guide-list { display: grid; gap: 10px; }
     .guide-list li { background: #fbfdfc; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+     #crm > .grid.two:first-child { grid-template-columns: 1fr; }
+    .filter-panel { display: grid; gap: 12px; margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: #fbfdfc; }
+    .template-grid { display: grid; grid-template-columns: minmax(260px, 380px) minmax(0, 1fr); gap: 16px; }
+    .template-item { text-align: left; width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 12px; color: var(--ink); }
+    .template-item.active { border-color: var(--mint); box-shadow: inset 4px 0 0 var(--mint); }
+    .template-preview { white-space: pre-wrap; background: #fbfdfc; border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-height: 180px; }
     .teacher-card { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 12px; }
     .avatar { width: 58px; height: 58px; border-radius: 8px; background: var(--soft); object-fit: cover; display: grid; place-items: center; font-weight: 900; color: var(--mint-dark); }
     .list { display: grid; gap: 10px; max-height: 480px; overflow: auto; padding-right: 4px; }
@@ -142,6 +148,7 @@
       .app-shell { grid-template-columns: 1fr; }
       aside { position: static; height: auto; }
       .toolbar, .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }
+       .template-grid { grid-template-columns: 1fr; }
       .topbar { align-items: flex-start; flex-direction: column; }
     }
   </style>
@@ -248,6 +255,25 @@
               <div><label>Urgency</label><select id="leadFilterUrgency"></select></div>
               <div><label>Search</label><input id="leadSearch" placeholder="Parent / child / phone"></div>
             </div>
+             <div class="filter-panel">
+              <div class="row spread">
+                <strong>Table Filters</strong>
+                <button class="btn small ghost" id="clearLeadColumnFiltersBtn">Clear Table Filters</button>
+              </div>
+              <div class="grid four">
+                <div><label>Child</label><input id="leadFilterChild" data-lead-column-filter placeholder="Child name"></div>
+                <div><label>Parent / Phone</label><input id="leadFilterParent" data-lead-column-filter placeholder="Parent or phone"></div>
+                <div><label>Subject</label><input id="leadFilterSubject" data-lead-column-filter placeholder="BC / BM / Phonics"></div>
+                <div><label>Source</label><input id="leadFilterSource" data-lead-column-filter placeholder="Facebook Ads"></div>
+                <div><label>Salesperson</label><input id="leadFilterSalesperson" data-lead-column-filter placeholder="Salesperson"></div>
+                <div><label>Package</label><input id="leadFilterPackage" data-lead-column-filter placeholder="Package"></div>
+                <div><label>Follow-up From</label><input id="leadFilterFollowFrom" data-lead-column-filter type="date"></div>
+                <div><label>Follow-up To</label><input id="leadFilterFollowTo" data-lead-column-filter type="date"></div>
+                <div><label>Assessment Date</label><input id="leadFilterAssessment" data-lead-column-filter type="date"></div>
+                <div><label>Trial Date</label><input id="leadFilterTrial" data-lead-column-filter type="date"></div>
+                <div><label>Notes</label><input id="leadFilterNotes" data-lead-column-filter placeholder="Keyword"></div>
+              </div>
+            </div>
             <div class="reminder-panel" id="leadReminderBox"></div>
             <div id="leadList" class="list" style="margin-top:14px;"></div>
           </div>
@@ -281,17 +307,57 @@
 
       <section id="guidance" class="tab hide">
         <div class="panel">
-          <h2>Sales Guide</h2>
+          <h2>Tab Guidance</h2>
           <ol class="guide-list">
-            <li>Add every new parent contact in CRM Leads, including parent phone, child name, source, urgency, and interested subjects.</li>
-            <li>Set status as New Contact first, then update it after every WhatsApp/call.</li>
-            <li>Always write a short note after speaking with the parent and set the next follow-up date before leaving the lead.</li>
-            <li>Use Weekly Timetable or Teacher Overview to check available teacher slots before proposing times.</li>
-            <li>When parent agrees to assessment, choose child, date, time, teacher, and subject, then click Book Assessment.</li>
-            <li>When parent agrees to trial class, choose child, date, time, teacher, and subject, then click Book Trial.</li>
-            <li>Assessment and trial bookings block the teacher's 30-minute slot and show in the timetable as 25-minute sessions.</li>
-            <li>After the child enrolls, update lead status to Enrolled and create/update the Student Profile with package and regular class slots.</li>
+             <li><strong>Weekly Timetable:</strong> Sales checks available teacher slots by month, week, teacher, subject, time range, and status. Click an open slot to book exam, assessment, trial, replacement, reserve, new student, or regular class.</li>
+            <li><strong>Teacher Overview:</strong> Use this when parents ask for one teacher's schedule. Filter by teacher, subject, and open/booked status before proposing slots.</li>
+            <li><strong>CRM Leads:</strong> Add every new parent contact, track status, urgency, follow-up date, notes, and booking progress. Use table view for daily follow-up tracking.</li>
+            <li><strong>Teachers:</strong> Admin adds teacher profile, subjects, rate, tier, profile picture, regular slots, and particular date slots.</li>
+            <li><strong>Students:</strong> Admin adds student name, package, subject, and one or more regular weekly class slots.</li>
+            <li><strong>Reports:</strong> Check CRM monthly lead count and teacher completed lessons. Export reports when needed.</li>
+            <li><strong>Archive:</strong> Review cancelled, archived, and completed past booking records.</li>
+            <li><strong>Sync Settings:</strong> Connect the website to Google Apps Script. Pull before Push when another admin may have updated the sheet.</li>
           </ol>
+        </div>
+        <div class="panel">
+          <h2>New Leads Contact SOP</h2>
+          <ol class="guide-list">
+            <li>Check `Needs Action` every working day. New leads should be contacted as soon as possible, preferably on the same day.</li>
+            <li>Send the first contact message, then confirm child name, age/year, mother tongue, interested subject, learning concern, and preferred day/time.</li>
+            <li>Update the CRM notes after every WhatsApp, call, or voice message. Notes should show what parent asked and what salesperson replied.</li>
+            <li>Set urgency: `hot` when parent asks price, slot, assessment, or wants to start soon; `warm` when interested but still considering; `cold` when response is slow or not urgent.</li>
+            <li>Always set `Next Follow-up Date` before leaving the lead. If there is no next date, the lead will keep appearing in Needs Action.</li>
+            <li>If parent agrees to assessment, update status to `Assessment`, create/check student, then book the teacher assessment slot.</li>
+            <li>If parent agrees to trial, update status to `Trial Class`, create/check student, then book the teacher trial slot.</li>
+            <li>After assessment or trial, follow up with parent on the same day or next working day and update notes clearly.</li>
+            <li>When enrolled, update status to `Enrolled`, create/update Student Profile, add package, and set regular weekly slot.</li>
+            <li>If parent does not reply after several follow-ups, update status to `No Response` or `Lost` with a short reason in notes.</li>
+          </ol>
+        </div>
+        <div class="panel">
+          <div class="row spread">
+            <h2>Reply Templates</h2>
+            <button class="btn ghost small" id="newTemplateBtn">New Template</button>
+          </div>
+          <div class="template-grid">
+            <div>
+              <div id="templateList" class="list"></div>
+            </div>
+            <div>
+              <input id="templateId" type="hidden">
+              <div class="grid two">
+                <div><label>Title</label><input id="templateTitle" placeholder="Template title"></div>
+                <div><label>Category</label><input id="templateCategory" placeholder="First contact / Follow-up"></div>
+              </div>
+              <div style="margin-top:12px;"><label>Message</label><textarea id="templateBody" style="min-height:180px;" placeholder="Reply message"></textarea></div>
+              <div class="row" style="margin-top:12px;">
+                <button class="btn mint" id="saveTemplateBtn">Save Template</button>
+                <button class="btn ghost" id="copyTemplateBtn">Copy Message</button>
+                <button class="btn danger" id="deleteTemplateBtn">Delete</button>
+              </div>
+              <div class="template-preview" id="templatePreview" style="margin-top:12px;"></div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -487,13 +553,26 @@
     const BOOKING_TYPES = ["exam", "assessment", "trial class", "replacement class", "reserve", "new students", "regular class"];
     const LEAD_STATUSES = ["New Contact", "Follow Up", "No Response", "Assessment", "Trial Class", "Enrolled", "Lost"];
     const URGENCIES = ["hot", "warm", "cold"];
+    const DEFAULT_REPLY_TEMPLATES = [
+      { id: "tpl_first_contact", title: "First Contact", category: "New lead", body: "Hi, good day. This is [Salesperson Name] from Class One.\n\nThank you for your enquiry. May I know your child's name, age/year, and which subject you are looking for?\n\nWe will help check the most suitable class/teacher and available time slot for your child." },
+      { id: "tpl_child_details", title: "Ask Child Details", category: "Qualification", body: "May I know more about your child so we can recommend properly?\n\nChild name:\nAge / school year:\nSubject interested:\nMother tongue:\nPreferred class day/time:" },
+      { id: "tpl_learning_concern", title: "Ask Learning Concern", category: "Qualification", body: "May I know what you would like your child to improve most?\n\nFor example: foundation, school exam preparation, confidence, reading, writing, speaking, or homework support." },
+      { id: "tpl_assessment", title: "Explain Assessment", category: "Assessment", body: "We can arrange a 25-minute assessment first. The teacher will understand your child's current level and learning needs, then we can advise the suitable class and learning plan.\n\nMay I check which day/time is convenient for you?" },
+      { id: "tpl_trial", title: "Invite Trial Class", category: "Trial", body: "We can arrange a 25-minute trial class so your child can experience the lesson first.\n\nAfter the trial, we will update you on your child's response and suitable next step. May I check your preferred day/time?" },
+      { id: "tpl_available_slots", title: "Share Available Slots", category: "Booking", body: "I have checked the available slots. These are the options we can offer:\n\n1. [Day] [Time] with Teacher [Name]\n2. [Day] [Time] with Teacher [Name]\n\nEach session is 25 minutes within a 30-minute slot. Which one is more suitable for you?" },
+      { id: "tpl_no_reply", title: "No Reply Follow-up", category: "Follow-up", body: "Hi, just checking in. Would you still like us to help arrange a suitable class/assessment for your child?\n\nYou may let me know the subject and preferred time, then I can check the available teacher slots for you." },
+      { id: "tpl_after_assessment", title: "After Assessment", category: "Follow-up", body: "Hi, your child's assessment has been completed. We will review the teacher's feedback and advise the suitable class arrangement.\n\nMay I know if you would like us to proceed with the recommended class slot?" },
+      { id: "tpl_after_trial", title: "After Trial", category: "Follow-up", body: "Hi, thank you for attending the trial class. May I know how your child felt about the lesson?\n\nWe can help reserve the suitable regular slot if you would like to continue." },
+      { id: "tpl_package", title: "Package Reply", category: "Package", body: "Our package depends on the subject and class arrangement. I can share the suitable package after confirming your child's subject, level, and preferred schedule.\n\nMay I know which subject you are considering?" },
+      { id: "tpl_enrolment", title: "Enrollment Confirmation", category: "Enrollment", body: "Thank you for confirming the enrollment. We will reserve the regular slot for your child:\n\nStudent: [Child Name]\nSubject: [Subject]\nTeacher: [Teacher]\nRegular time: [Day] [Time]\nPackage: [Package]\n\nWe will update you if there is any class arrangement notice." }
+    ];
     const STORE_KEY = "classOneBookingRevamp.v1";
     const state = {
       teachers: [],
       students: [],
       leads: [],
       bookings: [],
-      settings: { scriptUrl: "", apiKey: "", crmScriptUrl: "", crmApiKey: "" }
+      settings: { scriptUrl: "", apiKey: "", crmScriptUrl: "", crmApiKey: "", replyTemplates: [] }
     };
     let studentRegularSlotsDraft = [];
     let leadViewMode = localStorage.getItem("classOneLeadViewMode") || "cards";
@@ -523,6 +602,8 @@
      function load() {
       const saved = localStorage.getItem(STORE_KEY);
       if (saved) Object.assign(state, JSON.parse(saved));
+      state.settings ||= {};
+      state.settings.replyTemplates = state.settings.replyTemplates?.length ? state.settings.replyTemplates : DEFAULT_REPLY_TEMPLATES.map(template => ({ ...template }));
       $("scriptUrl").value = state.settings.scriptUrl || "";
       $("apiKey").value = state.settings.apiKey || "";
       $("crmScriptUrl").value = state.settings.crmScriptUrl || "";
@@ -833,11 +914,34 @@
       const status = $("leadFilterStatus").value;
       const urgency = $("leadFilterUrgency").value;
       const search = $("leadSearch").value.trim().toLowerCase();
+      const textFilter = (id) => ($(id)?.value || "").trim().toLowerCase();
+      const child = textFilter("leadFilterChild");
+      const parent = textFilter("leadFilterParent");
+      const subject = textFilter("leadFilterSubject");
+      const source = textFilter("leadFilterSource");
+      const salesperson = textFilter("leadFilterSalesperson");
+      const packageName = textFilter("leadFilterPackage");
+      const notes = textFilter("leadFilterNotes");
+      const followFrom = $("leadFilterFollowFrom")?.value || "";
+      const followTo = $("leadFilterFollowTo")?.value || "";
+      const assessment = $("leadFilterAssessment")?.value || "";
+      const trial = $("leadFilterTrial")?.value || "";
       return state.leads
         .filter(lead => !lead.archived)
         .filter(lead => status === "all" || lead.status === status)
         .filter(lead => urgency === "all" || lead.urgency === urgency)
         .filter(lead => !search || [lead.parentName, lead.parentPhone, lead.childName, lead.source, lead.salesperson].some(v => String(v || "").toLowerCase().includes(search)))
+        .filter(lead => !child || String(lead.childName || "").toLowerCase().includes(child))
+        .filter(lead => !parent || [lead.parentName, lead.parentPhone].some(v => String(v || "").toLowerCase().includes(parent)))
+        .filter(lead => !subject || (lead.subjects || []).some(v => String(v || "").toLowerCase().includes(subject)))
+        .filter(lead => !source || String(lead.source || "").toLowerCase().includes(source))
+        .filter(lead => !salesperson || String(lead.salesperson || "").toLowerCase().includes(salesperson))
+        .filter(lead => !packageName || String(lead.packageInterested || "").toLowerCase().includes(packageName))
+        .filter(lead => !notes || String(lead.notes || "").toLowerCase().includes(notes))
+        .filter(lead => !followFrom || (lead.nextFollowUp && lead.nextFollowUp >= followFrom))
+        .filter(lead => !followTo || (lead.nextFollowUp && lead.nextFollowUp <= followTo))
+        .filter(lead => !assessment || lead.assessmentDate === assessment)
+        .filter(lead => !trial || lead.trialDate === trial)
         .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
        }
 
@@ -939,7 +1043,48 @@
       }
       renderLeadReminders();
     }
+
+  function renderTemplates() {
+      const templates = state.settings.replyTemplates || [];
+      const selectedId = $("templateId")?.value || templates[0]?.id || "";
+      const selected = templates.find(template => template.id === selectedId) || templates[0];
+      $("templateList").innerHTML = templates.map(template => `
+        <button class="template-item ${template.id === selected?.id ? "active" : ""}" data-template-id="${template.id}">
+          <strong>${escapeHtml(template.title)}</strong>
+          <div class="subtle">${escapeHtml(template.category || "General")}</div>
+        </button>`).join("") || `<div class="empty">No templates yet.</div>`;
+      if (selected) {
+        $("templateId").value = selected.id;
+        $("templateTitle").value = selected.title || "";
+        $("templateCategory").value = selected.category || "";
+        $("templateBody").value = selected.body || "";
+        $("templatePreview").textContent = selected.body || "";
+      } else {
+        clearTemplateForm();
+      }
+    }
   
+    function clearTemplateForm() {
+      $("templateId").value = "";
+      $("templateTitle").value = "";
+      $("templateCategory").value = "";
+      $("templateBody").value = "";
+      $("templatePreview").textContent = "";
+    }
+
+  function saveTemplate() {
+      const title = $("templateTitle").value.trim();
+      const body = $("templateBody").value.trim();
+      if (!title || !body) return alert("Template title and message are required.");
+      const id = $("templateId").value || uid("template");
+      const existing = (state.settings.replyTemplates || []).find(template => template.id === id) || { id };
+      Object.assign(existing, { title, category: $("templateCategory").value.trim(), body });
+      state.settings.replyTemplates ||= [];
+      if (!state.settings.replyTemplates.some(template => template.id === id)) state.settings.replyTemplates.push(existing);
+      $("templateId").value = id;
+      save();
+    }
+
     function renderArchive() {
       const rows = state.bookings.filter(b => b.archived || b.status === "cancelled").sort((a,b) => b.date.localeCompare(a.date)).map(b => {
         const t = teacherById(b.teacherId);
@@ -1065,6 +1210,7 @@
       renderTeacherOverview();
       renderStudentRegularSlotDraft();
       renderLeads();
+      renderTemplates();
     }
 
     function clearTeacherForm() {
@@ -1341,6 +1487,18 @@
         state.leads = state.leads.filter(item => item.id !== deleteLead.dataset.deleteLead);
         save();
       }
+       const templateBtn = e.target.closest("[data-template-id]");
+      if (templateBtn) {
+        const template = (state.settings.replyTemplates || []).find(item => item.id === templateBtn.dataset.templateId);
+        if (template) {
+          $("templateId").value = template.id;
+          $("templateTitle").value = template.title || "";
+          $("templateCategory").value = template.category || "";
+          $("templateBody").value = template.body || "";
+          $("templatePreview").textContent = template.body || "";
+          renderTemplates();
+        }
+      }
     });
 
   document.addEventListener("change", (e) => {
@@ -1504,8 +1662,36 @@
     $("studentSearch").addEventListener("input", renderStudents);
     ["leadFilterStatus", "leadFilterUrgency"].forEach(id => $(id).addEventListener("change", renderLeads));
     $("leadSearch").addEventListener("input", renderLeads);
+    document.querySelectorAll("[data-lead-column-filter]").forEach(input => input.addEventListener("input", renderLeads));
+    $("clearLeadColumnFiltersBtn").onclick = () => {
+      document.querySelectorAll("[data-lead-column-filter]").forEach(input => input.value = "");
+      renderLeads();
+    };
     $("leadCardViewBtn").onclick = () => { leadViewMode = "cards"; localStorage.setItem("classOneLeadViewMode", leadViewMode); renderLeads(); };
     $("leadTableViewBtn").onclick = () => { leadViewMode = "table"; localStorage.setItem("classOneLeadViewMode", leadViewMode); renderLeads(); };
+     $("newTemplateBtn").onclick = clearTemplateForm;
+    $("saveTemplateBtn").onclick = saveTemplate;
+    $("templateBody").addEventListener("input", () => $("templatePreview").textContent = $("templateBody").value);
+    $("deleteTemplateBtn").onclick = () => {
+      const id = $("templateId").value;
+      if (!id) return clearTemplateForm();
+      if (!confirm("Delete this reply template?")) return;
+      state.settings.replyTemplates = (state.settings.replyTemplates || []).filter(template => template.id !== id);
+      clearTemplateForm();
+      save();
+    };
+    $("copyTemplateBtn").onclick = async () => {
+      const message = $("templateBody").value;
+      if (!message) return alert("Choose or type a template message first.");
+      try {
+        await navigator.clipboard.writeText(message);
+        setStatus("Reply template copied.");
+      } catch (err) {
+        $("templateBody").select();
+        document.execCommand("copy");
+        setStatus("Reply template copied.");
+      }
+    };
     $("generateReportBtn").onclick = renderReport;
     $("crmReportYear").addEventListener("change", renderCrmDashboard);
     $("generateCrmDashboardBtn").onclick = renderCrmDashboard;
