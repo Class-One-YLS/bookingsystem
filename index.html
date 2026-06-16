@@ -622,7 +622,7 @@
         <div>
           <label>Class Status</label>
           <select id="outcomeStatus">
-            <option value="booked">Booked / no exception</option>
+             <option value="booked">Booked / withdraw cancellation</option>
             <option value="student_not_show">Student Not Show</option>
             <option value="cancelled">Cancelled</option>
             <option value="public_holiday">Public Holiday Cancelled</option>
@@ -659,7 +659,7 @@
       teacher_leave: "Teacher Leave"
     };
     const CANCELLED_STATUSES = ["cancelled", "public_holiday", "teacher_leave"];
-    const REPLACEMENT_STATUSES = ["Action Needed", "Contacted Parent", "Parent Confirmed", "Replacement Booked", "Settled", "No Replacement Needed"];
+    const REPLACEMENT_STATUSES = ["Action Needed", "Contacted Parent", "Parent Confirmed", "Replacement Booked", "Settled", "No Replacement Needed", "Cancellation Withdrawn"];
     const REPLACEMENT_REASONS = ["Cancelled", "Teacher Leave", "Public Holiday"];
     const LEAD_STATUSES = ["New Contact", "Follow Up", "No Response", "Assessment", "Trial Class", "Enrolled", "Lost"];
     const URGENCIES = ["hot", "warm", "cold"];
@@ -1635,9 +1635,7 @@
     async function syncPush() {
       const url = $("scriptUrl").value.trim();
       if (!url) return alert("Paste your Apps Script web app URL first.");
-      const res = await fetch(url, { method: "POST", body: JSON.stringify({ action: "write", key: $("apiKey").value.trim(), payload: state }) });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Push failed");
+      await postToAppsScript(url, { action: "write", key: $("apiKey").value.trim(), payload: state });
       suppressAutoPush = true;
       save(false);
       suppressAutoPush = false;
@@ -1660,11 +1658,27 @@
     async function crmPush() {
       const url = $("crmScriptUrl").value.trim();
       if (!url) return alert("Paste your CRM Apps Script web app URL first.");
-      const res = await fetch(url, { method: "POST", body: JSON.stringify({ action: "write", key: $("crmApiKey").value.trim(), leads: state.leads || [] }) });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "CRM push failed");
+      await postToAppsScript(url, { action: "write", key: $("crmApiKey").value.trim(), leads: state.leads || [] });
       save(false);
       setStatus("Pushed CRM leads to Google Sheet.");
+    }
+
+     async function postToAppsScript(url, body) {
+      const text = JSON.stringify(body);
+      try {
+        const res = await fetch(url, { method: "POST", body: text });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || "Push failed");
+      } catch (err) {
+        if (String(err.message || err).toLowerCase().includes("failed to fetch") && navigator.sendBeacon) {
+          const sent = navigator.sendBeacon(url, new Blob([text], { type: "text/plain;charset=UTF-8" }));
+          if (sent) {
+            setStatus("Saved to Google Sheet. Browser blocked confirmation response.", "warn");
+            return;
+          }
+        }
+        throw err;
+      }
     }
 
     async function autoPullOnStart() {
@@ -1689,12 +1703,10 @@
         return;
       }
       try {
-        const res = await fetch(url, { method: "POST", body: JSON.stringify({ action: "write", key, payload: state }) });
-        const data = await res.json();
-        if (!data.ok) throw new Error(data.error || "Push failed");
+         await postToAppsScript(url, { action: "write", key, payload: state });
         setStatus(`${successMessage} Synced to Google Sheet.`);
       } catch (err) {
-        setStatus(`${successMessage} Sync failed: ${err.message}`);
+        setStatus(`${successMessage} Sync failed: ${err.message}`, "error");
       }
     }
 
@@ -1703,9 +1715,9 @@
       const key = $("crmApiKey").value.trim();
       if (!url || !key) return;
       try {
-        await fetch(url, { method: "POST", body: JSON.stringify({ action: "write", key, leads: state.leads || [] }) });
+        await postToAppsScript(url, { action: "write", key, leads: state.leads || [] });
       } catch (err) {
-        setStatus(`CRM sync failed: ${err.message}`);
+        setStatus(`CRM sync failed: ${err.message}`, "error");
       }
     }
 
@@ -1762,12 +1774,31 @@
         booking.completedAt = booking.completedAt || new Date().toISOString();
       }
       booking.updatedAt = new Date().toISOString();
-      handleReplacementForOutcome(booking, $("outcomeReplacementNeeded").value);
+       if (replacementReasonForStatus(nextStatus)) {
+        handleReplacementForOutcome(booking, $("outcomeReplacementNeeded").value);
+      } else {
+        withdrawReplacementForBooking(booking);
+      }
       $("bookingOutcomeModal").classList.add("hide");
       save();
       setStatus(`Class marked as ${bookingStatusLabel(booking.status)}.`);
     }
 
+    function withdrawReplacementForBooking(booking) {
+      const existing = (state.replacements || []).find(item => item.bookingId === booking.id);
+      if (!existing) return;
+      if (!existing.replacementBookingId) {
+        state.replacements = (state.replacements || []).filter(item => item.id !== existing.id);
+        setStatus("Cancellation withdrawn and replacement record removed.");
+        return;
+      }
+      existing.status = "Cancellation Withdrawn";
+      existing.replacementNeeded = false;
+      existing.notes = [existing.notes, "Cancellation withdrawn. Please review linked replacement booking."].filter(Boolean).join("\n");
+      existing.updatedAt = new Date().toISOString();
+      setStatus("Cancellation withdrawn. Linked replacement record kept for review.");
+    }
+    
     function replacementReasonForStatus(status) {
       if (status === "cancelled") return "Cancelled";
       if (status === "teacher_leave") return "Teacher Leave";
