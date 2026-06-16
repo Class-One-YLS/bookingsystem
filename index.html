@@ -150,6 +150,11 @@
     th, td { padding: 10px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; vertical-align: top; }
     th { color: var(--muted); font-size: 11px; text-transform: uppercase; }
     .report-box { white-space: pre-wrap; background: #fbfdfc; border: 1px solid var(--line); border-radius: 8px; padding: 14px; min-height: 180px; }
+    .toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 40; min-width: min(520px, calc(100vw - 32px)); padding: 12px 16px; border-radius: 8px; background: var(--ink); color: #fff; box-shadow: 0 12px 28px rgba(23,33,43,.22); font-weight: 900; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .2s ease, transform .2s ease; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(4px); }
+    .toast.success { background: var(--mint-dark); }
+    .toast.error { background: #d92d20; }
+    .toast.warn { background: #b7791f; }
     @media (max-width: 900px) {
       .app-shell { grid-template-columns: 1fr; }
       aside { position: static; height: auto; }
@@ -160,6 +165,7 @@
   </style>
 </head>
 <body>
+   <div id="toast" class="toast"></div>
   <div class="app-shell">
     <aside>
       <button class="btn ghost side-toggle" id="sidebarToggle">Hide Sidebar</button>
@@ -174,6 +180,7 @@
       <button class="nav-btn" data-tab="teachers" data-short="Teach">Teachers</button>
       <button class="nav-btn" data-tab="students" data-short="Stu">Students</button>
       <button class="nav-btn" data-tab="reports" data-short="Rpt">Reports</button>
+      <button class="nav-btn" data-tab="replacements" data-short="Rep">Replacement Classes</button>
       <button class="nav-btn" data-tab="archive" data-short="Arc">Archive</button>
       <button class="nav-btn" data-tab="settings" data-short="Sync">Sync Settings</button>
     </aside>
@@ -535,6 +542,26 @@
         </div>
       </section>
 
+      <section id="replacements" class="tab hide">
+        <div class="panel">
+          <div class="row spread">
+            <h2>Replacement Classes</h2>
+            <div class="row">
+              <button class="btn ghost small" id="exportReplacementCsvBtn">Export Excel</button>
+              <button class="btn ghost small" id="exportReplacementPdfBtn">Export PDF</button>
+            </div>
+          </div>
+          <div class="grid four">
+            <div><label>Status</label><select id="replacementFilterStatus"></select></div>
+            <div><label>Reason</label><select id="replacementFilterReason"></select></div>
+            <div><label>Search</label><input id="replacementSearch" placeholder="Student / teacher / subject"></div>
+            <div><label>&nbsp;</label><button class="btn ghost" id="clearReplacementFiltersBtn">Clear Filters</button></div>
+          </div>
+          <div id="replacementSummary" class="sales-summary"></div>
+          <div id="replacementList" style="margin-top:16px;"></div>
+        </div>
+      </section>
+      
       <section id="archive" class="tab hide">
         <div class="panel">
           <h2>Archived Bookings</h2>
@@ -603,6 +630,14 @@
           </select>
         </div>
         <div><label>Remark</label><input id="outcomeRemark" placeholder="Optional note"></div>
+        <div id="publicHolidayReplacementField" class="hide">
+          <label>Public Holiday Replacement</label>
+          <select id="outcomeReplacementNeeded">
+            <option value="">Choose one</option>
+            <option value="yes">Replacement Needed</option>
+            <option value="no">No Replacement Needed</option>
+          </select>
+        </div>
       </div>
       <div class="row" style="margin-top:14px;">
         <button class="btn mint" id="saveOutcomeBtn">Save Outcome</button>
@@ -624,6 +659,8 @@
       teacher_leave: "Teacher Leave"
     };
     const CANCELLED_STATUSES = ["cancelled", "public_holiday", "teacher_leave"];
+    const REPLACEMENT_STATUSES = ["Action Needed", "Contacted Parent", "Parent Confirmed", "Replacement Booked", "Settled", "No Replacement Needed"];
+    const REPLACEMENT_REASONS = ["Cancelled", "Teacher Leave", "Public Holiday"];
     const LEAD_STATUSES = ["New Contact", "Follow Up", "No Response", "Assessment", "Trial Class", "Enrolled", "Lost"];
     const URGENCIES = ["hot", "warm", "cold"];
     const DEFAULT_REPLY_TEMPLATES = [
@@ -651,6 +688,7 @@
       students: [],
       leads: [],
       bookings: [],
+      replacements: [],
       settings: { scriptUrl: "", apiKey: "", crmScriptUrl: "", crmApiKey: "", replyTemplates: [] }
     };
     let studentRegularSlotsDraft = [];
@@ -658,6 +696,7 @@
     let autoPushTimer = null;
     let suppressAutoPush = false;
     const $ = (id) => document.getElementById(id);
+    let pendingReplacementId = "";
     const uid = (prefix) => prefix + "_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
     const localISO = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
     const parseISODate = (value) => {
@@ -723,6 +762,7 @@
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
       if (show) setStatus("Saved.");
       renderAll();
+      scheduleAutoPush();
     }
 
     function scheduleAutoPush() {
@@ -739,7 +779,15 @@
       }, 900);
     }
 
-    function setStatus(msg) { $("statusText").textContent = msg; }
+    function setStatus(msg, type = "success") {
+      $("statusText").textContent = msg;
+      const toast = $("toast");
+      if (!toast || !msg) return;
+      toast.textContent = msg;
+      toast.className = `toast ${type} show`;
+      clearTimeout(setStatus.toastTimer);
+      setStatus.toastTimer = setTimeout(() => toast.classList.remove("show"), 5000);
+    }
 
     function fillSelect(el, values, allLabel) {
       el.innerHTML = (allLabel ? `<option value="all">${allLabel}</option>` : "") + values.map(v => `<option value="${escapeHtml(v.value ?? v)}">${escapeHtml(v.label ?? v)}</option>`).join("");
@@ -760,6 +808,8 @@
       fillSelect($("leadUrgency"), URGENCIES);
       fillSelect($("leadFilterStatus"), LEAD_STATUSES, "All Status");
       fillSelect($("leadFilterUrgency"), URGENCIES, "All Urgency");
+      fillSelect($("replacementFilterStatus"), REPLACEMENT_STATUSES, "All Status");
+      fillSelect($("replacementFilterReason"), REPLACEMENT_REASONS, "All Reasons");
       fillSelect($("bookingType"), BOOKING_TYPES);
       fillSelect($("bookingStudent"), studentOptions, "Choose or type name");
       fillSelect($("assessmentStudent"), studentOptions, "Choose student");
@@ -1269,6 +1319,70 @@
         .map(b => [b.date, timeLabel(b.time), b.studentName || "", b.subject || "", b.type || "", bookingStatusLabel(b.status), b.status === "completed" ? Number(teacher.rate || 0).toFixed(2) : (b.status === "student_not_show" ? "5.00" : "0.00"), b.remark || ""]);
     }
 
+     function filteredReplacements() {
+      const status = $("replacementFilterStatus")?.value || "all";
+      const reason = $("replacementFilterReason")?.value || "all";
+      const search = ($("replacementSearch")?.value || "").trim().toLowerCase();
+      return (state.replacements || [])
+        .filter(item => status === "all" || item.status === status)
+        .filter(item => reason === "all" || item.reason === reason)
+        .filter(item => !search || [item.studentName, item.subject, item.originalTeacherName, item.replacementTeacherName].some(v => String(v || "").toLowerCase().includes(search)))
+        .sort((a, b) => `${a.status} ${a.originalDate} ${a.originalTime}`.localeCompare(`${b.status} ${b.originalDate} ${b.originalTime}`));
+    }
+
+    function renderReplacements() {
+      const rows = filteredReplacements();
+      const actionNeeded = (state.replacements || []).filter(r => r.status === "Action Needed").length;
+      const booked = (state.replacements || []).filter(r => r.status === "Replacement Booked").length;
+      const settled = (state.replacements || []).filter(r => ["Settled", "No Replacement Needed"].includes(r.status)).length;
+      $("replacementSummary").innerHTML = `
+        <div class="metric"><span class="subtle">Action needed</span><strong>${actionNeeded}</strong></div>
+        <div class="metric"><span class="subtle">Booked</span><strong>${booked}</strong></div>
+        <div class="metric"><span class="subtle">Settled / no replacement</span><strong>${settled}</strong></div>
+        <div class="metric"><span class="subtle">Total records</span><strong>${(state.replacements || []).length}</strong></div>
+      `;
+      $("replacementList").innerHTML = tableHtml(["Status", "Reason", "Student", "Subject", "Original Teacher", "Original Date", "Original Time", "Replacement Teacher", "Replacement Date", "Replacement Time", "Notes", "Actions"], rows.map(item => [
+        item.status,
+        item.reason,
+        item.studentName,
+        item.subject,
+        item.originalTeacherName,
+        item.originalDate,
+        timeLabel(item.originalTime),
+        item.replacementTeacherName || "-",
+        item.replacementDate || "-",
+        item.replacementTime ? timeLabel(item.replacementTime) : "-",
+        item.notes || "",
+        replacementActionsHtml(item)
+      ]));
+      $("replacementList").querySelectorAll("td:last-child").forEach(td => td.innerHTML = td.textContent);
+    }
+
+    function replacementActionsHtml(item) {
+      return `<div class="row">
+        <button class="btn small ghost" data-replacement-status="${item.id}|Contacted Parent">Contacted</button>
+        <button class="btn small ghost" data-replacement-status="${item.id}|Parent Confirmed">Confirmed</button>
+        <button class="btn small mint" data-book-replacement="${item.id}">Book Replacement</button>
+        <button class="btn small ghost" data-replacement-status="${item.id}|Settled">Settled</button>
+      </div>`;
+    }
+
+    function replacementExportRows() {
+      return filteredReplacements().map(item => [
+        item.status,
+        item.reason,
+        item.studentName,
+        item.subject,
+        item.originalTeacherName,
+        item.originalDate,
+        timeLabel(item.originalTime),
+        item.replacementTeacherName || "",
+        item.replacementDate || "",
+        item.replacementTime ? timeLabel(item.replacementTime) : "",
+        item.notes || ""
+      ]);
+    }
+    
     function crmMonthlyRows(year = Number($("crmReportYear").value || new Date().getFullYear())) {
       return Array.from({ length: 12 }, (_, month) => {
         const leads = state.leads.filter(lead => {
@@ -1368,6 +1482,7 @@
       link.download = filename;
       link.click();
       URL.revokeObjectURL(link.href);
+      setStatus(`${filename} downloaded.`);
     }
 
     function csvCell(value) {
@@ -1380,6 +1495,7 @@
       const html = `<!DOCTYPE html><html><head><title>${escapeHtml(title)}</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#17212b}h1{font-size:22px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #dbe5df;padding:8px;text-align:left;font-size:12px}th{background:#f4fbf7}@media print{button{display:none}}</style></head><body><button onclick="window.print()">Save as PDF / Print</button><h1>${escapeHtml(title)}</h1>${tableHtml(headers, rows)}</body></html>`;
       win.document.write(html);
       win.document.close();
+      setStatus(`${title} opened for PDF/print.`);
     }
 
     function renderAll() {
@@ -1396,6 +1512,7 @@
       renderStudentRegularSlotDraft();
       renderLeads();
       renderTemplates();
+      renderReplacements();
     }
 
     function clearTeacherForm() {
@@ -1447,6 +1564,11 @@
           b.status = "completed";
           b.archived = true;
           b.completedAt = b.completedAt || new Date().toISOString();
+          const replacement = (state.replacements || []).find(item => item.replacementBookingId === b.id);
+          if (replacement && replacement.status === "Replacement Booked") {
+            replacement.status = "Settled";
+            replacement.updatedAt = new Date().toISOString();
+          }
           changed = true;
         }
       });
@@ -1616,14 +1738,23 @@
       $("outcomeBookingId").value = booking.id;
       $("outcomeStatus").value = booking.status === "completed" ? "booked" : (booking.status || "booked");
       $("outcomeRemark").value = booking.remark || "";
+      $("outcomeReplacementNeeded").value = "";
       $("outcomeInfo").textContent = `${teacher ? teacher.name : ""} | ${booking.date} | ${timeLabel(booking.time)} | ${booking.studentName || ""} | Current: ${bookingStatusLabel(booking.status)}`;
+      updateOutcomeReplacementField();
       $("bookingOutcomeModal").classList.remove("hide");
+    }
+    
+    function updateOutcomeReplacementField() {
+      const status = $("outcomeStatus").value;
+      $("publicHolidayReplacementField").classList.toggle("hide", status !== "public_holiday");
     }
 
     function saveOutcome() {
       const booking = state.bookings.find(b => b.id === $("outcomeBookingId").value);
       if (!booking) return;
-      booking.status = $("outcomeStatus").value;
+      const nextStatus = $("outcomeStatus").value;
+      if (nextStatus === "public_holiday" && !$("outcomeReplacementNeeded").value) return alert("For public holiday, choose whether replacement is needed.");
+      booking.status = nextStatus;
       booking.remark = $("outcomeRemark").value.trim();
       booking.archived = booking.status !== "booked" || slotHasPassed(booking.date, booking.time);
       if (booking.status === "booked" && slotHasPassed(booking.date, booking.time)) {
@@ -1631,8 +1762,58 @@
         booking.completedAt = booking.completedAt || new Date().toISOString();
       }
       booking.updatedAt = new Date().toISOString();
+      handleReplacementForOutcome(booking, $("outcomeReplacementNeeded").value);
       $("bookingOutcomeModal").classList.add("hide");
       save();
+      setStatus(`Class marked as ${bookingStatusLabel(booking.status)}.`);
+    }
+
+    function replacementReasonForStatus(status) {
+      if (status === "cancelled") return "Cancelled";
+      if (status === "teacher_leave") return "Teacher Leave";
+      if (status === "public_holiday") return "Public Holiday";
+      return "";
+    }
+
+    function handleReplacementForOutcome(booking, publicHolidayChoice) {
+      const reason = replacementReasonForStatus(booking.status);
+      if (!reason) return;
+      const compulsory = booking.status === "cancelled" || booking.status === "teacher_leave";
+      const needed = compulsory || publicHolidayChoice === "yes";
+      const existing = (state.replacements || []).find(item => item.bookingId === booking.id);
+      const teacher = teacherById(booking.teacherId);
+      const base = {
+        bookingId: booking.id,
+        reason,
+        replacementNeeded: needed,
+        studentName: booking.studentName || "",
+        subject: booking.subject || "",
+        originalTeacherId: booking.teacherId,
+        originalTeacherName: teacher ? teacher.name : "",
+        originalDate: booking.date,
+        originalTime: booking.time,
+        notes: booking.remark || "",
+        updatedAt: new Date().toISOString()
+      };
+      state.replacements ||= [];
+      if (existing) {
+        Object.assign(existing, base);
+        if (!needed) existing.status = "No Replacement Needed";
+        else if (existing.status === "No Replacement Needed") existing.status = "Action Needed";
+      } else {
+        state.replacements.push({
+          id: uid("replacement"),
+          ...base,
+          status: needed ? "Action Needed" : "No Replacement Needed",
+          replacementTeacherId: "",
+          replacementTeacherName: "",
+          replacementDate: "",
+          replacementTime: "",
+          replacementBookingId: "",
+          createdAt: new Date().toISOString()
+        });
+      }
+      setStatus(needed ? "Replacement record created." : "Public holiday recorded as no replacement needed.");
     }
 
     async function createCrmBooking(kind) {
@@ -1707,6 +1888,14 @@
         $("bookingStudent").value = "all";
         $("bookingStudentName").value = "";
         $("bookingType").value = "trial class";
+        if (pendingReplacementId) {
+          const replacement = (state.replacements || []).find(item => item.id === pendingReplacementId);
+          if (replacement) {
+            $("bookingStudentName").value = replacement.studentName || "";
+            $("bookingType").value = "replacement class";
+            if ([...$("bookingSubject").options].some(o => o.value === replacement.subject)) $("bookingSubject").value = replacement.subject;
+          }
+        }
         $("bookingModal").classList.remove("hide");
       }
       const bookingBtn = e.target.closest("[data-booking-id]");
@@ -1814,6 +2003,23 @@
           $("templatePreview").textContent = template.body || "";
           renderTemplates();
         }
+      }
+      const replacementStatus = e.target.closest("[data-replacement-status]");
+      if (replacementStatus) {
+        const [id, status] = replacementStatus.dataset.replacementStatus.split("|");
+        const replacement = (state.replacements || []).find(item => item.id === id);
+        if (replacement) {
+          replacement.status = status;
+          replacement.updatedAt = new Date().toISOString();
+          save();
+          setStatus(`Replacement marked as ${status}.`);
+        }
+      }
+      const bookReplacement = e.target.closest("[data-book-replacement]");
+      if (bookReplacement) {
+        pendingReplacementId = bookReplacement.dataset.bookReplacement;
+        document.querySelector('[data-tab="schedule"]').click();
+        setStatus("Choose an open teacher slot to book the replacement class.");
       }
     });
 
@@ -1944,11 +2150,26 @@
       if (!studentName) return alert("Choose a student or type a student name.");
       const duplicate = scheduleBookings().find(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
       if (duplicate) return alert(`This slot is already booked by ${duplicate.studentName}.`);
-      state.bookings.push({ id: uid("booking"), ...slot, studentId: student ? student.id : "", studentName, subject: $("bookingSubject").value, type: $("bookingType").value, status: "booked", archived: false, minutes: 25, createdAt: new Date().toISOString() });
+      const booking = { id: uid("booking"), ...slot, studentId: student ? student.id : "", studentName, subject: $("bookingSubject").value, type: $("bookingType").value, status: "booked", archived: false, minutes: 25, createdAt: new Date().toISOString() };
+      state.bookings.push(booking);
+      if (pendingReplacementId) {
+        const replacement = (state.replacements || []).find(item => item.id === pendingReplacementId);
+        const teacher = teacherById(booking.teacherId);
+        if (replacement) {
+          replacement.status = "Replacement Booked";
+          replacement.replacementTeacherId = booking.teacherId;
+          replacement.replacementTeacherName = teacher ? teacher.name : "";
+          replacement.replacementDate = booking.date;
+          replacement.replacementTime = booking.time;
+          replacement.replacementBookingId = booking.id;
+          replacement.updatedAt = new Date().toISOString();
+        }
+        pendingReplacementId = "";
+      }
       $("bookingModal").classList.add("hide");
       save(false);
       renderAll();
-      await autoPushIfConfigured("Booking confirmed.");
+      await autoPushIfConfigured(booking.type === "replacement class" ? "Replacement class booked." : "Booking confirmed.");
     };
     ["monthSelect", "yearInput"].forEach(id => $(id).addEventListener("change", () => { refreshWeeks(); renderSchedule(); }));
     ["weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter"].forEach(id => $(id).addEventListener("change", renderSchedule));
@@ -2011,6 +2232,7 @@
     $("generateReportBtn").onclick = renderReport;
     $("exportTeacherReportPdfBtn").onclick = () => openPrintReport("Teacher Monthly Payout Report", ["No.", "Date", "Time", "Student", "Subject", "Type", "Status", "Pay RM", "Remark"], numbered(currentTeacherReportRows()));
     $("saveOutcomeBtn").onclick = saveOutcome;
+    $("outcomeStatus").addEventListener("change", updateOutcomeReplacementField);
     ["crmReportYear", "crmCompareYear"].forEach(id => $(id).addEventListener("change", renderCrmDashboard));
     $("generateCrmDashboardBtn").onclick = renderCrmDashboard;
     $("exportStudentsCsvBtn").onclick = () => downloadCsv("class-one-students.csv", ["No.", "Name", "Subject", "Package", "Status", "Regular Slots"], numbered(studentExportRows()));
@@ -2019,6 +2241,16 @@
     $("exportTeachersPdfBtn").onclick = () => openPrintReport("Class One Teachers", ["No.", "Name", "Subjects", "Tier", "Rate", "Regular Slots", "Date Slots"], numbered(teacherExportRows()));
     $("exportCrmCsvBtn").onclick = () => downloadCsv("class-one-crm-monthly-dashboard.csv", ["No.", ...crmDashboardExportHeaders()], numbered(crmDashboardExportRows()));
     $("exportCrmPdfBtn").onclick = () => openPrintReport("CRM Leads Monthly Dashboard", ["No.", ...crmDashboardExportHeaders()], numbered(crmDashboardExportRows()));
+    ["replacementFilterStatus", "replacementFilterReason"].forEach(id => $(id).addEventListener("change", renderReplacements));
+    $("replacementSearch").addEventListener("input", renderReplacements);
+    $("clearReplacementFiltersBtn").onclick = () => {
+      $("replacementFilterStatus").value = "all";
+      $("replacementFilterReason").value = "all";
+      $("replacementSearch").value = "";
+      renderReplacements();
+    };
+    $("exportReplacementCsvBtn").onclick = () => downloadCsv("class-one-replacement-classes.csv", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Date", "Original Time", "Replacement Teacher", "Replacement Date", "Replacement Time", "Notes"], numbered(replacementExportRows()));
+    $("exportReplacementPdfBtn").onclick = () => openPrintReport("Replacement Classes", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Date", "Original Time", "Replacement Teacher", "Replacement Date", "Replacement Time", "Notes"], numbered(replacementExportRows()));
     $("pullBtn").onclick = () => animateClick($("pullBtn"), () => syncPull().catch(err => alert(err.message)));
     $("pushBtn").onclick = () => animateClick($("pushBtn"), () => syncPush().catch(err => alert(err.message)));
     $("crmPullBtn").onclick = () => animateClick($("crmPullBtn"), () => crmPull().catch(err => alert(err.message)));
