@@ -297,7 +297,13 @@
             </div>
           </div>
           <div class="panel">
-            <h2>Teachers</h2>
+            <div class="row spread">
+              <h2>Teachers</h2>
+              <div class="row">
+                <button class="btn ghost small" id="exportTeachersCsvBtn">Export Excel</button>
+                <button class="btn ghost small" id="exportTeachersPdfBtn">Export PDF</button>
+              </div>
+            </div>
             <div id="teacherList" class="list"></div>
           </div>
         </div>
@@ -360,7 +366,18 @@
             <datalist id="packageOptions"></datalist>
           </div>
           <div class="panel">
-            <h2>Students</h2>
+            <div class="row spread">
+              <h2>Students</h2>
+              <div class="row">
+                <button class="btn ghost small" id="exportStudentsCsvBtn">Export Excel</button>
+                <button class="btn ghost small" id="exportStudentsPdfBtn">Export PDF</button>
+              </div>
+            </div>
+            <div class="sales-summary" style="grid-template-columns:repeat(3,minmax(120px,1fr));margin-bottom:14px;">
+              <div class="metric"><span class="subtle">Total students</span><strong id="studentCountTotal">0</strong></div>
+              <div class="metric"><span class="subtle">Active</span><strong id="studentCountActive">0</strong></div>
+              <div class="metric"><span class="subtle">Archived</span><strong id="studentCountArchived">0</strong></div>
+            </div>
             <div><label>Search Student</label><input id="studentSearch" placeholder="Search student name"></div>
             <div id="studentList" class="list"></div>
           </div>
@@ -368,6 +385,17 @@
       </section>
 
       <section id="reports" class="tab hide">
+        <div class="panel">
+          <h2>CRM Leads Monthly Dashboard</h2>
+          <div class="toolbar">
+            <div><label>Year</label><input id="crmReportYear" type="number" min="2024" max="2035"></div>
+            <div><label>&nbsp;</label><button class="btn mint" id="generateCrmDashboardBtn">Generate CRM Dashboard</button></div>
+            <div><label>&nbsp;</label><button class="btn ghost" id="exportCrmCsvBtn">Export Excel</button></div>
+            <div><label>&nbsp;</label><button class="btn ghost" id="exportCrmPdfBtn">Export PDF</button></div>
+          </div>
+          <div class="sales-summary" id="crmDashboardSummary"></div>
+          <div id="crmDashboardTable" style="margin-top:16px;"></div>
+        </div>
         <div class="panel">
           <h2>Teacher Monthly Completed Lessons</h2>
           <div class="toolbar">
@@ -533,6 +561,7 @@
       $("reportMonth").value = now.getMonth();
       $("yearInput").value = now.getFullYear();
       $("reportYear").value = now.getFullYear();
+      $("crmReportYear").value = now.getFullYear();
       refreshWeeks();
       const monday = new Date(now);
       monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
@@ -725,6 +754,11 @@
 
     function renderStudents() {
       const search = ($("studentSearch")?.value || "").trim().toLowerCase();
+      const activeCount = state.students.filter(s => (s.status || "active") !== "archived").length;
+      const archivedCount = state.students.length - activeCount;
+      if ($("studentCountTotal")) $("studentCountTotal").textContent = state.students.length;
+      if ($("studentCountActive")) $("studentCountActive").textContent = activeCount;
+      if ($("studentCountArchived")) $("studentCountArchived").textContent = archivedCount;
       $("studentList").innerHTML = state.students.filter(s => !search || String(s.name || "").toLowerCase().includes(search)).map(s => {
         const regularSlots = getStudentRegularSlots(s);
         const lines = regularSlots.map(slot => {
@@ -830,7 +864,92 @@
       $("reportStats").innerHTML = `<h3>${escapeHtml(teacher.name)}</h3><p><strong>${lessonCount}</strong> completed lessons</p><p>Estimated payout: <strong>${amount.toFixed(2)}</strong></p><p>Current tier: <strong>${escapeHtml(teacher.tier)}</strong></p><p>Lessons to target: <strong>${remaining}</strong></p>`;
       $("reportText").textContent = `Hi ${teacher.name},\n\nHere is your ${new Date(year, month, 1).toLocaleString("en", { month: "long", year: "numeric" })} teaching summary.\n\nCompleted lessons: ${lessonCount}\nCurrent tier: ${teacher.tier}\nClass rate: ${Number(teacher.rate || 0).toFixed(2)}\nEstimated lesson payout: ${amount.toFixed(2)}\n\nNext-tier progress:\n- Target lessons entered by admin: ${target}\n- Remaining lessons to target: ${remaining}\n- Attendance target entered by admin: ${$("targetAttendance").value}%\n\nTeacher rating criteria can be added here after you send the final upgrade rules.`;
     }
-          
+
+  function crmMonthlyRows() {
+      const year = Number($("crmReportYear").value || new Date().getFullYear());
+      return Array.from({ length: 12 }, (_, month) => {
+        const leads = state.leads.filter(lead => {
+          const date = new Date((lead.createdAt || lead.updatedAt || "") + "");
+          return !Number.isNaN(date.getTime()) && date.getFullYear() === year && date.getMonth() === month && !lead.archived;
+        });
+        const countStatus = (status) => leads.filter(lead => lead.status === status).length;
+        return {
+          month: new Date(year, month, 1).toLocaleString("en", { month: "long" }),
+          total: leads.length,
+          newContact: countStatus("New Contact"),
+          followUp: countStatus("Follow Up"),
+          assessment: countStatus("Assessment"),
+          trial: countStatus("Trial Class"),
+          enrolled: countStatus("Enrolled"),
+          lost: countStatus("Lost")
+        };
+      });
+    }
+
+    function renderCrmDashboard() {
+      const rows = crmMonthlyRows();
+      const totals = rows.reduce((acc, row) => {
+        Object.keys(row).forEach(key => {
+          if (key !== "month") acc[key] = (acc[key] || 0) + row[key];
+        });
+        return acc;
+      }, {});
+      $("crmDashboardSummary").innerHTML = `
+        <div class="metric"><span class="subtle">Total leads</span><strong>${totals.total || 0}</strong></div>
+        <div class="metric"><span class="subtle">Assessment</span><strong>${totals.assessment || 0}</strong></div>
+        <div class="metric"><span class="subtle">Trial</span><strong>${totals.trial || 0}</strong></div>
+        <div class="metric"><span class="subtle">Enrolled</span><strong>${totals.enrolled || 0}</strong></div>
+      `;
+      $("crmDashboardTable").innerHTML = tableHtml(["Month", "Total", "New", "Follow Up", "Assessment", "Trial", "Enrolled", "Lost"], rows.map(row => [row.month, row.total, row.newContact, row.followUp, row.assessment, row.trial, row.enrolled, row.lost]));
+    }
+
+    function studentExportRows() {
+      return state.students.map(student => {
+        const slots = getStudentRegularSlots(student).map(slot => {
+          const teacher = teacherById(slot.teacherId);
+          return `${slot.day} ${timeLabel(slot.time)} ${slot.subject} ${teacher ? teacher.name : ""}`.trim();
+        }).join("; ");
+        return [student.name || "", student.subject || "", student.package || "", student.status || "active", slots];
+      });
+    }
+
+    function teacherExportRows() {
+      return state.teachers.map(teacher => [
+        teacher.name || "",
+        (teacher.subjects || []).join(", "),
+        teacher.tier || "",
+        Number(teacher.rate || 0).toFixed(2),
+        (teacher.regularSlots || []).length,
+        (teacher.overrideSlots || []).length
+      ]);
+    }
+
+  function tableHtml(headers, rows) {
+      return `<table><thead><tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("") || `<tr><td colspan="${headers.length}">No data</td></tr>`}</tbody></table>`;
+    }
+
+    function downloadCsv(filename, headers, rows) {
+      const csv = [headers, ...rows].map(row => row.map(csvCell).join(",")).join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }
+
+    function csvCell(value) {
+      const text = String(value ?? "");
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }
+
+    function openPrintReport(title, headers, rows) {
+      const win = window.open("", "_blank");
+      const html = `<!DOCTYPE html><html><head><title>${escapeHtml(title)}</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#17212b}h1{font-size:22px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #dbe5df;padding:8px;text-align:left;font-size:12px}th{background:#f4fbf7}@media print{button{display:none}}</style></head><body><button onclick="window.print()">Save as PDF / Print</button><h1>${escapeHtml(title)}</h1>${tableHtml(headers, rows)}</body></html>`;
+      win.document.write(html);
+      win.document.close();
+    }
+  
     function renderAll() {
       const old = Object.fromEntries(["monthSelect", "reportMonth", "weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "overviewTeacherFilter", "overviewSubjectFilter", "overviewStatusFilter", "slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher", "reportTeacher"].map(id => [id, $(id)?.value]));
       hydrateSelects();
@@ -840,6 +959,7 @@
       renderStudents();
       renderArchive();
       renderReport();
+      renderCrmDashboard();
       renderTeacherOverview();
       renderStudentRegularSlotDraft();
       renderLeads();
@@ -1270,6 +1390,14 @@
     ["leadFilterStatus", "leadFilterUrgency"].forEach(id => $(id).addEventListener("change", renderLeads));
     $("leadSearch").addEventListener("input", renderLeads);
     $("generateReportBtn").onclick = renderReport;
+    $("crmReportYear").addEventListener("change", renderCrmDashboard);
+    $("generateCrmDashboardBtn").onclick = renderCrmDashboard;
+    $("exportStudentsCsvBtn").onclick = () => downloadCsv("class-one-students.csv", ["Name", "Subject", "Package", "Status", "Regular Slots"], studentExportRows());
+    $("exportStudentsPdfBtn").onclick = () => openPrintReport("Class One Students", ["Name", "Subject", "Package", "Status", "Regular Slots"], studentExportRows());
+    $("exportTeachersCsvBtn").onclick = () => downloadCsv("class-one-teachers.csv", ["Name", "Subjects", "Tier", "Rate", "Regular Slots", "Date Slots"], teacherExportRows());
+    $("exportTeachersPdfBtn").onclick = () => openPrintReport("Class One Teachers", ["Name", "Subjects", "Tier", "Rate", "Regular Slots", "Date Slots"], teacherExportRows());
+    $("exportCrmCsvBtn").onclick = () => downloadCsv("class-one-crm-monthly-dashboard.csv", ["Month", "Total", "New", "Follow Up", "Assessment", "Trial", "Enrolled", "Lost"], crmMonthlyRows().map(row => [row.month, row.total, row.newContact, row.followUp, row.assessment, row.trial, row.enrolled, row.lost]));
+    $("exportCrmPdfBtn").onclick = () => openPrintReport("CRM Leads Monthly Dashboard", ["Month", "Total", "New", "Follow Up", "Assessment", "Trial", "Enrolled", "Lost"], crmMonthlyRows().map(row => [row.month, row.total, row.newContact, row.followUp, row.assessment, row.trial, row.enrolled, row.lost]));
     $("pullBtn").onclick = () => animateClick($("pullBtn"), () => syncPull().catch(err => alert(err.message)));
     $("pushBtn").onclick = () => animateClick($("pushBtn"), () => syncPush().catch(err => alert(err.message)));
     $("crmPullBtn").onclick = () => animateClick($("crmPullBtn"), () => crmPull().catch(err => alert(err.message)));
