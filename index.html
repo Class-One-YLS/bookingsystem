@@ -113,6 +113,15 @@
     .lead-card.hot { border-left-color: #e5484d; }
     .lead-card.warm { border-left-color: #f5a524; }
     .lead-card.cold { border-left-color: #6690ff; }
+    .reminder-panel { border: 1px solid #f2c94c; background: #fffdf3; border-radius: 8px; padding: 12px; margin-top: 14px; }
+    .reminder-list { display: grid; gap: 8px; margin-top: 10px; max-height: 180px; overflow: auto; }
+    .reminder-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px; border: 1px solid #f4dda0; background: #fff; border-radius: 8px; font-size: 12px; }
+    .view-toggle .btn.active { background: var(--ink); color: #fff; }
+    .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+    .lead-table { min-width: 1220px; }
+    .lead-table th { position: sticky; top: 0; z-index: 1; }
+    .lead-table select, .lead-table input { min-height: 32px; padding: 6px 8px; font-size: 12px; }
+    .lead-table td { vertical-align: top; }
     .guide-list { display: grid; gap: 10px; }
     .guide-list li { background: #fbfdfc; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
     .teacher-card { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 12px; }
@@ -227,12 +236,19 @@
             </div>
           </div>
           <div class="panel">
-            <h2>Lead List</h2>
+            <div class="row spread">
+              <h2>Lead List</h2>
+              <div class="row view-toggle">
+                <button class="btn small active" id="leadCardViewBtn">Card View</button>
+                <button class="btn small ghost" id="leadTableViewBtn">Table View</button>
+              </div>
+            </div>
             <div class="grid three">
               <div><label>Status</label><select id="leadFilterStatus"></select></div>
               <div><label>Urgency</label><select id="leadFilterUrgency"></select></div>
               <div><label>Search</label><input id="leadSearch" placeholder="Parent / child / phone"></div>
             </div>
+            <div class="reminder-panel" id="leadReminderBox"></div>
             <div id="leadList" class="list" style="margin-top:14px;"></div>
           </div>
         </div>
@@ -480,6 +496,7 @@
       settings: { scriptUrl: "", apiKey: "", crmScriptUrl: "", crmApiKey: "" }
     };
     let studentRegularSlotsDraft = [];
+    let leadViewMode = localStorage.getItem("classOneLeadViewMode") || "cards";
     const $ = (id) => document.getElementById(id);
     const uid = (prefix) => prefix + "_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
     const localISO = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -812,17 +829,53 @@
       setSelectedLeadSubjects([]);
     }
 
-    function renderLeads() {
+    function filteredLeads() {
       const status = $("leadFilterStatus").value;
       const urgency = $("leadFilterUrgency").value;
       const search = $("leadSearch").value.trim().toLowerCase();
-      const leads = state.leads
+      return state.leads
         .filter(lead => !lead.archived)
         .filter(lead => status === "all" || lead.status === status)
         .filter(lead => urgency === "all" || lead.urgency === urgency)
         .filter(lead => !search || [lead.parentName, lead.parentPhone, lead.childName, lead.source, lead.salesperson].some(v => String(v || "").toLowerCase().includes(search)))
         .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
-      $("leadList").innerHTML = leads.map(lead => `
+       }
+
+    function leadsNeedingAction() {
+      const today = todayISO();
+      return state.leads
+        .filter(lead => !lead.archived)
+        .filter(lead => !["Enrolled", "Lost"].includes(lead.status))
+        .filter(lead => {
+          const isNew = (lead.status || "New Contact") === "New Contact";
+          const due = lead.nextFollowUp && lead.nextFollowUp <= today;
+          const noFollowUp = !lead.nextFollowUp && ["New Contact", "Follow Up", "No Response"].includes(lead.status || "New Contact");
+          return isNew || due || noFollowUp;
+        })
+        .sort((a, b) => String(a.nextFollowUp || "9999-12-31").localeCompare(String(b.nextFollowUp || "9999-12-31")));
+    }
+
+    function renderLeadReminders() {
+      const reminders = leadsNeedingAction();
+      const today = todayISO();
+      $("leadReminderBox").innerHTML = `
+        <div class="row spread">
+          <div><strong>Needs Action</strong><div class="subtle">New leads, missing follow-up date, or follow-up due today/overdue.</div></div>
+          <span class="pill booked">${reminders.length}</span>
+        </div>
+        <div class="reminder-list">
+          ${reminders.slice(0, 8).map(lead => {
+            const reason = lead.nextFollowUp && lead.nextFollowUp <= today ? `Follow-up ${lead.nextFollowUp}` : ((lead.status || "New Contact") === "New Contact" ? "New contact" : "Set next follow-up");
+            return `<div class="reminder-item">
+              <div><strong>${escapeHtml(lead.childName || "Unnamed Child")}</strong><div class="subtle">${escapeHtml(lead.parentPhone || "-")} | ${escapeHtml(reason)}</div></div>
+              <button class="btn small ghost" data-edit-lead="${lead.id}">Edit</button>
+            </div>`;
+          }).join("") || `<div class="empty">No urgent CRM follow-ups for now.</div>`}
+        </div>`;
+    }
+
+    function renderLeadCards(leads) {
+      return leads.map(lead => `
         <div class="card lead-card ${escapeHtml(lead.urgency || "warm")}">
           <div class="row spread"><strong>${escapeHtml(lead.childName || "Unnamed Child")}</strong><span><span class="pill">${escapeHtml(lead.status || "New Contact")}</span><span class="pill">${escapeHtml(lead.urgency || "warm")}</span></span></div>
           <div class="subtle">
@@ -837,7 +890,56 @@
           </div>
         </div>`).join("") || `<div class="empty">No matching leads.</div>`;
     }
-          
+
+  function renderLeadTable(leads) {
+      const statusOptions = LEAD_STATUSES.map(status => `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`).join("");
+      const urgencyOptions = URGENCIES.map(urgency => `<option value="${escapeHtml(urgency)}">${escapeHtml(urgency)}</option>`).join("");
+      const rows = leads.map(lead => `
+        <tr>
+          <td>${escapeHtml(dateOnly(lead.createdAt))}</td>
+          <td><strong>${escapeHtml(lead.childName || "Unnamed Child")}</strong><br><span class="subtle">${escapeHtml(lead.childAge || "")}</span></td>
+          <td>${escapeHtml(lead.parentName || "")}<br><span class="subtle">${escapeHtml(lead.parentPhone || "")}</span></td>
+          <td>${(lead.subjects || []).map(escapeHtml).join(", ") || "-"}</td>
+          <td>${escapeHtml(lead.source || "-")}</td>
+          <td>${escapeHtml(lead.salesperson || "-")}</td>
+          <td><select data-lead-quick="${lead.id}|status">${statusOptions}</select></td>
+          <td><select data-lead-quick="${lead.id}|urgency">${urgencyOptions}</select></td>
+          <td><input type="date" value="${escapeHtml(lead.nextFollowUp || "")}" data-lead-quick="${lead.id}|nextFollowUp"></td>
+          <td>${escapeHtml(lead.assessmentDate || "-")} ${escapeHtml(lead.assessmentTime || "")}</td>
+          <td>${escapeHtml(lead.trialDate || "-")} ${escapeHtml(lead.trialTime || "")}</td>
+          <td>${escapeHtml(lead.packageInterested || "-")}</td>
+          <td>${escapeHtml(dateOnly(lead.updatedAt))}</td>
+          <td style="min-width:220px;">${escapeHtml(lead.notes || "")}</td>
+          <td><div class="row"><button class="btn small ghost" data-edit-lead="${lead.id}">Edit</button><button class="btn small ghost" data-archive-lead="${lead.id}">Archive</button></div></td>
+        </tr>`).join("") || `<tr><td colspan="15">No matching leads.</td></tr>`;
+      return `<div class="table-wrap"><table class="lead-table"><thead><tr><th>Created</th><th>Child</th><th>Parent</th><th>Subjects</th><th>Source</th><th>Salesperson</th><th>Status</th><th>Urgency</th><th>Next Follow-up</th><th>Assessment</th><th>Trial</th><th>Package</th><th>Updated</th><th>Notes</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+
+    function dateOnly(value) {
+      if (!value) return "";
+      return String(value).slice(0, 10);
+    }
+  
+    function renderLeads() {
+      const leads = filteredLeads();
+      $("leadCardViewBtn").classList.toggle("active", leadViewMode === "cards");
+      $("leadCardViewBtn").classList.toggle("ghost", leadViewMode !== "cards");
+      $("leadTableViewBtn").classList.toggle("active", leadViewMode === "table");
+      $("leadTableViewBtn").classList.toggle("ghost", leadViewMode !== "table");
+      $("leadList").classList.toggle("list", leadViewMode === "cards");
+      $("leadList").innerHTML = leadViewMode === "table" ? renderLeadTable(leads) : renderLeadCards(leads);
+      if (leadViewMode === "table") {
+        const quickFields = [...document.querySelectorAll("[data-lead-quick]")];
+        leads.forEach(lead => {
+          const status = quickFields.find(field => field.dataset.leadQuick === `${lead.id}|status`);
+          const urgency = quickFields.find(field => field.dataset.leadQuick === `${lead.id}|urgency`);
+          if (status) status.value = lead.status || "New Contact";
+          if (urgency) urgency.value = lead.urgency || "warm";
+        });
+      }
+      renderLeadReminders();
+    }
+  
     function renderArchive() {
       const rows = state.bookings.filter(b => b.archived || b.status === "cancelled").sort((a,b) => b.date.localeCompare(a.date)).map(b => {
         const t = teacherById(b.teacherId);
@@ -1241,6 +1343,19 @@
       }
     });
 
+  document.addEventListener("change", (e) => {
+      const quick = e.target.closest("[data-lead-quick]");
+      if (!quick) return;
+      const [leadId, field] = quick.dataset.leadQuick.split("|");
+      const lead = state.leads.find(item => item.id === leadId);
+      if (!lead || !["status", "urgency", "nextFollowUp"].includes(field)) return;
+      lead[field] = quick.value;
+      lead.updatedAt = new Date().toISOString();
+      save(false);
+      renderLeads();
+      autoPushCrmIfConfigured();
+    });
+  
     $("saveBtn").onclick = () => save();
     $("archivePastBtn").onclick = () => { archivePast(); renderAll(); };
     $("saveTeacherBtn").onclick = saveTeacher;
@@ -1389,6 +1504,8 @@
     $("studentSearch").addEventListener("input", renderStudents);
     ["leadFilterStatus", "leadFilterUrgency"].forEach(id => $(id).addEventListener("change", renderLeads));
     $("leadSearch").addEventListener("input", renderLeads);
+    $("leadCardViewBtn").onclick = () => { leadViewMode = "cards"; localStorage.setItem("classOneLeadViewMode", leadViewMode); renderLeads(); };
+    $("leadTableViewBtn").onclick = () => { leadViewMode = "table"; localStorage.setItem("classOneLeadViewMode", leadViewMode); renderLeads(); };
     $("generateReportBtn").onclick = renderReport;
     $("crmReportYear").addEventListener("change", renderCrmDashboard);
     $("generateCrmDashboardBtn").onclick = renderCrmDashboard;
