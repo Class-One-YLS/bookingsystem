@@ -342,6 +342,37 @@
           </ol>
         </div>
         <div class="panel">
+           <h2>Action Guide</h2>
+          <div class="grid two">
+            <div>
+              <h3>Salesperson Actions</h3>
+              <ol class="guide-list">
+                <li><strong>New lead comes in:</strong> Open CRM Leads, create lead profile, set status `New Contact`, set urgency, add source, then set next follow-up date.</li>
+                <li><strong>Parent replies:</strong> Edit the CRM lead, update notes, confirm child details, update urgency, and set the next follow-up date before leaving the lead.</li>
+                <li><strong>Parent asks available time:</strong> Open Weekly Timetable or Teacher Overview, filter teacher/subject/time, propose only open slots, then record proposed options in CRM notes.</li>
+                <li><strong>Parent wants assessment:</strong> Set CRM status to `Assessment`, create student from lead if needed, book assessment, confirm the slot appears in the timetable, and add assessment details in notes.</li>
+                <li><strong>Parent wants trial:</strong> Set CRM status to `Trial Class`, create student from lead if needed, book trial class, confirm the slot appears in the timetable, and add trial details in notes.</li>
+                <li><strong>Parent no reply:</strong> Use the no-reply template, update status to `Follow Up` or `No Response`, and set the next follow-up date.</li>
+                <li><strong>Parent confirms enrollment:</strong> Set CRM status to `Enrolled`, open Students, change student status to `Registered`, add package and regular class slots.</li>
+                <li><strong>Parent asks to change/cancel class:</strong> Do not delete history. Inform admin to update timetable outcome or create replacement booking.</li>
+              </ol>
+            </div>
+            <div>
+              <h3>Admin Actions</h3>
+              <ol class="guide-list">
+                <li><strong>Add or update teacher:</strong> Open Teachers, add profile, subjects, tier, rate, and timetable slots. Save and push if needed.</li>
+                <li><strong>Add student regular slot:</strong> Open Students, edit student, add regular teacher/day/time/subject, then save. Past finalized classes remain unchanged.</li>
+                <li><strong>Student not show:</strong> Open Weekly Timetable or Teacher Overview, click the class, set `Student Not Show`, add remark, save. It turns red and pays RM5 allowance.</li>
+                <li><strong>Class cancelled:</strong> Click the class, choose `Cancelled`, `Public Holiday`, or `Teacher Leave`, add remark, save. It turns grey and is not counted for payout.</li>
+                <li><strong>Teacher partial leave:</strong> Mark only the affected class slots as `Teacher Leave`; do not mark the whole day unless all classes are affected.</li>
+                <li><strong>Check teacher payout:</strong> Open Reports, select teacher/month/year, generate report, then export Teacher PDF for reference.</li>
+                <li><strong>Before important edits:</strong> Use Pull From Sheet if another admin may have changed data. After confirmed edits, use Push To Sheet.</li>
+                <li><strong>Data missing after refresh:</strong> Check Sync Settings. The URLs and API keys should already be filled. Click Pull From Sheet and Pull CRM Leads if auto-load failed.</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
           <div class="row spread">
             <h2>Reply Templates</h2>
             <button class="btn ghost small" id="newTemplateBtn">New Template</button>
@@ -624,6 +655,8 @@
     };
     let studentRegularSlotsDraft = [];
     let leadViewMode = localStorage.getItem("classOneLeadViewMode") || "cards";
+   let autoPushTimer = null;
+    let suppressAutoPush = false;
     const $ = (id) => document.getElementById(id);
     const uid = (prefix) => prefix + "_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
     const localISO = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -671,10 +704,14 @@
       if (saved) Object.assign(state, JSON.parse(saved));
       state.settings ||= {};
       state.settings.replyTemplates = state.settings.replyTemplates?.length ? state.settings.replyTemplates : DEFAULT_REPLY_TEMPLATES.map(template => ({ ...template }));
-      $("scriptUrl").value = state.settings.scriptUrl || DEFAULT_SYNC.scriptUrl;
-      $("apiKey").value = state.settings.apiKey || DEFAULT_SYNC.apiKey;
-      $("crmScriptUrl").value = state.settings.crmScriptUrl || DEFAULT_SYNC.crmScriptUrl;
-      $("crmApiKey").value = state.settings.crmApiKey || DEFAULT_SYNC.crmApiKey;
+      state.settings.scriptUrl = state.settings.scriptUrl || DEFAULT_SYNC.scriptUrl;
+      state.settings.apiKey = state.settings.apiKey || DEFAULT_SYNC.apiKey;
+      state.settings.crmScriptUrl = state.settings.crmScriptUrl || DEFAULT_SYNC.crmScriptUrl;
+      state.settings.crmApiKey = state.settings.crmApiKey || DEFAULT_SYNC.crmApiKey;
+      $("scriptUrl").value = state.settings.scriptUrl;
+      $("apiKey").value = state.settings.apiKey;
+      $("crmScriptUrl").value = state.settings.crmScriptUrl;
+      $("crmApiKey").value = state.settings.crmApiKey;
       archivePast(false);
     }
 
@@ -686,6 +723,21 @@
       localStorage.setItem(STORE_KEY, JSON.stringify(state));
       if (show) setStatus("Saved.");
       renderAll();
+      scheduleAutoPush();
+    }
+
+    function scheduleAutoPush() {
+      if (suppressAutoPush) return;
+      if (!$("scriptUrl").value.trim() || !$("apiKey").value.trim()) return;
+      clearTimeout(autoPushTimer);
+      autoPushTimer = setTimeout(async () => {
+        try {
+          await syncPush();
+          setStatus("Saved and synced to Google Sheet.");
+        } catch (err) {
+          setStatus(`Saved locally. Auto-sync failed: ${err.message}`);
+        }
+      }, 900);
     }
 
     function setStatus(msg) { $("statusText").textContent = msg; }
@@ -1453,7 +1505,9 @@
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Pull failed");
       Object.assign(state, data.payload);
+      suppressAutoPush = true;
       save(false);
+      suppressAutoPush = false;
       setStatus("Pulled latest data from Google Sheet.");
     }
           
@@ -1463,7 +1517,9 @@
       const res = await fetch(url, { method: "POST", body: JSON.stringify({ action: "write", key: $("apiKey").value.trim(), payload: state }) });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Push failed");
+      suppressAutoPush = true;
       save(false);
+      suppressAutoPush = false;
       setStatus("Pushed data to Google Sheet.");
     }
 
@@ -1474,7 +1530,9 @@
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "CRM pull failed");
       state.leads = data.leads || [];
+      suppressAutoPush = true;
       save(false);
+      suppressAutoPush = false;
       setStatus("Pulled CRM leads from Google Sheet.");
     }
   
@@ -1488,6 +1546,20 @@
       setStatus("Pushed CRM leads to Google Sheet.");
     }
 
+  async function autoPullOnStart() {
+      const jobs = [];
+      if ($("scriptUrl").value.trim() && $("apiKey").value.trim()) jobs.push(syncPull());
+      if ($("crmScriptUrl").value.trim() && $("crmApiKey").value.trim()) jobs.push(crmPull());
+      if (!jobs.length) return;
+      try {
+        setStatus("Auto-loading latest timetable and CRM data...");
+        await Promise.all(jobs);
+        setStatus("Auto-loaded latest timetable and CRM data.");
+      } catch (err) {
+        setStatus(`Auto-load skipped: ${err.message}`);
+      }
+    }
+  
     async function autoPushIfConfigured(successMessage) {
       const url = $("scriptUrl").value.trim();
       const key = $("apiKey").value.trim();
@@ -1964,6 +2036,7 @@
     hydrateSelects();
     setupMonths();
     renderAll();
+    setTimeout(() => autoPullOnStart(), 250);
   </script>
 </body>
 </html>
