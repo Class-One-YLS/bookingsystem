@@ -434,6 +434,7 @@
               <div><label>Student Name</label><input id="studentName" placeholder="Student name"></div>
               <div><label>Subject Taken</label><select id="studentSubject"></select></div>
               <div><label>Package</label><input id="studentPackage" list="packageOptions" placeholder="Choose or type package"></div>
+              <div><label>Student Status</label><select id="studentStatus"><option value="registered">Registered</option><option value="trial">Trial / Not Enrolled</option><option value="archived">Archived</option></select></div>
               <div><label>Regular Teacher</label><select id="studentTeacher"></select></div>
               <div><label>Regular Days</label><div id="studentDayChecks" class="row"></div></div>
               <div><label>Regular Time</label><input id="studentTime" type="time" step="1800"></div>
@@ -443,7 +444,7 @@
             <div id="studentRegularSlotList" class="list" style="margin-top:12px;max-height:220px;"></div>
             <div class="row" style="margin-top:14px;">
               <button class="btn mint" id="saveStudentBtn">Save Student</button>
-              <button class="btn ghost" id="newStudentBtn">New</button>
+               <button class="btn ghost" id="newStudentBtn">Clear / New Student</button>
             </div>
             <datalist id="packageOptions"></datalist>
           </div>
@@ -455,9 +456,10 @@
                 <button class="btn ghost small" id="exportStudentsPdfBtn">Export PDF</button>
               </div>
             </div>
-            <div class="sales-summary" style="grid-template-columns:repeat(3,minmax(120px,1fr));margin-bottom:14px;">
+             <div class="sales-summary" style="grid-template-columns:repeat(4,minmax(120px,1fr));margin-bottom:14px;">
               <div class="metric"><span class="subtle">Total students</span><strong id="studentCountTotal">0</strong></div>
-              <div class="metric"><span class="subtle">Active</span><strong id="studentCountActive">0</strong></div>
+              <div class="metric"><span class="subtle">Registered</span><strong id="studentCountActive">0</strong></div>
+              <div class="metric"><span class="subtle">Trial / Not enrolled</span><strong id="studentCountTrial">0</strong></div>
               <div class="metric"><span class="subtle">Archived</span><strong id="studentCountArchived">0</strong></div>
             </div>
             <div><label>Search Student</label><input id="studentSearch" placeholder="Search student name"></div>
@@ -471,6 +473,7 @@
           <h2>CRM Leads Monthly Dashboard</h2>
           <div class="toolbar">
             <div><label>Year</label><input id="crmReportYear" type="number" min="2024" max="2035"></div>
+            <div><label>Compare Year</label><input id="crmCompareYear" type="number" min="2024" max="2035" placeholder="Optional"></div>
             <div><label>&nbsp;</label><button class="btn mint" id="generateCrmDashboardBtn">Generate CRM Dashboard</button></div>
             <div><label>&nbsp;</label><button class="btn ghost" id="exportCrmCsvBtn">Export Excel</button></div>
             <div><label>&nbsp;</label><button class="btn ghost" id="exportCrmPdfBtn">Export PDF</button></div>
@@ -598,6 +601,20 @@
           const teacherById = (id) => state.teachers.find(t => t.id === id);
     const studentById = (id) => state.students.find(s => s.id === id);
     const escapeHtml = (text) => String(text ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
+    const byName = (a, b) => String(a.name || "").localeCompare(String(b.name || ""), "en", { sensitivity: "base" });
+    const pct = (value, total) => total ? `${((value / total) * 100).toFixed(1)}%` : "0.0%";
+    const numbered = (rows) => rows.map((row, i) => [i + 1, ...row]);
+    const whatsappNumber = (value) => {
+      let phone = String(value || "").split("/")[0].replace(/\D/g, "");
+      if (phone.startsWith("0")) phone = "60" + phone.slice(1);
+      if (phone && !phone.startsWith("60") && phone.length <= 10) phone = "60" + phone;
+      return phone;
+    };
+    const phoneHtml = (value) => {
+      const phone = String(value || "").trim();
+      const wa = whatsappNumber(phone);
+      return `${escapeHtml(phone || "-")}${wa ? ` <a class="pill" href="https://wa.me/${wa}" target="_blank" rel="noopener">WhatsApp</a>` : ""}`;
+    };
 
      function load() {
       const saved = localStorage.getItem(STORE_KEY);
@@ -628,8 +645,8 @@
     }
           
     function hydrateSelects() {
-      const teacherOptions = state.teachers.map(t => ({ value: t.id, label: `${t.name} (${(t.subjects || []).join(", ") || "No subject"})` }));
-      const studentOptions = state.students.filter(s => (s.status || "active") !== "archived").map(s => ({ value: s.id, label: `${s.name}${s.package ? " - " + s.package : ""}` }));
+      const teacherOptions = [...state.teachers].sort(byName).map(t => ({ value: t.id, label: `${t.name} (${(t.subjects || []).join(", ") || "No subject"})` }));
+      const studentOptions = [...state.students].sort(byName).filter(s => (s.status || "registered") !== "archived").map(s => ({ value: s.id, label: `${s.name}${s.package ? " - " + s.package : ""}` }));
       const packageOptions = [...new Set(state.students.map(s => s.package).filter(Boolean))].sort();
       ["monthSelect", "reportMonth"].forEach(id => fillSelect($(id), Array.from({ length: 12 }, (_, i) => ({ value: i, label: new Date(2026, i, 1).toLocaleString("en", { month: "long" }) }))));
       ["teacherFilter"].forEach(id => fillSelect($(id), teacherOptions, "All Teachers"));
@@ -660,6 +677,7 @@
       $("yearInput").value = now.getFullYear();
       $("reportYear").value = now.getFullYear();
       $("crmReportYear").value = now.getFullYear();
+      $("crmCompareYear").value = now.getFullYear() - 1;
       refreshWeeks();
       const monday = new Date(now);
       monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
@@ -828,7 +846,7 @@
     }
 
     function renderTeachers() {
-      $("teacherList").innerHTML = state.teachers.map(t => `
+      $("teacherList").innerHTML = [...state.teachers].sort(byName).map(t => `
         <div class="card teacher-card">
           ${t.photo ? `<img class="avatar" src="${t.photo}" alt="">` : `<div class="avatar">${escapeHtml((t.name || "?").slice(0, 1))}</div>`}
           <div>
@@ -852,19 +870,24 @@
 
     function renderStudents() {
       const search = ($("studentSearch")?.value || "").trim().toLowerCase();
-      const activeCount = state.students.filter(s => (s.status || "active") !== "archived").length;
-      const archivedCount = state.students.length - activeCount;
+      const statusOf = (student) => student.status === "trial" ? "trial" : (student.status === "archived" ? "archived" : "registered");
+      const registeredCount = state.students.filter(s => statusOf(s) === "registered").length;
+      const trialCount = state.students.filter(s => statusOf(s) === "trial").length;
+      const archivedCount = state.students.filter(s => statusOf(s) === "archived").length;
       if ($("studentCountTotal")) $("studentCountTotal").textContent = state.students.length;
-      if ($("studentCountActive")) $("studentCountActive").textContent = activeCount;
+      if ($("studentCountActive")) $("studentCountActive").textContent = registeredCount;
+      if ($("studentCountTrial")) $("studentCountTrial").textContent = trialCount;
       if ($("studentCountArchived")) $("studentCountArchived").textContent = archivedCount;
-      $("studentList").innerHTML = state.students.filter(s => !search || String(s.name || "").toLowerCase().includes(search)).map(s => {
+      $("studentList").innerHTML = [...state.students].sort(byName).filter(s => !search || String(s.name || "").toLowerCase().includes(search)).map(s => {
         const regularSlots = getStudentRegularSlots(s);
         const lines = regularSlots.map(slot => {
           const t = teacherById(slot.teacherId);
           return `${slot.day} ${timeLabel(slot.time)} | ${slot.subject} | ${t ? t.name : "No teacher"}`;
         });
-        const archived = (s.status || "active") === "archived";
-        return `<div class="card"><div class="row spread"><strong>${escapeHtml(s.name)}</strong><span>${s.package ? `<span class="pill">${escapeHtml(s.package)}</span>` : ""}<span class="pill ${archived ? "archived" : ""}">${escapeHtml(archived ? "archived" : "active")}</span></span></div><div class="subtle">${s.subject ? "Subject: " + escapeHtml(s.subject) + "<br>" : ""}${lines.map(escapeHtml).join("<br>") || "No regular slots"}</div><div class="row" style="margin-top:8px;"><button class="btn small ghost" data-edit-student="${s.id}">Edit</button><button class="btn small ghost" data-archive-student="${s.id}">${archived ? "Restore" : "Archive"}</button><button class="btn small danger" data-delete-student="${s.id}">Delete</button></div></div>`;
+        const studentStatus = statusOf(s);
+        const archived = studentStatus === "archived";
+        const statusLabel = studentStatus === "trial" ? "trial / not enrolled" : studentStatus;
+        return `<div class="card"><div class="row spread"><strong>${escapeHtml(s.name)}</strong><span>${s.package ? `<span class="pill">${escapeHtml(s.package)}</span>` : ""}<span class="pill ${archived ? "archived" : ""}">${escapeHtml(statusLabel)}</span></span></div><div class="subtle">${s.subject ? "Subject: " + escapeHtml(s.subject) + "<br>" : ""}${lines.map(escapeHtml).join("<br>") || "No regular slots"}</div><div class="row" style="margin-top:8px;"><button class="btn small ghost" data-edit-student="${s.id}">Edit</button><button class="btn small ghost" data-archive-student="${s.id}">${archived ? "Restore" : "Archive"}</button><button class="btn small danger" data-delete-student="${s.id}">Delete</button></div></div>`;
       }).join("") || `<div class="empty">Add student names, subjects, and regular weekly slots.</div>`;
     }
 
@@ -983,7 +1006,7 @@
         <div class="card lead-card ${escapeHtml(lead.urgency || "warm")}">
           <div class="row spread"><strong>${escapeHtml(lead.childName || "Unnamed Child")}</strong><span><span class="pill">${escapeHtml(lead.status || "New Contact")}</span><span class="pill">${escapeHtml(lead.urgency || "warm")}</span></span></div>
           <div class="subtle">
-            Parent: ${escapeHtml(lead.parentName || "")} | ${escapeHtml(lead.parentPhone || "")}<br>
+            Parent: ${escapeHtml(lead.parentName || "")} | ${phoneHtml(lead.parentPhone)}<br>
             Subject: ${(lead.subjects || []).map(escapeHtml).join(", ") || "-"} | Source: ${escapeHtml(lead.source || "-")}<br>
             Follow-up: ${escapeHtml(lead.nextFollowUp || "-")} | Package: ${escapeHtml(lead.packageInterested || "-")}
           </div>
@@ -1002,7 +1025,7 @@
         <tr>
           <td>${escapeHtml(dateOnly(lead.createdAt))}</td>
           <td><strong>${escapeHtml(lead.childName || "Unnamed Child")}</strong><br><span class="subtle">${escapeHtml(lead.childAge || "")}</span></td>
-          <td>${escapeHtml(lead.parentName || "")}<br><span class="subtle">${escapeHtml(lead.parentPhone || "")}</span></td>
+          <td>${escapeHtml(lead.parentName || "")}<br><span class="subtle">${phoneHtml(lead.parentPhone)}</span></td>
           <td>${(lead.subjects || []).map(escapeHtml).join(", ") || "-"}</td>
           <td>${escapeHtml(lead.source || "-")}</td>
           <td>${escapeHtml(lead.salesperson || "-")}</td>
@@ -1112,8 +1135,7 @@
       $("reportText").textContent = `Hi ${teacher.name},\n\nHere is your ${new Date(year, month, 1).toLocaleString("en", { month: "long", year: "numeric" })} teaching summary.\n\nCompleted lessons: ${lessonCount}\nCurrent tier: ${teacher.tier}\nClass rate: ${Number(teacher.rate || 0).toFixed(2)}\nEstimated lesson payout: ${amount.toFixed(2)}\n\nNext-tier progress:\n- Target lessons entered by admin: ${target}\n- Remaining lessons to target: ${remaining}\n- Attendance target entered by admin: ${$("targetAttendance").value}%\n\nTeacher rating criteria can be added here after you send the final upgrade rules.`;
     }
 
-  function crmMonthlyRows() {
-      const year = Number($("crmReportYear").value || new Date().getFullYear());
+  function crmMonthlyRows(year = Number($("crmReportYear").value || new Date().getFullYear())) {
       return Array.from({ length: 12 }, (_, month) => {
         const leads = state.leads.filter(lead => {
           const date = new Date((lead.createdAt || lead.updatedAt || "") + "");
@@ -1128,40 +1150,69 @@
           assessment: countStatus("Assessment"),
           trial: countStatus("Trial Class"),
           enrolled: countStatus("Enrolled"),
-          lost: countStatus("Lost")
+          lost: countStatus("Lost"),
+          assessmentRate: pct(countStatus("Assessment"), leads.length),
+          trialRate: pct(countStatus("Trial Class"), leads.length),
+          enrolledRate: pct(countStatus("Enrolled"), leads.length),
+          lostRate: pct(countStatus("Lost"), leads.length)
         };
       });
     }
 
-    function renderCrmDashboard() {
-      const rows = crmMonthlyRows();
-      const totals = rows.reduce((acc, row) => {
-        Object.keys(row).forEach(key => {
-          if (key !== "month") acc[key] = (acc[key] || 0) + row[key];
-        });
+    function crmTotals(rows) {
+      return rows.reduce((acc, row) => {
+        ["total", "newContact", "followUp", "assessment", "trial", "enrolled", "lost"].forEach(key => acc[key] = (acc[key] || 0) + row[key]);
         return acc;
       }, {});
+     }
+  
+  function crmDashboardExportRows() {
+      const year = Number($("crmReportYear").value || new Date().getFullYear());
+      const compareYear = Number($("crmCompareYear").value || 0);
+      const rows = crmMonthlyRows(year);
+      const compareRows = compareYear ? crmMonthlyRows(compareYear) : [];
+      return rows.map((row, i) => {
+        const compare = compareRows[i] || {};
+        const change = compareYear ? row.total - (compare.total || 0) : "";
+        return [row.month, year, row.total, compareYear ? (compare.total || 0) : "", change, row.newContact, row.followUp, row.assessment, row.assessmentRate, row.trial, row.trialRate, row.enrolled, row.enrolledRate, row.lost, row.lostRate];
+      });
+    }
+
+  function crmDashboardExportHeaders() {
+      const year = Number($("crmReportYear").value || new Date().getFullYear());
+      const compareYear = Number($("crmCompareYear").value || 0);
+      return ["Month", "Year", "Total Leads", compareYear ? `${compareYear} Leads` : "Compare Leads", "Change", "New", "Follow Up", "Assessment", "Assessment %", "Trial", "Trial %", "Enrolled", "Enrolled %", "Lost", "Lost %"];
+    }
+
+    function renderCrmDashboard() {
+      const year = Number($("crmReportYear").value || new Date().getFullYear());
+      const compareYear = Number($("crmCompareYear").value || 0);
+      const rows = crmMonthlyRows(year);
+      const compareRows = compareYear ? crmMonthlyRows(compareYear) : [];
+      const totals = crmTotals(rows);
+      const compareTotals = compareYear ? crmTotals(compareRows) : {};
       $("crmDashboardSummary").innerHTML = `
-        <div class="metric"><span class="subtle">Total leads</span><strong>${totals.total || 0}</strong></div>
-        <div class="metric"><span class="subtle">Assessment</span><strong>${totals.assessment || 0}</strong></div>
-        <div class="metric"><span class="subtle">Trial</span><strong>${totals.trial || 0}</strong></div>
-        <div class="metric"><span class="subtle">Enrolled</span><strong>${totals.enrolled || 0}</strong></div>
+        <div class="metric"><span class="subtle">${year} total leads</span><strong>${totals.total || 0}</strong>${compareYear ? `<span class="subtle">vs ${compareYear}: ${compareTotals.total || 0} (${(totals.total || 0) - (compareTotals.total || 0) >= 0 ? "+" : ""}${(totals.total || 0) - (compareTotals.total || 0)})</span>` : ""}</div>
+        <div class="metric"><span class="subtle">Assessment rate</span><strong>${pct(totals.assessment || 0, totals.total || 0)}</strong><span class="subtle">${totals.assessment || 0} leads</span></div>
+        <div class="metric"><span class="subtle">Trial rate</span><strong>${pct(totals.trial || 0, totals.total || 0)}</strong><span class="subtle">${totals.trial || 0} leads</span></div>
+        <div class="metric"><span class="subtle">Enrolled rate</span><strong>${pct(totals.enrolled || 0, totals.total || 0)}</strong><span class="subtle">${totals.enrolled || 0} leads</span></div>
       `;
-      $("crmDashboardTable").innerHTML = tableHtml(["Month", "Total", "New", "Follow Up", "Assessment", "Trial", "Enrolled", "Lost"], rows.map(row => [row.month, row.total, row.newContact, row.followUp, row.assessment, row.trial, row.enrolled, row.lost]));
+       $("crmDashboardTable").innerHTML = tableHtml(["Month", `${year} Total`, compareYear ? `${compareYear} Total` : "Compare Total", "Change", "New", "Follow Up", "Assessment", "Assessment %", "Trial", "Trial %", "Enrolled", "Enrolled %", "Lost", "Lost %"], crmDashboardExportRows().map(row => [row[0], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[10], row[11], row[12], row[13], row[14]]));
     }
 
     function studentExportRows() {
-      return state.students.map(student => {
+      return [...state.students].sort(byName).map(student => {
         const slots = getStudentRegularSlots(student).map(slot => {
           const teacher = teacherById(slot.teacherId);
           return `${slot.day} ${timeLabel(slot.time)} ${slot.subject} ${teacher ? teacher.name : ""}`.trim();
         }).join("; ");
-        return [student.name || "", student.subject || "", student.package || "", student.status || "active", slots];
+        const status = student.status === "trial" ? "Trial / Not Enrolled" : (student.status === "archived" ? "Archived" : "Registered");
+        return [student.name || "", student.subject || "", student.package || "", status, slots];
       });
     }
 
     function teacherExportRows() {
-      return state.teachers.map(teacher => [
+       return [...state.teachers].sort(byName).map(teacher => [
         teacher.name || "",
         (teacher.subjects || []).join(", "),
         teacher.tier || "",
@@ -1421,7 +1472,7 @@
       if (editStudent) {
         const s = studentById(editStudent.dataset.editStudent);
         studentRegularSlotsDraft = getStudentRegularSlots(s).map(slot => ({ ...slot, id: slot.id || uid("student_slot") }));
-        $("studentId").value = s.id; $("studentName").value = s.name; $("studentSubject").value = s.subject; $("studentPackage").value = s.package || ""; $("studentTeacher").value = s.teacherId || studentRegularSlotsDraft[0]?.teacherId || ""; $("studentTime").value = s.time || studentRegularSlotsDraft[0]?.time || "";
+        $("studentId").value = s.id; $("studentName").value = s.name; $("studentSubject").value = s.subject; $("studentPackage").value = s.package || ""; $("studentStatus").value = s.status === "trial" ? "trial" : (s.status === "archived" ? "archived" : "registered"); $("studentTeacher").value = s.teacherId || studentRegularSlotsDraft[0]?.teacherId || ""; $("studentTime").value = s.time || studentRegularSlotsDraft[0]?.time || "";
         $("studentRegularSubject").value = studentRegularSlotsDraft[0]?.subject || s.subject || "CN";
         setSelectedStudentRegularDays([...new Set(studentRegularSlotsDraft.map(slot => slot.day).filter(Boolean))]);
         renderStudentRegularSlotDraft();
@@ -1430,7 +1481,7 @@
       if (archiveStudent) {
         const student = studentById(archiveStudent.dataset.archiveStudent);
         if (student) {
-          student.status = (student.status || "active") === "archived" ? "active" : "archived";
+          student.status = student.status === "archived" ? "registered" : "archived";
           save();
         }
       }
@@ -1553,16 +1604,16 @@
       if (!packageName) return alert("Choose or type the student's package first.");
       const id = $("studentId").value || uid("student");
       const existing = studentById(id) || { id };
-      Object.assign(existing, { name, subject: $("studentSubject").value, package: packageName, status: existing.status || "active", regularSlots: studentRegularSlotsDraft.map(slot => ({ ...slot })) });
+      Object.assign(existing, { name, subject: $("studentSubject").value, package: packageName, status: $("studentStatus").value || "registered", regularSlots: studentRegularSlotsDraft.map(slot => ({ ...slot })) });
       delete existing.teacherId;
       delete existing.day;
       delete existing.time;
       if (!state.students.some(s => s.id === id)) state.students.push(existing);
-      $("studentId").value = ""; $("studentName").value = ""; $("studentPackage").value = ""; $("studentTime").value = "";
+      $("studentId").value = ""; $("studentName").value = ""; $("studentPackage").value = ""; $("studentStatus").value = "registered"; $("studentTime").value = "";
       studentRegularSlotsDraft = [];
       save();
     };
-          $("newStudentBtn").onclick = () => { $("studentId").value = ""; $("studentName").value = ""; $("studentPackage").value = ""; $("studentTime").value = ""; setSelectedStudentRegularDays([]); studentRegularSlotsDraft = []; renderStudentRegularSlotDraft(); };
+      $("newStudentBtn").onclick = () => { $("studentId").value = ""; $("studentName").value = ""; $("studentPackage").value = ""; $("studentStatus").value = "registered"; $("studentTime").value = ""; setSelectedStudentRegularDays([]); studentRegularSlotsDraft = []; renderStudentRegularSlotDraft(); };
     $("addStudentRegularSlotBtn").onclick = () => {
       const days = selectedStudentRegularDays();
       if (!$("studentTeacher").value || !days.length || !$("studentTime").value) return alert("Choose teacher, at least one day, and time first.");
@@ -1617,7 +1668,7 @@
       if (!childName || !packageName) return alert("Child name and package interested are required first.");
       const existing = state.students.find(s => String(s.name || "").toLowerCase() === childName.toLowerCase());
       if (existing) return alert("This child already exists in the student list.");
-      state.students.push({ id: uid("student"), name: childName, subject: "CN", package: packageName, status: "active", regularSlots: [] });
+      state.students.push({ id: uid("student"), name: childName, subject: "CN", package: packageName, status: "trial", regularSlots: [] });
       save();
       setStatus("Student created from lead.");
     };
@@ -1693,14 +1744,14 @@
       }
     };
     $("generateReportBtn").onclick = renderReport;
-    $("crmReportYear").addEventListener("change", renderCrmDashboard);
+    ["crmReportYear", "crmCompareYear"].forEach(id => $(id).addEventListener("change", renderCrmDashboard));
     $("generateCrmDashboardBtn").onclick = renderCrmDashboard;
-    $("exportStudentsCsvBtn").onclick = () => downloadCsv("class-one-students.csv", ["Name", "Subject", "Package", "Status", "Regular Slots"], studentExportRows());
-    $("exportStudentsPdfBtn").onclick = () => openPrintReport("Class One Students", ["Name", "Subject", "Package", "Status", "Regular Slots"], studentExportRows());
-    $("exportTeachersCsvBtn").onclick = () => downloadCsv("class-one-teachers.csv", ["Name", "Subjects", "Tier", "Rate", "Regular Slots", "Date Slots"], teacherExportRows());
-    $("exportTeachersPdfBtn").onclick = () => openPrintReport("Class One Teachers", ["Name", "Subjects", "Tier", "Rate", "Regular Slots", "Date Slots"], teacherExportRows());
-    $("exportCrmCsvBtn").onclick = () => downloadCsv("class-one-crm-monthly-dashboard.csv", ["Month", "Total", "New", "Follow Up", "Assessment", "Trial", "Enrolled", "Lost"], crmMonthlyRows().map(row => [row.month, row.total, row.newContact, row.followUp, row.assessment, row.trial, row.enrolled, row.lost]));
-    $("exportCrmPdfBtn").onclick = () => openPrintReport("CRM Leads Monthly Dashboard", ["Month", "Total", "New", "Follow Up", "Assessment", "Trial", "Enrolled", "Lost"], crmMonthlyRows().map(row => [row.month, row.total, row.newContact, row.followUp, row.assessment, row.trial, row.enrolled, row.lost]));
+    $("exportStudentsCsvBtn").onclick = () => downloadCsv("class-one-students.csv", ["No.", "Name", "Subject", "Package", "Status", "Regular Slots"], numbered(studentExportRows()));
+    $("exportStudentsPdfBtn").onclick = () => openPrintReport("Class One Students", ["No.", "Name", "Subject", "Package", "Status", "Regular Slots"], numbered(studentExportRows()));
+    $("exportTeachersCsvBtn").onclick = () => downloadCsv("class-one-teachers.csv", ["No.", "Name", "Subjects", "Tier", "Rate", "Regular Slots", "Date Slots"], numbered(teacherExportRows()));
+    $("exportTeachersPdfBtn").onclick = () => openPrintReport("Class One Teachers", ["No.", "Name", "Subjects", "Tier", "Rate", "Regular Slots", "Date Slots"], numbered(teacherExportRows()));
+    $("exportCrmCsvBtn").onclick = () => downloadCsv("class-one-crm-monthly-dashboard.csv", ["No.", ...crmDashboardExportHeaders()], numbered(crmDashboardExportRows()));
+    $("exportCrmPdfBtn").onclick = () => openPrintReport("CRM Leads Monthly Dashboard", ["No.", ...crmDashboardExportHeaders()], numbered(crmDashboardExportRows()));
     $("pullBtn").onclick = () => animateClick($("pullBtn"), () => syncPull().catch(err => alert(err.message)));
     $("pushBtn").onclick = () => animateClick($("pushBtn"), () => syncPush().catch(err => alert(err.message)));
     $("crmPullBtn").onclick = () => animateClick($("crmPullBtn"), () => crmPull().catch(err => alert(err.message)));
