@@ -28,6 +28,7 @@
     button { cursor: pointer; border: 0; }
     .app-shell { min-height: 100vh; display: grid; grid-template-columns: 260px minmax(0, 1fr); transition: grid-template-columns .2s ease; }
     .app-shell.sidebar-collapsed { grid-template-columns: 76px minmax(0, 1fr); }
+    .app-shell.layout-stacked .grid.two { grid-template-columns: 1fr; }
     aside { background: var(--ink); color: #fff; padding: 24px 18px; position: sticky; top: 0; height: 100vh; }
     .brand { display: flex; gap: 12px; align-items: center; margin-bottom: 26px; }
     .logo { width: 96px; height: 48px; border-radius: 8px; background: #fff; object-fit: contain; padding: 4px; }
@@ -96,6 +97,11 @@
     .slot.booked { background: var(--warn); }
     .slot.booked.type-assessment, .slot.booked.type-exam, .slot.booked.type-trial-class { background: #fff2a8; }
     .slot.booked.type-replacement-class { background: #dceafe; }
+    .slot.status-student-not-show { background: #d92d20; color: #fff; }
+    .slot.status-student-not-show small { color: #fff; }
+    .slot.status-cancelled, .slot.status-public-holiday, .slot.status-teacher-leave { background: #d0d5dd; color: #17212b; }
+    .slot.status-cancelled small, .slot.status-public-holiday small, .slot.status-teacher-leave small { color: #17212b; }
+    .slot.status-completed { background: #dcf8ea; }
     .slot.fixed { background: #e8edf1; color: var(--ink); cursor: not-allowed; }
     .slot.reserve { background: #dceafe; }
     .slot small { display: block; color: #3d4b45; font-weight: 700; margin-top: 2px; }
@@ -179,7 +185,8 @@
           <div class="subtle" id="statusText">Saved in this browser. Connect Google Apps Script when ready.</div>
         </div>
         <div class="row">
-          <button class="btn ghost" id="archivePastBtn">Archive Past Bookings</button>
+          <button class="btn ghost" id="layoutToggleBtn">Layout: Side by Side</button>
+          <button class="btn ghost" id="archivePastBtn">Finalize Passed Classes</button>
           <button class="btn mint" id="saveBtn">Save</button>
         </div>
       </div>
@@ -487,9 +494,8 @@
             <div><label>Teacher</label><select id="reportTeacher"></select></div>
             <div><label>Month</label><select id="reportMonth"></select></div>
             <div><label>Year</label><input id="reportYear" type="number" min="2024" max="2035"></div>
-            <div><label>Target Lessons</label><input id="targetLessons" type="number" value="80"></div>
-            <div><label>Min Attendance</label><input id="targetAttendance" type="number" value="95"></div>
             <div><label>&nbsp;</label><button class="btn mint" id="generateReportBtn">Generate</button></div>
+            <div><label>&nbsp;</label><button class="btn ghost" id="exportTeacherReportPdfBtn">Export Teacher PDF</button></div>
           </div>
           <div class="grid two" style="margin-top:16px;">
             <div id="reportStats" class="card"></div>
@@ -549,11 +555,44 @@
     </div>
   </div>
 
+   <div id="bookingOutcomeModal" class="modal hide">
+    <div class="modal-card">
+      <div class="row spread"><h2>Class Outcome</h2><button class="btn ghost small" data-close>Close</button></div>
+      <input id="outcomeBookingId" type="hidden">
+      <div class="subtle" id="outcomeInfo"></div>
+      <div class="grid two" style="margin-top:14px;">
+        <div>
+          <label>Class Status</label>
+          <select id="outcomeStatus">
+            <option value="booked">Booked / no exception</option>
+            <option value="student_not_show">Student Not Show</option>
+            <option value="cancelled">Cancelled</option>
+            <option value="public_holiday">Public Holiday Cancelled</option>
+            <option value="teacher_leave">Teacher Leave Cancelled</option>
+          </select>
+        </div>
+        <div><label>Remark</label><input id="outcomeRemark" placeholder="Optional note"></div>
+      </div>
+      <div class="row" style="margin-top:14px;">
+        <button class="btn mint" id="saveOutcomeBtn">Save Outcome</button>
+      </div>
+    </div>
+  </div>
+  
 <script>
     const SUBJECTS = ["CN", "BM", "PK", "SOK", "CREATIVE MATHS", "PHONICS"];
     const LEAD_SUBJECTS = ["BC", "BM", "PK", "SOK", "Phonics"];
     const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
     const BOOKING_TYPES = ["exam", "assessment", "trial class", "replacement class", "reserve", "new students", "regular class"];
+    const BOOKING_STATUS_LABELS = {
+      booked: "Booked",
+      completed: "Completed",
+      student_not_show: "Student Not Show",
+      cancelled: "Cancelled",
+      public_holiday: "Public Holiday",
+      teacher_leave: "Teacher Leave"
+    };
+    const CANCELLED_STATUSES = ["cancelled", "public_holiday", "teacher_leave"];
     const LEAD_STATUSES = ["New Contact", "Follow Up", "No Response", "Assessment", "Trial Class", "Enrolled", "Lost"];
     const URGENCIES = ["hot", "warm", "cold"];
     const DEFAULT_REPLY_TEMPLATES = [
@@ -569,6 +608,12 @@
       { id: "tpl_package", title: "Package Reply", category: "Package", body: "Our package depends on the subject and class arrangement. I can share the suitable package after confirming your child's subject, level, and preferred schedule.\n\nMay I know which subject you are considering?" },
       { id: "tpl_enrolment", title: "Enrollment Confirmation", category: "Enrollment", body: "Thank you for confirming the enrollment. We will reserve the regular slot for your child:\n\nStudent: [Child Name]\nSubject: [Subject]\nTeacher: [Teacher]\nRegular time: [Day] [Time]\nPackage: [Package]\n\nWe will update you if there is any class arrangement notice." }
     ];
+   const DEFAULT_SYNC = {
+      scriptUrl: "https://script.google.com/macros/s/AKfycbzx58M0_lFbhYjrRm3FF-sSPumU4_T_2_DI2pD7FAFNEwS-PJWCCpkjZYLlatW6bwA/exec",
+      apiKey: "classone2026private",
+      crmScriptUrl: "https://script.google.com/macros/s/AKfycbzHnj_n1EM8dQeLuuyzkoc1FE5_3rr4wHeu0nrBwKI6ryqwm95TqFMx-vnddpQf9dexSA/exec",
+      crmApiKey: "CRMUPDATE"
+    };
     const STORE_KEY = "classOneBookingRevamp.v1";
     const state = {
       teachers: [],
@@ -615,16 +660,21 @@
       const wa = whatsappNumber(phone);
       return `${escapeHtml(phone || "-")}${wa ? ` <a class="pill" href="https://wa.me/${wa}" target="_blank" rel="noopener">WhatsApp</a>` : ""}`;
     };
+    const bookingStatusLabel = (status) => BOOKING_STATUS_LABELS[status] || status || "Booked";
+    const statusClass = (status) => `status-${String(status || "booked").replace(/_/g, "-")}`;
+    const isCancelledStatus = (status) => CANCELLED_STATUSES.includes(status);
+    const slotDateTime = (date, time) => new Date(`${date}T${time || "00:00"}:00`);
+    const slotHasPassed = (date, time) => slotDateTime(date, time) < new Date();
 
      function load() {
       const saved = localStorage.getItem(STORE_KEY);
       if (saved) Object.assign(state, JSON.parse(saved));
       state.settings ||= {};
       state.settings.replyTemplates = state.settings.replyTemplates?.length ? state.settings.replyTemplates : DEFAULT_REPLY_TEMPLATES.map(template => ({ ...template }));
-      $("scriptUrl").value = state.settings.scriptUrl || "";
-      $("apiKey").value = state.settings.apiKey || "";
-      $("crmScriptUrl").value = state.settings.crmScriptUrl || "";
-      $("crmApiKey").value = state.settings.crmApiKey || "";
+      $("scriptUrl").value = state.settings.scriptUrl || DEFAULT_SYNC.scriptUrl;
+      $("apiKey").value = state.settings.apiKey || DEFAULT_SYNC.apiKey;
+      $("crmScriptUrl").value = state.settings.crmScriptUrl || DEFAULT_SYNC.crmScriptUrl;
+      $("crmApiKey").value = state.settings.crmApiKey || DEFAULT_SYNC.crmApiKey;
       archivePast(false);
     }
 
@@ -717,18 +767,25 @@
       const day = DAYS[(date.getDay() + 6) % 7];
       const slots = [];
       state.teachers.forEach(t => {
-        (t.regularSlots || []).filter(s => s.day === day).forEach(s => slots.push({ ...s, id: s.id, teacherId: t.id, date: dateStr, source: s.source || "regular" }));
+        (t.regularSlots || [])
+          .filter(s => s.day === day)
+          .filter(s => (!s.startDate || s.startDate <= dateStr) && (!s.endDate || s.endDate >= dateStr))
+          .forEach(s => slots.push({ ...s, id: s.id, teacherId: t.id, date: dateStr, source: s.source || "regular" }));
         (t.overrideSlots || []).filter(s => s.date === dateStr).forEach(s => slots.push({ ...s, id: s.id, teacherId: t.id, date: dateStr, source: "override" }));
       });
       return slots;
     }
 
+   function scheduleBookings() {
+      return state.bookings.filter(b => b.status !== "deleted");
+    }
+
     function activeBookings() {
-      return state.bookings.filter(b => !b.archived && b.status !== "cancelled");
+      return scheduleBookings().filter(b => !isCancelledStatus(b.status));
     }
 
     function findBooking(slot) {
-      return activeBookings().find(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
+      return scheduleBookings().find(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
     }
 
     function slotMatchesSubject(slot, subjectFilter) {
@@ -744,9 +801,10 @@
           
     function renderSchedule() {
       const dates = weekDates();
+      finalizePassedClassesForRange(dates[0], dates[dates.length - 1]);
       const times = new Set();
       dates.flatMap(collectSlotsForDate).forEach(s => times.add(s.time));
-      activeBookings().forEach(b => {
+      scheduleBookings().forEach(b => {
         if (dates.some(d => localISO(d) === b.date)) times.add(b.time);
       });
       const sortedTimes = [...times].sort((a, b) => minutes(a) - minutes(b));
@@ -816,7 +874,7 @@
 
     function overviewItemHtml(slot, booking) {
       const subject = slot.subject || "";
-      if (booking) return `<div class="overview-item"><strong>${timeLabel(slot.time)}</strong> <span class="pill booked">Booked</span><div class="subtle">${escapeHtml(booking.studentName)} | ${escapeHtml(booking.type)} | ${escapeHtml(subject)}</div></div>`;
+      if (booking) return `<div class="overview-item"><strong>${timeLabel(slot.time)}</strong> <span class="pill ${escapeHtml(booking.status || "booked")}">${escapeHtml(bookingStatusLabel(booking.status))}</span><div class="subtle">${escapeHtml(booking.studentName)} | ${escapeHtml(booking.type)} | ${escapeHtml(subject)}</div></div>`;
       if (slot.locked) return `<div class="overview-item"><strong>${timeLabel(slot.time)}</strong> <span class="pill booked">Fixed Regular</span><div class="subtle">${escapeHtml(slot.studentName || "occupied")} | ${escapeHtml(subject)}</div></div>`;
       return `<div class="overview-item"><strong>${timeLabel(slot.time)}</strong> <span class="pill available">Available</span><div class="subtle">${escapeHtml(subject)} | sales can propose</div></div>`;
     }
@@ -837,10 +895,10 @@
       if (booking) {
         const reserveClass = booking.type === "reserve" ? " reserve" : "";
         const typeClass = ` type-${String(booking.type || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
-        return `<button class="slot booked${reserveClass}" data-booking-id="${booking.id}">${escapeHtml(teacher.name)}<small>Booked by ${escapeHtml(booking.studentName)} | ${escapeHtml(booking.type)} | ${escapeHtml(subject)}</small></button>`;
+        return `<button class="slot booked${reserveClass}${typeClass} ${statusClass(booking.status)}" data-booking-id="${booking.id}">${escapeHtml(teacher.name)}<small>${escapeHtml(bookingStatusLabel(booking.status))}: ${escapeHtml(booking.studentName)} | ${escapeHtml(booking.type)} | ${escapeHtml(subject)}</small></button>`;
       }
       if (slot.locked) {
-        return `<button class="slot fixed" disabled>${escapeHtml(teacher.name)}<small>Fixed regular: ${escapeHtml(slot.studentName || "occupied")} | ${escapeHtml(subject)}</small></button>`;
+        return `<button class="slot fixed" data-fixed-slot="${escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, studentName: slot.studentName || "Fixed regular class", slotId: slot.id }))}">${escapeHtml(teacher.name)}<small>Fixed regular: ${escapeHtml(slot.studentName || "occupied")} | ${escapeHtml(subject)}</small></button>`;
       }
       return `<button class="slot" data-slot="${escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject }))}">${escapeHtml(teacher.name)}<small>Available | ${escapeHtml(subject)} | 30 min slot, 25 min class</small></button>`;
     }
@@ -1126,13 +1184,38 @@
       }
       const month = Number($("reportMonth").value);
       const year = Number($("reportYear").value);
-      const completed = state.bookings.filter(b => b.teacherId === teacherId && b.status === "completed" && new Date(b.date + "T00:00:00").getMonth() === month && new Date(b.date + "T00:00:00").getFullYear() === year);
+      const start = new Date(year, month, 1);
+      const end = new Date(year, month + 1, 0, 23, 59, 59);
+      finalizePassedClassesForRange(start, end);
+      const monthBookings = state.bookings.filter(b => b.teacherId === teacherId && new Date(b.date + "T00:00:00").getMonth() === month && new Date(b.date + "T00:00:00").getFullYear() === year);
+      const completed = monthBookings.filter(b => b.status === "completed");
+      const notShows = monthBookings.filter(b => b.status === "student_not_show");
+      const cancelled = monthBookings.filter(b => isCancelledStatus(b.status));
       const lessonCount = completed.length;
-      const amount = lessonCount * Number(teacher.rate || 0);
-      const target = Number($("targetLessons").value || 0);
-      const remaining = Math.max(target - lessonCount, 0);
-      $("reportStats").innerHTML = `<h3>${escapeHtml(teacher.name)}</h3><p><strong>${lessonCount}</strong> completed lessons</p><p>Estimated payout: <strong>${amount.toFixed(2)}</strong></p><p>Current tier: <strong>${escapeHtml(teacher.tier)}</strong></p><p>Lessons to target: <strong>${remaining}</strong></p>`;
-      $("reportText").textContent = `Hi ${teacher.name},\n\nHere is your ${new Date(year, month, 1).toLocaleString("en", { month: "long", year: "numeric" })} teaching summary.\n\nCompleted lessons: ${lessonCount}\nCurrent tier: ${teacher.tier}\nClass rate: ${Number(teacher.rate || 0).toFixed(2)}\nEstimated lesson payout: ${amount.toFixed(2)}\n\nNext-tier progress:\n- Target lessons entered by admin: ${target}\n- Remaining lessons to target: ${remaining}\n- Attendance target entered by admin: ${$("targetAttendance").value}%\n\nTeacher rating criteria can be added here after you send the final upgrade rules.`;
+      const lessonPay = lessonCount * Number(teacher.rate || 0);
+      const notShowPay = notShows.length * 5;
+      const amount = lessonPay + notShowPay;
+      const monthLabel = new Date(year, month, 1).toLocaleString("en", { month: "long", year: "numeric" });
+      $("reportStats").innerHTML = `<h3>${escapeHtml(teacher.name)}</h3><p><strong>${lessonCount}</strong> completed lessons</p><p>Student not show: <strong>${notShows.length}</strong> x RM5.00</p><p>Cancelled/holiday/leave: <strong>${cancelled.length}</strong> not counted</p><p>Estimated payout: <strong>RM ${amount.toFixed(2)}</strong></p><p>Current tier: <strong>${escapeHtml(teacher.tier)}</strong></p>`;
+      $("reportText").textContent = teacherReportText(teacher, monthLabel, lessonCount, lessonPay, notShows.length, notShowPay, cancelled.length, amount);
+    }
+
+    function teacherReportText(teacher, monthLabel, lessonCount, lessonPay, notShowCount, notShowPay, cancelledCount, amount) {
+      return `Hi ${teacher.name},\n\nHere is your ${monthLabel} teaching summary.\n\nCurrent tier: ${teacher.tier}\nClass rate: RM ${Number(teacher.rate || 0).toFixed(2)}\n\nCompleted lessons: ${lessonCount} x RM ${Number(teacher.rate || 0).toFixed(2)} = RM ${lessonPay.toFixed(2)}\nStudent not show allowance: ${notShowCount} x RM 5.00 = RM ${notShowPay.toFixed(2)}\nCancelled / public holiday / teacher leave: ${cancelledCount} class(es), not counted for payout\n\nEstimated payout: RM ${amount.toFixed(2)}\n\nThis summary is based on finalized timetable records for the selected month.`;
+    }
+
+    function currentTeacherReportRows() {
+      const teacher = teacherById($("reportTeacher").value);
+      if (!teacher) return [];
+      const month = Number($("reportMonth").value);
+      const year = Number($("reportYear").value);
+      const start = new Date(year, month, 1);
+      const end = new Date(year, month + 1, 0, 23, 59, 59);
+      finalizePassedClassesForRange(start, end);
+      return state.bookings
+        .filter(b => b.teacherId === teacher.id && new Date(b.date + "T00:00:00").getMonth() === month && new Date(b.date + "T00:00:00").getFullYear() === year)
+        .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`))
+        .map(b => [b.date, timeLabel(b.time), b.studentName || "", b.subject || "", b.type || "", bookingStatusLabel(b.status), b.status === "completed" ? Number(teacher.rate || 0).toFixed(2) : (b.status === "student_not_show" ? "5.00" : "0.00"), b.remark || ""]);
     }
 
   function crmMonthlyRows(year = Number($("crmReportYear").value || new Date().getFullYear())) {
@@ -1296,18 +1379,73 @@
       if (!duplicate) teacher[listName].push({ id: uid("slot"), day, date, time, subject });
     }
 
-          function archivePast(show = true) {
-      const today = todayISO();
-      state.bookings.forEach(b => {
-        if (!b.archived && b.status === "booked" && b.date < today) {
-          b.status = "completed";
-          b.archived = true;
-        }
-      });
-      localStorage.setItem(STORE_KEY, JSON.stringify(state));
-      if (show) setStatus("Past bookings archived as completed.");
+       function datesBetween(start, end) {
+      const dates = [];
+      const cursor = new Date(start);
+      while (cursor <= end) {
+        dates.push(new Date(cursor));
+        cursor.setDate(cursor.getDate() + 1);
+      }
+      return dates;
     }
 
+    function finalizePassedBookings() {
+      let changed = false;
+      state.bookings.forEach(b => {
+        if (b.status === "booked" && slotHasPassed(b.date, b.time)) {
+          b.status = "completed";
+          b.archived = true;
+          b.completedAt = b.completedAt || new Date().toISOString();
+          changed = true;
+        }
+      });
+       return changed;
+    }
+
+  function finalizeFixedSlotsForRange(start, end) {
+      let changed = false;
+      datesBetween(start, end).forEach(date => {
+        collectSlotsForDate(date).forEach(slot => {
+          if (!slot.locked || !slotHasPassed(slot.date, slot.time)) return;
+          const existing = scheduleBookings().find(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
+          if (existing) return;
+          const teacher = teacherById(slot.teacherId);
+          state.bookings.push({
+            id: `history_${slot.teacherId}_${slot.date}_${slot.time}_${slot.id}`.replace(/[^a-zA-Z0-9_-]/g, "_"),
+            teacherId: slot.teacherId,
+            studentId: "",
+            studentName: slot.studentName || "Fixed regular class",
+            subject: slot.subject || (teacher?.subjects || [])[0] || "",
+            type: "regular class",
+            date: slot.date,
+            day: slot.day,
+            time: slot.time,
+            status: "completed",
+            archived: true,
+            minutes: 25,
+            createdAt: new Date().toISOString(),
+            completedAt: slotDateTime(slot.date, slot.time).toISOString(),
+            source: "fixed_regular_snapshot"
+          });
+          changed = true;
+        });
+      });
+      return changed;
+    }
+
+  function finalizePassedClassesForRange(start, end, show = false) {
+      const changed = finalizePassedBookings() || finalizeFixedSlotsForRange(start, end);
+      if (changed) localStorage.setItem(STORE_KEY, JSON.stringify(state));
+      if (show) setStatus(changed ? "Passed classes finalized into history." : "No new passed classes to finalize.");
+      return changed;
+    }
+
+    function archivePast(show = true) {
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      finalizePassedClassesForRange(start, now, show);
+    }
+  
     async function syncPull() {
       const url = $("scriptUrl").value.trim();
       if (!url) return alert("Paste your Apps Script web app URL first.");
@@ -1378,6 +1516,54 @@
       }
     }
 
+  function ensureBookingFromFixedSlot(data) {
+      const existing = scheduleBookings().find(b => b.teacherId === data.teacherId && b.date === data.date && b.time === data.time);
+      if (existing) return existing;
+      const booking = {
+        id: `manual_${data.teacherId}_${data.date}_${data.time}_${data.slotId || uid("slot")}`.replace(/[^a-zA-Z0-9_-]/g, "_"),
+        teacherId: data.teacherId,
+        studentId: "",
+        studentName: data.studentName || "Fixed regular class",
+        subject: data.subject || "",
+        type: "regular class",
+        date: data.date,
+        day: data.day,
+        time: data.time,
+        status: slotHasPassed(data.date, data.time) ? "completed" : "booked",
+        archived: slotHasPassed(data.date, data.time),
+        minutes: 25,
+        createdAt: new Date().toISOString(),
+        source: "fixed_regular_manual"
+      };
+      state.bookings.push(booking);
+      save(false);
+      return booking;
+    }
+
+    function openOutcomeModal(booking) {
+      const teacher = teacherById(booking.teacherId);
+      $("outcomeBookingId").value = booking.id;
+      $("outcomeStatus").value = booking.status === "completed" ? "booked" : (booking.status || "booked");
+      $("outcomeRemark").value = booking.remark || "";
+      $("outcomeInfo").textContent = `${teacher ? teacher.name : ""} | ${booking.date} | ${timeLabel(booking.time)} | ${booking.studentName || ""} | Current: ${bookingStatusLabel(booking.status)}`;
+      $("bookingOutcomeModal").classList.remove("hide");
+    }
+
+  function saveOutcome() {
+      const booking = state.bookings.find(b => b.id === $("outcomeBookingId").value);
+      if (!booking) return;
+      booking.status = $("outcomeStatus").value;
+      booking.remark = $("outcomeRemark").value.trim();
+      booking.archived = booking.status !== "booked" || slotHasPassed(booking.date, booking.time);
+      if (booking.status === "booked" && slotHasPassed(booking.date, booking.time)) {
+        booking.status = "completed";
+        booking.completedAt = booking.completedAt || new Date().toISOString();
+      }
+      booking.updatedAt = new Date().toISOString();
+      $("bookingOutcomeModal").classList.add("hide");
+      save();
+    }
+  
   async function createCrmBooking(kind) {
       const prefix = kind === "assessment" ? "assessment" : "trial";
       const student = studentById($(prefix + "Student").value);
@@ -1390,7 +1576,7 @@
       const day = DAYS[(d.getDay() + 6) % 7];
       const lockedSlot = collectSlotsForDate(d).find(slot => slot.teacherId === teacherId && slot.time === time && slot.locked);
       if (lockedSlot) return alert("This teacher slot is a fixed regular class and cannot be booked.");
-      const duplicate = activeBookings().find(b => b.teacherId === teacherId && b.date === date && b.time === time);
+      const duplicate = scheduleBookings().find(b => b.teacherId === teacherId && b.date === date && b.time === time);
       if (duplicate) return alert(`This slot is already booked by ${duplicate.studentName}.`);
       const booking = { id: uid("booking"), teacherId, date, day, time, subject, studentId: student.id, studentName: student.name, type: kind === "assessment" ? "assessment" : "trial class", status: "booked", archived: false, minutes: 25, createdAt: new Date().toISOString() };
       state.bookings.push(booking);
@@ -1427,6 +1613,12 @@
       localStorage.setItem("classOneSidebarCollapsed", collapsed ? "1" : "0");
     }
 
+  function setStackedLayout(stacked) {
+      document.querySelector(".app-shell").classList.toggle("layout-stacked", stacked);
+      $("layoutToggleBtn").textContent = stacked ? "Layout: Up and Down" : "Layout: Side by Side";
+      localStorage.setItem("classOneLayoutStacked", stacked ? "1" : "0");
+    }
+  
     document.addEventListener("click", (e) => {
       const nav = e.target.closest(".nav-btn");
       if (nav) {
@@ -1449,11 +1641,13 @@
       const bookingBtn = e.target.closest("[data-booking-id]");
       if (bookingBtn) {
         const booking = state.bookings.find(b => b.id === bookingBtn.dataset.bookingId);
-        if (booking && confirm(`Cancel booking for ${booking.studentName}?`)) {
-          booking.status = "cancelled";
-          booking.archived = true;
-          save();
-        }
+         if (booking) openOutcomeModal(booking);
+      }
+      const fixedSlotBtn = e.target.closest("[data-fixed-slot]");
+      if (fixedSlotBtn) {
+        const data = JSON.parse(fixedSlotBtn.dataset.fixedSlot);
+        const booking = ensureBookingFromFixedSlot(data);
+        openOutcomeModal(booking);
       }
       const close = e.target.closest("[data-close]");
       if (close) close.closest(".modal").classList.add("hide");
@@ -1677,7 +1871,7 @@
       const student = studentById($("bookingStudent").value);
       const studentName = $("bookingStudentName").value.trim() || (student ? student.name : "");
       if (!studentName) return alert("Choose a student or type a student name.");
-      const duplicate = activeBookings().find(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
+      const duplicate = scheduleBookings().find(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
       if (duplicate) return alert(`This slot is already booked by ${duplicate.studentName}.`);
       state.bookings.push({ id: uid("booking"), ...slot, studentId: student ? student.id : "", studentName, subject: $("bookingSubject").value, type: $("bookingType").value, status: "booked", archived: false, minutes: 25, createdAt: new Date().toISOString() });
       $("bookingModal").classList.add("hide");
@@ -1744,6 +1938,8 @@
       }
     };
     $("generateReportBtn").onclick = renderReport;
+    $("exportTeacherReportPdfBtn").onclick = () => openPrintReport("Teacher Monthly Payout Report", ["No.", "Date", "Time", "Student", "Subject", "Type", "Status", "Pay RM", "Remark"], numbered(currentTeacherReportRows()));
+    $("saveOutcomeBtn").onclick = saveOutcome;
     ["crmReportYear", "crmCompareYear"].forEach(id => $(id).addEventListener("change", renderCrmDashboard));
     $("generateCrmDashboardBtn").onclick = renderCrmDashboard;
     $("exportStudentsCsvBtn").onclick = () => downloadCsv("class-one-students.csv", ["No.", "Name", "Subject", "Package", "Status", "Regular Slots"], numbered(studentExportRows()));
@@ -1760,9 +1956,11 @@
     $("bookTrialBtn").onclick = () => createCrmBooking("trial");
     $("resetDemoBtn").onclick = () => animateClick($("resetDemoBtn"), async () => { if (confirm("Clear all browser data for this app?")) { localStorage.removeItem(STORE_KEY); location.reload(); } });
     $("sidebarToggle").onclick = () => setSidebarCollapsed(!document.querySelector(".app-shell").classList.contains("sidebar-collapsed"));
+     $("layoutToggleBtn").onclick = () => setStackedLayout(!document.querySelector(".app-shell").classList.contains("layout-stacked"));
   
           load();
     setSidebarCollapsed(localStorage.getItem("classOneSidebarCollapsed") === "1");
+    setStackedLayout(localStorage.getItem("classOneLayoutStacked") === "1");
     hydrateSelects();
     setupMonths();
     renderAll();
