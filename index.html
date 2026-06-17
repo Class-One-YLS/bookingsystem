@@ -136,6 +136,19 @@
     .template-item { text-align: left; width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 12px; color: var(--ink); }
     .template-item.active { border-color: var(--mint); box-shadow: inset 4px 0 0 var(--mint); }
     .template-preview { white-space: pre-wrap; background: #fbfdfc; border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-height: 180px; }
+    .visual-guide { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+    .guide-card { border: 1px solid var(--line); border-radius: 8px; background: #fff; overflow: hidden; }
+    .guide-card a { color: inherit; text-decoration: none; }
+    .guide-shot { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; object-position: top left; background: #f4fbf7; border-bottom: 1px solid var(--line); }
+    .guide-bar { height: 14px; border-radius: 999px; background: var(--mint); width: 68%; }
+    .guide-row { height: 12px; border-radius: 999px; background: #dbe5df; }
+    .guide-row.short { width: 55%; }
+    .guide-row.warn { background: #fff2a8; }
+    .guide-row.blue { background: #dceafe; }
+    .guide-row.red { background: #d92d20; }
+    .guide-mini-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .guide-mini-grid span { min-height: 32px; border-radius: 6px; background: #edf4f0; border: 1px solid var(--line); }
+    .guide-card-body { padding: 12px; }
     .teacher-card { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 12px; }
     .avatar { width: 58px; height: 58px; border-radius: 8px; background: var(--soft); object-fit: cover; display: grid; place-items: center; font-weight: 900; color: var(--mint-dark); }
     .list { display: grid; gap: 10px; max-height: 480px; overflow: auto; padding-right: 4px; }
@@ -376,6 +389,63 @@
                 <li><strong>Before important edits:</strong> Use Pull From Sheet if another admin may have changed data. After confirmed edits, use Push To Sheet.</li>
                 <li><strong>Data missing after refresh:</strong> Check Sync Settings. The URLs and API keys should already be filled. Click Pull From Sheet and Pull CRM Leads if auto-load failed.</li>
               </ol>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+           <h2>Picture Guide</h2>
+          <div class="visual-guide">
+            <div class="guide-card">
+               <a href="guide-images/sales-crm-lead-profile.png" target="_blank" rel="noopener"><img class="guide-shot" src="guide-images/sales-crm-lead-profile.png" alt="CRM lead profile screenshot"></a>
+              <div class="guide-card-body"><h3>Sales: Add New Lead</h3><div class="subtle">Open CRM Leads, fill parent/child details, choose subjects, set urgency and next follow-up, then Save Lead.</div></div>
+            </div>
+            <div class="guide-card">
+              <a href="guide-images/sales-crm-lead-list-table.png" target="_blank" rel="noopener"><img class="guide-shot" src="guide-images/sales-crm-lead-list-table.png" alt="CRM lead list table screenshot"></a>
+              <div class="guide-card-body"><h3>Sales: Track Leads</h3><div class="subtle">Use Needs Action and table filters to track each parent, status, urgency, and next follow-up.</div></div>
+            </div>
+            <div class="guide-card">
+               <a href="guide-images/sales-reply-templates.png" target="_blank" rel="noopener"><img class="guide-shot" src="guide-images/sales-reply-templates.png" alt="Reply templates screenshot"></a>
+              <div class="guide-card-body"><h3>Sales: Use Reply Templates</h3><div class="subtle">Open Guidance, choose a template, edit if needed, then copy the reply for WhatsApp follow-up.</div></div>
+            </div>
+            <div class="guide-card">
+               <a href="guide-images/sales-weekly-timetable-filter.png" target="_blank" rel="noopener"><img class="guide-shot" src="guide-images/sales-weekly-timetable-filter.png" alt="Weekly timetable filter screenshot"></a>
+              <div class="guide-card-body"><h3>Sales: Check Slots</h3><div class="subtle">Use Weekly Timetable filters for teacher, subject, and time range before proposing slots to parents.</div></div>
+            </div>
+            <div class="guide-card">
+               <a href="guide-images/sales-book-assessment-trial.png" target="_blank" rel="noopener"><img class="guide-shot" src="guide-images/sales-book-assessment-trial.png" alt="Book assessment and trial screenshot"></a>
+              <div class="guide-card-body"><h3>Sales: Book Assessment / Trial</h3><div class="subtle">Choose child, date, time, teacher, and subject, then book assessment or trial from CRM Leads.</div></div>
+            </div>
+            <div class="guide-card">
+              <a href="guide-images/sales-booking-modal.png" target="_blank" rel="noopener"><img class="guide-shot" src="guide-images/sales-booking-modal.png" alt="Booking modal screenshot"></a>
+              <div class="guide-card-body"><h3>Sales/Admin: Confirm Booking</h3><div class="subtle">Click an open timetable slot, confirm student, subject, and booking type, then save the booking.</div></div>
+            </div>
+            <div class="guide-card">
+              <a href="guide-images/admin-teacher-profile.png" target="_blank" rel="noopener"><img class="guide-shot" src="guide-images/admin-teacher-profile.png" alt="Teacher profile screenshot"></a>
+              <div class="guide-card-body"><h3>Admin: Teacher Profile</h3><div class="subtle">Add teacher name, tier, rate, profile picture, and teaching subjects.</div></div>
+            </div>
+            <div class="guide-card">
+              <a href="guide-images/admin-teacher-slots.png" target="_blank" rel="noopener"><img class="guide-shot" src="guide-images/admin-teacher-slots.png" alt="Teacher slots screenshot"></a>
+              <div class="guide-card-body"><h3>Admin: Teacher Slots</h3><div class="subtle">Set regular fixed timetable slots or particular date slots for teacher availability.</div></div>
+            </div>
+            <div class="guide-card">
+              <a href="guide-images/admin-student-profile.png" target="_blank" rel="noopener"><img class="guide-shot" src="guide-images/admin-student-profile.png" alt="Student profile screenshot"></a>
+              <div class="guide-card-body"><h3>Admin: Student Profile</h3><div class="subtle">Set student status, package, subject, and regular weekly slots without changing old history.</div></div>
+            </div>
+            <div class="guide-card">
+              <a href="guide-images/admin-class-outcome-modal.png" target="_blank" rel="noopener"><img class="guide-shot" src="guide-images/admin-class-outcome-modal.png" alt="Class outcome modal screenshot"></a>
+              <div class="guide-card-body"><h3>Admin: Mark Class Outcome</h3><div class="subtle">Mark student not show, cancelled, public holiday, teacher leave, or withdraw cancellation.</div></div>
+            </div>
+            <div class="guide-card">
+              <a href="guide-images/admin-replacement-tab.png" target="_blank" rel="noopener"><img class="guide-shot" src="guide-images/admin-replacement-tab.png" alt="Replacement classes tab screenshot"></a>
+              <div class="guide-card-body"><h3>Admin: Arrange Replacement</h3><div class="subtle">Track latest action, contact parent, confirm replacement time, book replacement, and mark settled.</div></div>
+            </div>
+            <div class="guide-card">
+              <a href="guide-images/admin-reports-teacher-payout.png" target="_blank" rel="noopener"><img class="guide-shot" src="guide-images/admin-reports-teacher-payout.png" alt="Teacher payout report screenshot"></a>
+              <div class="guide-card-body"><h3>Admin: Teacher Payout</h3><div class="subtle">Generate monthly teacher payout and export PDF for teacher reference.</div></div>
+            </div>
+            <div class="guide-card">
+               <a href="guide-images/admin-sync-settings.png" target="_blank" rel="noopener"><img class="guide-shot" src="guide-images/admin-sync-settings.png" alt="Sync settings screenshot"></a>
+              <div class="guide-card-body"><h3>Admin: Sync Settings</h3><div class="subtle">Check default Apps Script URLs, pull latest Sheet data, or manually push if needed.</div></div>
             </div>
           </div>
         </div>
@@ -659,7 +729,7 @@
       teacher_leave: "Teacher Leave"
     };
     const CANCELLED_STATUSES = ["cancelled", "public_holiday", "teacher_leave"];
-    const REPLACEMENT_STATUSES = ["Action Needed", "Contacted Parent", "Parent Confirmed", "Replacement Booked", "Settled", "No Replacement Needed", "Cancellation Withdrawn"];
+    const REPLACEMENT_STATUSES = ["Action Needed", "Parent Contacted", "Waiting Parent Confirmation", "Parent Confirmed", "Replacement Booked", "Settled", "No Replacement Needed", "Cancellation Withdrawn"];
     const REPLACEMENT_REASONS = ["Cancelled", "Teacher Leave", "Public Holiday"];
     const LEAD_STATUSES = ["New Contact", "Follow Up", "No Response", "Assessment", "Trial Class", "Enrolled", "Lost"];
     const URGENCIES = ["hot", "warm", "cold"];
@@ -706,7 +776,10 @@
     const todayISO = () => localISO(new Date());
     const timeLabel = (t) => {
       if (!t) return "";
-      const [hh, mm] = t.split(":").map(Number);
+      const text = String(t);
+      if (text.includes("T")) return formatTimeFromAny(text);
+      const [hh, mm] = text.split(":").map(Number);
+      if (Number.isNaN(hh)) return "";
       const suffix = hh >= 12 ? "PM" : "AM";
       const h = ((hh + 11) % 12) + 1;
       return `${h}:${String(mm || 0).padStart(2, "0")} ${suffix}`;
@@ -737,6 +810,35 @@
     const isCancelledStatus = (status) => CANCELLED_STATUSES.includes(status);
     const slotDateTime = (date, time) => new Date(`${date}T${time || "00:00"}:00`);
     const slotHasPassed = (date, time) => slotDateTime(date, time) < new Date();
+     const datePart = (value) => String(value || "").split("T")[0].split(" ")[0];
+    const timePart = (value) => {
+      const text = String(value || "");
+      if (text.includes("T")) return text.split("T")[1].slice(0, 5);
+      const match = text.match(/\b(\d{1,2}):(\d{2})/);
+      return match ? `${match[1].padStart(2, "0")}:${match[2]}` : text.slice(0, 5);
+    };
+    function formatDateFromAny(value) {
+      const part = datePart(value);
+      const [y, m, d] = part.split("-").map(Number);
+      if (!y || !m || !d) return String(value || "");
+      return `${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")}/${y}`;
+    }
+    function formatTimeFromAny(value) {
+      const text = String(value || "");
+      const time = text.includes("T") ? timePart(text) : timePart(text);
+      return timeLabel(time);
+    }
+    function formatClassDateTime(dateValue, timeValue) {
+      const displayDate = formatDateFromAny(dateValue);
+      const candidateTime = timeLabel(timeValue) || (String(dateValue || "").includes("T") ? formatTimeFromAny(dateValue) : "");
+      return [displayDate, candidateTime].filter(Boolean).join(", ");
+    }
+    function formatDateTimeStamp(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}, ${timeLabel(`${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`)}`;
+    }
 
     function load() {
       const saved = localStorage.getItem(STORE_KEY);
@@ -1333,26 +1435,27 @@
     function renderReplacements() {
       const rows = filteredReplacements();
       const actionNeeded = (state.replacements || []).filter(r => r.status === "Action Needed").length;
+      const waiting = (state.replacements || []).filter(r => ["Parent Contacted", "Waiting Parent Confirmation", "Parent Confirmed"].includes(r.status)).length;
       const booked = (state.replacements || []).filter(r => r.status === "Replacement Booked").length;
-      const settled = (state.replacements || []).filter(r => ["Settled", "No Replacement Needed"].includes(r.status)).length;
+      const settled = (state.replacements || []).filter(r => ["Settled", "No Replacement Needed", "Cancellation Withdrawn"].includes(r.status)).length;
       $("replacementSummary").innerHTML = `
         <div class="metric"><span class="subtle">Action needed</span><strong>${actionNeeded}</strong></div>
+        <div class="metric"><span class="subtle">In progress</span><strong>${waiting}</strong></div>
         <div class="metric"><span class="subtle">Booked</span><strong>${booked}</strong></div>
         <div class="metric"><span class="subtle">Settled / no replacement</span><strong>${settled}</strong></div>
-        <div class="metric"><span class="subtle">Total records</span><strong>${(state.replacements || []).length}</strong></div>
       `;
-      $("replacementList").innerHTML = tableHtml(["Status", "Reason", "Student", "Subject", "Original Teacher", "Original Date", "Original Time", "Replacement Teacher", "Replacement Date", "Replacement Time", "Notes", "Actions"], rows.map(item => [
+       $("replacementList").innerHTML = tableHtml(["Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Latest Action", "Notes", "Last Updated", "Actions"], rows.map(item => [
         item.status,
         item.reason,
         item.studentName,
         item.subject,
         item.originalTeacherName,
-        item.originalDate,
-        timeLabel(item.originalTime),
+        formatClassDateTime(item.originalDate, item.originalTime),
         item.replacementTeacherName || "-",
-        item.replacementDate || "-",
-        item.replacementTime ? timeLabel(item.replacementTime) : "-",
+        item.replacementDate ? formatClassDateTime(item.replacementDate, item.replacementTime) : "-",
+        item.latestAction || "-",
         item.notes || "",
+        formatDateTimeStamp(item.lastActionAt || item.updatedAt),
         replacementActionsHtml(item)
       ]));
       $("replacementList").querySelectorAll("td:last-child").forEach(td => td.innerHTML = td.textContent);
@@ -1360,10 +1463,11 @@
 
     function replacementActionsHtml(item) {
       return `<div class="row">
-        <button class="btn small ghost" data-replacement-status="${item.id}|Contacted Parent">Contacted</button>
-        <button class="btn small ghost" data-replacement-status="${item.id}|Parent Confirmed">Confirmed</button>
+        <button class="btn small ghost" data-replacement-status="${item.id}|Parent Contacted|Parent contacted">Contacted</button>
+        <button class="btn small ghost" data-replacement-status="${item.id}|Waiting Parent Confirmation|Waiting parent confirmation">Waiting</button>
+        <button class="btn small ghost" data-replacement-status="${item.id}|Parent Confirmed|Parent confirmed">Confirmed</button>
         <button class="btn small mint" data-book-replacement="${item.id}">Book Replacement</button>
-        <button class="btn small ghost" data-replacement-status="${item.id}|Settled">Settled</button>
+        <button class="btn small ghost" data-replacement-status="${item.id}|Settled|Replacement settled">Settled</button>
       </div>`;
     }
 
@@ -1374,12 +1478,12 @@
         item.studentName,
         item.subject,
         item.originalTeacherName,
-        item.originalDate,
-        timeLabel(item.originalTime),
+        formatClassDateTime(item.originalDate, item.originalTime),
         item.replacementTeacherName || "",
-        item.replacementDate || "",
-        item.replacementTime ? timeLabel(item.replacementTime) : "",
-        item.notes || ""
+        item.replacementDate ? formatClassDateTime(item.replacementDate, item.replacementTime) : "",
+        item.latestAction || "",
+        item.notes || "",
+        formatDateTimeStamp(item.lastActionAt || item.updatedAt)
       ]);
     }
     
@@ -1566,8 +1670,11 @@
           b.completedAt = b.completedAt || new Date().toISOString();
           const replacement = (state.replacements || []).find(item => item.replacementBookingId === b.id);
           if (replacement && replacement.status === "Replacement Booked") {
+            const now = new Date().toISOString();
             replacement.status = "Settled";
-            replacement.updatedAt = new Date().toISOString();
+            replacement.latestAction = "Replacement class completed";
+            replacement.lastActionAt = now;
+            replacement.updatedAt = now;
           }
           changed = true;
         }
@@ -1792,10 +1899,13 @@
         setStatus("Cancellation withdrawn and replacement record removed.");
         return;
       }
+      const now = new Date().toISOString();
       existing.status = "Cancellation Withdrawn";
       existing.replacementNeeded = false;
+      existing.latestAction = "Cancellation withdrawn";
+      existing.lastActionAt = now;
       existing.notes = [existing.notes, "Cancellation withdrawn. Please review linked replacement booking."].filter(Boolean).join("\n");
-      existing.updatedAt = new Date().toISOString();
+      existing.updatedAt = now;
       setStatus("Cancellation withdrawn. Linked replacement record kept for review.");
     }
     
@@ -1813,6 +1923,7 @@
       const needed = compulsory || publicHolidayChoice === "yes";
       const existing = (state.replacements || []).find(item => item.bookingId === booking.id);
       const teacher = teacherById(booking.teacherId);
+      const now = new Date().toISOString();
       const base = {
         bookingId: booking.id,
         reason,
@@ -1824,7 +1935,9 @@
         originalDate: booking.date,
         originalTime: booking.time,
         notes: booking.remark || "",
-        updatedAt: new Date().toISOString()
+        latestAction: needed ? "Replacement record created" : "No replacement needed",
+        lastActionAt: now,
+        updatedAt: now
       };
       state.replacements ||= [];
       if (existing) {
@@ -1841,7 +1954,7 @@
           replacementDate: "",
           replacementTime: "",
           replacementBookingId: "",
-          createdAt: new Date().toISOString()
+          createdAt: now
         });
       }
       setStatus(needed ? "Replacement record created." : "Public holiday recorded as no replacement needed.");
@@ -2037,11 +2150,14 @@
       }
       const replacementStatus = e.target.closest("[data-replacement-status]");
       if (replacementStatus) {
-        const [id, status] = replacementStatus.dataset.replacementStatus.split("|");
+        const [id, status, action] = replacementStatus.dataset.replacementStatus.split("|");
         const replacement = (state.replacements || []).find(item => item.id === id);
         if (replacement) {
+          const now = new Date().toISOString();
           replacement.status = status;
-          replacement.updatedAt = new Date().toISOString();
+          replacement.latestAction = action || status;
+          replacement.lastActionAt = now;
+          replacement.updatedAt = now;
           save();
           setStatus(`Replacement marked as ${status}.`);
         }
@@ -2187,13 +2303,16 @@
         const replacement = (state.replacements || []).find(item => item.id === pendingReplacementId);
         const teacher = teacherById(booking.teacherId);
         if (replacement) {
+          const now = new Date().toISOString();
           replacement.status = "Replacement Booked";
           replacement.replacementTeacherId = booking.teacherId;
           replacement.replacementTeacherName = teacher ? teacher.name : "";
           replacement.replacementDate = booking.date;
           replacement.replacementTime = booking.time;
           replacement.replacementBookingId = booking.id;
-          replacement.updatedAt = new Date().toISOString();
+          replacement.latestAction = "Replacement booked";
+          replacement.lastActionAt = now;
+          replacement.updatedAt = now;
         }
         pendingReplacementId = "";
       }
@@ -2280,8 +2399,8 @@
       $("replacementSearch").value = "";
       renderReplacements();
     };
-    $("exportReplacementCsvBtn").onclick = () => downloadCsv("class-one-replacement-classes.csv", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Date", "Original Time", "Replacement Teacher", "Replacement Date", "Replacement Time", "Notes"], numbered(replacementExportRows()));
-    $("exportReplacementPdfBtn").onclick = () => openPrintReport("Replacement Classes", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Date", "Original Time", "Replacement Teacher", "Replacement Date", "Replacement Time", "Notes"], numbered(replacementExportRows()));
+    $("exportReplacementCsvBtn").onclick = () => downloadCsv("class-one-replacement-classes.csv", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Latest Action", "Notes", "Last Updated"], numbered(replacementExportRows()));
+    $("exportReplacementPdfBtn").onclick = () => openPrintReport("Replacement Classes", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Latest Action", "Notes", "Last Updated"], numbered(replacementExportRows()));
     $("pullBtn").onclick = () => animateClick($("pullBtn"), () => syncPull().catch(err => alert(err.message)));
     $("pushBtn").onclick = () => animateClick($("pushBtn"), () => syncPush().catch(err => alert(err.message)));
     $("crmPullBtn").onclick = () => animateClick($("crmPullBtn"), () => crmPull().catch(err => alert(err.message)));
