@@ -2995,7 +2995,6 @@
         cells.push(`
           <div class="calendar-day ${dayHolidays.length ? "holiday" : ""}">
             <span class="calendar-date">${day}</span>
-            ${dayHolidays.map(item => `<span class="calendar-tag ${item.replacementDefault === "yes" ? "" : "no-replacement"}" title="${escapeHtml(item.name || "Public Holiday")}">${escapeHtml(item.name || "Public Holiday")}</span>`).join("")}
           </div>
         `);
       }
