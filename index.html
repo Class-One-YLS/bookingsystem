@@ -101,6 +101,7 @@
     .slot.booked { background: #dcf8ea; }
     .slot.booked.type-assessment, .slot.booked.type-exam, .slot.booked.type-trial-class, .slot.booked.type-new-students { background: #fff2a8; }
     .slot.booked.type-replacement-class { background: #dceafe; }
+    .slot.booked.type-extra-class { background: #e8dcff; }
     .slot.status-student-not-show { background: #d92d20; color: #fff; }
     .slot.status-student-not-show small { color: #fff; }
     .slot.status-cancelled, .slot.status-public-holiday, .slot.status-teacher-leave { background: #d0d5dd; color: #17212b; }
@@ -134,6 +135,7 @@
     .teacher-cell-booked { background: #fff; color: #111; font-weight: 700; }
     .teacher-cell-booked.type-assessment, .teacher-cell-booked.type-exam, .teacher-cell-booked.type-trial-class, .teacher-cell-booked.type-new-students { background: #fff2a8; }
     .teacher-cell-booked.type-replacement-class { background: #dceafe; }
+    .teacher-cell-booked.type-extra-class { background: #e8dcff; }
     .teacher-cell-booked.status-student-not-show { background: #d92d20; color: #fff; }
     .teacher-cell-booked.status-cancelled, .teacher-cell-booked.status-public-holiday, .teacher-cell-booked.status-teacher-leave { background: #d0d5dd; color: #111; }
     .teacher-cell-button { width: 100%; min-height: 100%; background: transparent; color: inherit; font: inherit; font-weight: inherit; padding: 0; }
@@ -1027,6 +1029,7 @@
       </div>
       <div class="row" style="margin-top:14px;">
         <button class="btn mint" id="saveOutcomeBtn">Save Outcome</button>
+        <button class="btn danger" id="deleteBookingBtn">Delete Booking</button>
       </div>
     </div>
   </div>
@@ -1078,9 +1081,29 @@
       <div class="subtle" id="openSlotActionInfo"></div>
       <div class="row" style="margin-top:14px;">
         <button class="btn mint" id="bookOpenSlotBtn">Book Class</button>
+        <button class="btn ghost" id="changeRegularSlotBtn">Change Regular Class</button>
         <button class="btn danger" id="setOpenSlotOffBtn">Set To OFF</button>
       </div>
       <div class="subtle" style="margin-top:10px;">Set To OFF only affects this exact date and time slot.</div>
+    </div>
+  </div>
+
+  <div id="regularChangeModal" class="modal hide">
+    <div class="modal-card">
+      <div class="row spread"><h2>Change Regular Class</h2><button class="btn ghost small" data-close>Close</button></div>
+      <input id="regularChangeTargetSlot" type="hidden">
+      <div class="subtle" id="regularChangeTargetInfo"></div>
+      <div class="grid two" style="margin-top:14px;">
+        <div><label>Existing Regular Class</label><select id="regularChangeSource"></select></div>
+        <div><label>Change Type</label><select id="regularChangeType"><option value="long_term">Long Term</option><option value="temporary">Temporary</option></select></div>
+        <div><label>Start Date</label><input id="regularChangeStartDate" type="date"></div>
+        <div id="regularChangeEndField" class="hide"><label>End Date</label><input id="regularChangeEndDate" type="date"></div>
+      </div>
+      <div class="subtle" style="margin-top:10px;">Past classes remain unchanged. Temporary changes automatically restore the previous regular slot after the end date.</div>
+      <div class="row" style="margin-top:14px;">
+        <button class="btn mint" id="confirmRegularChangeBtn">Confirm Change</button>
+        <button class="btn ghost" data-close>Cancel</button>
+      </div>
     </div>
   </div>
 
@@ -1143,7 +1166,7 @@
     const SUBJECTS = ["CN", "BM", "PK", "SOK", "CREATIVE MATHS", "PHONICS"];
     const LEAD_SUBJECTS = ["BC", "BM", "PK", "SOK", "Phonics"];
     const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-    const BOOKING_TYPES = ["exam", "assessment", "trial class", "replacement class", "reserve", "new students", "regular class"];
+    const BOOKING_TYPES = ["exam", "assessment", "trial class", "replacement class", "extra class", "reserve", "new students", "regular class"];
     const BOOKING_STATUS_LABELS = {
       booked: "Booked",
       completed: "Completed",
@@ -1255,6 +1278,11 @@
       return new Date(y, (m || 1) - 1, d || 1);
     };
     const todayISO = () => localISO(new Date());
+    const dateOffsetISO = (value, days) => {
+      const date = parseISODate(value);
+      date.setDate(date.getDate() + days);
+      return localISO(date);
+    };
     const timeLabel = (t) => {
       if (!t) return "";
       const text = String(t);
@@ -2149,7 +2177,7 @@
         return `<tr><td class="time-col">${timeLabel(time)}</td>${cells}</tr>`;
       }).join("");
       return `<div class="teacher-timetable-wrap"><table class="teacher-timetable">
-        <thead><tr><th class="time-col">Date</th>${dates.map(date => `<th>${DAYS[(date.getDay() + 6) % 7].slice(0, 3)}<br><span>${date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span></th>`).join("")}</tr></thead>
+        <thead><tr><th class="time-col">Time</th>${dates.map(date => `<th>${DAYS[(date.getDay() + 6) % 7].slice(0, 3)}</th>`).join("")}</tr></thead>
         <tbody>${rows}</tbody>
       </table></div>`;
     }
@@ -2222,6 +2250,141 @@
         }
       }
       $("bookingModal").classList.remove("hide");
+    }
+
+    function activeFixedRegularSlotOptions() {
+      const rows = [];
+      const today = todayISO();
+      activeTeachers().forEach(teacher => {
+        (teacher.regularSlots || []).forEach(slot => {
+          if (!slot.locked || !slot.studentName) return;
+          if (slot.endDate && slot.endDate < today) return;
+          rows.push({
+            teacher,
+            slot,
+            value: `${teacher.id}|${slot.id}`,
+            label: `${cleanStudentName(slot.studentName)} | ${teacher.name} | ${slot.day} ${timeLabel(slot.time)} | ${slot.subject || "-"}`
+          });
+        });
+      });
+      return rows.sort((a, b) => a.label.localeCompare(b.label));
+    }
+
+    function selectedRegularChangeSource() {
+      const [teacherId, slotId] = String($("regularChangeSource").value || "").split("|");
+      const teacher = teacherById(teacherId);
+      const slot = teacher ? (teacher.regularSlots || []).find(item => item.id === slotId) : null;
+      return { teacher, slot };
+    }
+
+    function openRegularChangeModalFromOpenSlot() {
+      const target = JSON.parse($("openSlotActionData").value || "null");
+      if (!target) return alert("Target slot data missing.");
+      const targetTeacher = teacherById(target.teacherId);
+      const options = activeFixedRegularSlotOptions();
+      if (!options.length) return alert("No existing fixed regular classes found to change.");
+      $("openSlotActionModal").classList.add("hide");
+      $("regularChangeTargetSlot").value = JSON.stringify(target);
+      $("regularChangeTargetInfo").textContent = `New slot: ${targetTeacher ? targetTeacher.name : "-"} | ${target.day} ${timeLabel(target.time)} | ${target.subject || "-"}`;
+      $("regularChangeSource").innerHTML = options.map(row => `<option value="${escapeHtml(row.value)}">${escapeHtml(row.label)}</option>`).join("");
+      $("regularChangeType").value = "long_term";
+      $("regularChangeStartDate").value = todayISO();
+      $("regularChangeEndDate").value = "";
+      updateRegularChangeEndField();
+      $("regularChangeModal").classList.remove("hide");
+    }
+
+    function updateRegularChangeEndField() {
+      $("regularChangeEndField").classList.toggle("hide", $("regularChangeType").value !== "temporary");
+    }
+
+    function syncStudentRegularSlotRange(studentName, sourceTeacher, sourceSlot, targetTeacher, targetSlot, startDate, endDate, changeType) {
+      const student = state.students.find(item => studentNameKey(item.name) === studentNameKey(studentName));
+      if (!student) return;
+      student.regularSlots = Array.isArray(student.regularSlots) ? student.regularSlots : [];
+      const source = student.regularSlots.find(slot =>
+        slot.teacherId === sourceTeacher.id &&
+        slot.day === sourceSlot.day &&
+        slot.time === sourceSlot.time &&
+        normalizeSubject(slot.subject) === normalizeSubject(sourceSlot.subject)
+      );
+      const originalStudentEndDate = source?.endDate || "";
+      if (source) {
+        source.endDate = dateOffsetISO(startDate, -1);
+      }
+      if (changeType === "temporary") {
+        const restore = { ...(source || sourceSlot), id: uid("student_slot"), teacherId: sourceTeacher.id, day: sourceSlot.day, time: sourceSlot.time, subject: sourceSlot.subject || targetSlot.subject || "", startDate: dateOffsetISO(endDate, 1), endDate: originalStudentEndDate };
+        if (originalStudentEndDate && originalStudentEndDate < restore.startDate) delete restore.endDate;
+        student.regularSlots.push(restore);
+      }
+      student.regularSlots.push({
+        id: uid("student_slot"),
+        teacherId: targetTeacher.id,
+        day: targetSlot.day,
+        time: targetSlot.time,
+        subject: sourceSlot.subject || targetSlot.subject || "",
+        startDate,
+        endDate: changeType === "temporary" ? endDate : ""
+      });
+    }
+
+    async function confirmRegularChange() {
+      const target = JSON.parse($("regularChangeTargetSlot").value || "null");
+      const { teacher: sourceTeacher, slot: sourceSlot } = selectedRegularChangeSource();
+      if (!target || !sourceTeacher || !sourceSlot) return alert("Choose an existing regular class first.");
+      const targetTeacher = teacherById(target.teacherId);
+      if (!targetTeacher) return alert("Target teacher not found.");
+      const startDate = dateOnly($("regularChangeStartDate").value);
+      const changeType = $("regularChangeType").value;
+      const endDate = dateOnly($("regularChangeEndDate").value);
+      if (!startDate) return alert("Choose a start date.");
+      if (changeType === "temporary" && !endDate) return alert("Choose an end date for temporary change.");
+      if (changeType === "temporary" && endDate < startDate) return alert("End date cannot be before start date.");
+      const duplicate = (targetTeacher.regularSlots || []).find(slot =>
+        slot.locked &&
+        slot.id !== sourceSlot.id &&
+        slot.day === target.day &&
+        slot.time === target.time &&
+        (!slot.endDate || slot.endDate >= startDate) &&
+        (changeType !== "temporary" || !slot.startDate || slot.startDate <= endDate)
+      );
+      if (duplicate && !confirm(`Target slot already has ${duplicate.studentName || "a fixed class"}. Continue anyway?`)) return;
+
+      const sourceBefore = teacherLogSummary(sourceTeacher);
+      const originalEndDate = sourceSlot.endDate || "";
+      sourceSlot.endDate = dateOffsetISO(startDate, -1);
+      if (changeType === "temporary") {
+        sourceTeacher.regularSlots.push({
+          ...sourceSlot,
+          id: uid("slot"),
+          startDate: dateOffsetISO(endDate, 1),
+          endDate: originalEndDate
+        });
+      }
+      targetTeacher.regularSlots ||= [];
+      targetTeacher.regularSlots.push({
+        id: uid("slot"),
+        day: target.day,
+        time: target.time,
+        subject: sourceSlot.subject || target.subject || "",
+        studentName: sourceSlot.studentName || "",
+        locked: true,
+        source: "manual_regular_change",
+        startDate,
+        endDate: changeType === "temporary" ? endDate : ""
+      });
+      syncStudentRegularSlotRange(sourceSlot.studentName, sourceTeacher, sourceSlot, targetTeacher, target, startDate, endDate, changeType);
+      logAction(
+        changeType === "temporary" ? "Temporary Regular Slot Change" : "Long Term Regular Slot Change",
+        sourceSlot.studentName || "Regular class",
+        sourceBefore,
+        `${teacherLogSummary(sourceTeacher)}${sourceTeacher.id !== targetTeacher.id ? ` | ${teacherLogSummary(targetTeacher)}` : ""}`,
+        `${sourceTeacher.name} ${sourceSlot.day} ${timeLabel(sourceSlot.time)} to ${targetTeacher.name} ${target.day} ${timeLabel(target.time)} from ${formatDateFromAny(startDate)}${changeType === "temporary" ? ` to ${formatDateFromAny(endDate)}` : ""}`
+      );
+      $("regularChangeModal").classList.add("hide");
+      save(false);
+      renderAll();
+      await autoPushIfConfigured("Regular class slot changed.");
     }
 
     async function setOpenSlotToOff() {
@@ -3343,6 +3506,26 @@
       return remaining === 0;
     }
 
+    function refundReplacementCreditForBooking(booking) {
+      if ((booking.type || "") !== "replacement class" || !booking.id) return false;
+      let remaining = 1;
+      const now = new Date().toISOString();
+      const credits = (state.replacementCredits || [])
+        .filter(item => item.status !== "void")
+        .filter(item => (item.usedByBookingIds || []).includes(booking.id))
+        .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+      for (const credit of credits) {
+        if (remaining <= 0) break;
+        const refund = Math.min(Number(credit.used || 0), remaining);
+        if (refund <= 0) continue;
+        credit.used = Number(credit.used || 0) - refund;
+        credit.usedByBookingIds = (credit.usedByBookingIds || []).filter(id => id !== booking.id);
+        credit.updatedAt = now;
+        remaining -= refund;
+      }
+      return remaining === 0;
+    }
+
     function renderReplacementCredits() {
       const rows = (state.replacementCredits || [])
         .filter(item => item.status !== "void")
@@ -4383,6 +4566,25 @@
       await autoPushIfConfigured(`Class marked as ${bookingStatusLabel(booking.status)}.`);
     }
 
+    async function deleteBookingFromOutcome() {
+      const booking = state.bookings.find(b => b.id === $("outcomeBookingId").value);
+      if (!booking) return alert("Booking not found.");
+      const label = `${booking.studentName || "this class"} on ${formatClassDateTime(booking.date, booking.time)}`;
+      if (!confirm(`Delete booking for ${label}?`)) return;
+      const before = bookingLogSummary(booking);
+      const refundedCredit = refundReplacementCreditForBooking(booking);
+      booking.status = "deleted";
+      booking.archived = true;
+      booking.deletedAt = new Date().toISOString();
+      booking.updatedAt = booking.deletedAt;
+      logAction("Booking Deleted", booking.studentName || booking.id, before, "Deleted", `${refundedCredit ? "Replacement credit refunded. " : ""}${booking.remark || "Deleted from class outcome."}`);
+      withdrawReplacementForBooking(booking);
+      $("bookingOutcomeModal").classList.add("hide");
+      save(false);
+      renderAll();
+      await autoPushIfConfigured("Booking deleted.");
+    }
+
     function withdrawReplacementForBooking(booking) {
       const existing = (state.replacements || []).find(item => item.bookingId === booking.id);
       if (!existing) return;
@@ -5357,6 +5559,10 @@
     $("exportRevenuePdfBtn").onclick = () => openPrintReport("Class One Revenue", ["No.", "Month", "Revenue", "Remark", "Last Updated"], numbered(revenueExportRows()));
     $("exportTeacherReportPdfBtn").onclick = () => openPrintReport("Teacher Monthly Payout Report", ["No.", "Date", "Time", "Student", "Subject", "Type", "Status", "Pay RM", "Remark"], numbered(currentTeacherReportRows()));
     $("saveOutcomeBtn").onclick = saveOutcome;
+    $("deleteBookingBtn").onclick = () => deleteBookingFromOutcome().catch(err => {
+      setStatus(`Delete booking failed: ${err.message}`, "error");
+      alert(`Delete booking failed: ${err.message}`);
+    });
     $("confirmMoveBookingBtn").onclick = () => confirmMoveBooking().catch(err => {
       setStatus(`Move failed: ${err.message}`, "error");
       alert(`Move failed: ${err.message}`);
@@ -5366,6 +5572,12 @@
       alert(`Open slot failed: ${err.message}`);
     });
     $("bookOpenSlotBtn").onclick = startBookingFromOpenSlotAction;
+    $("changeRegularSlotBtn").onclick = openRegularChangeModalFromOpenSlot;
+    $("regularChangeType").addEventListener("change", updateRegularChangeEndField);
+    $("confirmRegularChangeBtn").onclick = () => confirmRegularChange().catch(err => {
+      setStatus(`Regular class change failed: ${err.message}`, "error");
+      alert(`Regular class change failed: ${err.message}`);
+    });
     $("setOpenSlotOffBtn").onclick = () => setOpenSlotToOff().catch(err => {
       setStatus(`Set OFF failed: ${err.message}`, "error");
       alert(`Set OFF failed: ${err.message}`);
