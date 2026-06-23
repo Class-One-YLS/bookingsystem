@@ -265,7 +265,7 @@
       <div class="topbar">
         <div>
           <h1 id="pageTitle">Weekly Timetable</h1>
-          <div class="subtle" id="statusText">Sync settings built in. Preparing Google Sheet auto-load...</div>
+          <div class="subtle" id="statusText">Neon database sync built in. Preparing auto-load...</div>
         </div>
         <div class="row">
           <button class="btn ghost" id="layoutToggleBtn">Layout: Side by Side</button>
@@ -897,8 +897,20 @@
 
       <section id="settings" class="tab hide">
         <div class="panel">
-          <h2>Google Apps Script Sync</h2>
-          <div class="subtle">Deploy the included Code.gs as a web app, then paste the web app URL here. The page works offline with browser storage until sync is configured.</div>
+          <h2>Neon Database Sync</h2>
+          <div class="subtle">This is the new main database. The app auto-loads and auto-saves here, so different devices can share the same latest records.</div>
+          <div class="grid three" style="margin-top:14px;">
+            <div><label>API URL</label><input id="neonApiUrl" placeholder="https://classone-booking-api.vercel.app"></div>
+            <div><label>API Key</label><input id="neonApiKey" placeholder="Private API key"></div>
+            <div><label>State Key</label><input id="neonStateKey" placeholder="production"></div>
+          </div>
+          <div class="row" style="margin-top:14px;">
+            <button class="btn mint" id="neonPullBtn">Load From Neon</button>
+            <button class="btn ghost" id="neonPushBtn">Save To Neon</button>
+          </div>
+          <hr style="border:0;border-top:1px solid var(--line);margin:18px 0;">
+          <h2>Google Apps Script Import / Backup</h2>
+          <div class="subtle">Use this only for old Google Sheet import or emergency backup. Daily edits should save to Neon.</div>
           <div class="grid two" style="margin-top:14px;">
             <div><label>Web App URL</label><input id="scriptUrl" placeholder="https://script.google.com/macros/s/.../exec"></div>
             <div><label>API Key</label><input id="apiKey" placeholder="Any private key you set in Code.gs"></div>
@@ -1166,8 +1178,14 @@
       crmScriptUrl: "https://script.google.com/macros/s/AKfycbzHnj_n1EM8dQeLuuyzkoc1FE5_3rr4wHeu0nrBwKI6ryqwm95TqFMx-vnddpQf9dexSA/exec",
       crmApiKey: "CRMUPDATE"
     };
+    const DEFAULT_NEON = {
+      apiUrl: "https://classone-booking-api-yiit.vercel.app",
+      apiKey: "73a5baa8e4a70be55d79615e2dfbf4e843fa04b57ec04764",
+      stateKey: "production"
+    };
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
+    const NEON_CHUNK_SIZE = 300000;
     const STORE_KEY = "classOneBookingRevamp.v1";
     const DB_NAME = "ClassOneBookingDB";
     const DB_STORE = "state";
@@ -1183,7 +1201,7 @@
       publicHolidays: [],
       revenueEntries: [],
       activityLogs: [],
-      settings: { scriptUrl: "", apiKey: "", crmScriptUrl: "", crmApiKey: "", replyTemplates: [] }
+      settings: { scriptUrl: "", apiKey: "", crmScriptUrl: "", crmApiKey: "", neonApiUrl: "", neonApiKey: "", neonStateKey: "", replyTemplates: [] }
     };
 
     function safeStorageGet(key) {
@@ -1359,6 +1377,12 @@
       state.settings.apiKey = (state.settings.apiKey || "").trim() || DEFAULT_SYNC.apiKey;
       state.settings.crmScriptUrl = (state.settings.crmScriptUrl || "").trim() || DEFAULT_SYNC.crmScriptUrl;
       state.settings.crmApiKey = (state.settings.crmApiKey || "").trim() || DEFAULT_SYNC.crmApiKey;
+      state.settings.neonApiUrl = (state.settings.neonApiUrl || "").trim() || DEFAULT_NEON.apiUrl;
+      state.settings.neonApiKey = (state.settings.neonApiKey || "").trim() || DEFAULT_NEON.apiKey;
+      state.settings.neonStateKey = (state.settings.neonStateKey || "").trim() || DEFAULT_NEON.stateKey;
+      $("neonApiUrl").value = state.settings.neonApiUrl;
+      $("neonApiKey").value = state.settings.neonApiKey;
+      $("neonStateKey").value = state.settings.neonStateKey;
       $("scriptUrl").value = state.settings.scriptUrl;
       $("apiKey").value = state.settings.apiKey;
       $("crmScriptUrl").value = state.settings.crmScriptUrl;
@@ -1409,6 +1433,10 @@
           apiKey: state.settings.apiKey || DEFAULT_SYNC.apiKey,
           crmScriptUrl: state.settings.crmScriptUrl || DEFAULT_SYNC.crmScriptUrl,
           crmApiKey: state.settings.crmApiKey || DEFAULT_SYNC.crmApiKey,
+          neonApiUrl: state.settings.neonApiUrl || DEFAULT_NEON.apiUrl,
+          neonApiKey: state.settings.neonApiKey || DEFAULT_NEON.apiKey,
+          neonStateKey: state.settings.neonStateKey || DEFAULT_NEON.stateKey,
+          neonVersion: state.settings.neonVersion || 0,
           pendingLocalSync: false,
           lastLocalChangeAt: "",
           lastSyncedAt: state.settings.lastSyncedAt || ""
@@ -1456,6 +1484,10 @@
       state.settings.apiKey = state.settings.apiKey || DEFAULT_SYNC.apiKey;
       state.settings.crmScriptUrl = state.settings.crmScriptUrl || DEFAULT_SYNC.crmScriptUrl;
       state.settings.crmApiKey = state.settings.crmApiKey || DEFAULT_SYNC.crmApiKey;
+      state.settings.neonApiUrl = state.settings.neonApiUrl || DEFAULT_NEON.apiUrl;
+      state.settings.neonApiKey = state.settings.neonApiKey || DEFAULT_NEON.apiKey;
+      state.settings.neonStateKey = state.settings.neonStateKey || DEFAULT_NEON.stateKey;
+      state.settings.neonVersion = Number(state.settings.neonVersion || 0);
       state.settings.crmActiveLeadStartAt ||= new Date().toISOString();
       if (!Array.isArray(state.settings.replyTemplates) || !state.settings.replyTemplates.length) {
         state.settings.replyTemplates = DEFAULT_REPLY_TEMPLATES.map(template => ({ ...template }));
@@ -1822,12 +1854,19 @@
         apiKey: keepSettings.apiKey || DEFAULT_SYNC.apiKey,
         crmScriptUrl: keepSettings.crmScriptUrl || DEFAULT_SYNC.crmScriptUrl,
         crmApiKey: keepSettings.crmApiKey || DEFAULT_SYNC.crmApiKey,
+        neonApiUrl: keepSettings.neonApiUrl || DEFAULT_NEON.apiUrl,
+        neonApiKey: keepSettings.neonApiKey || DEFAULT_NEON.apiKey,
+        neonStateKey: keepSettings.neonStateKey || DEFAULT_NEON.stateKey,
+        neonVersion: keepSettings.neonVersion || 0,
         replyTemplates: keepSettings.replyTemplates?.length ? keepSettings.replyTemplates : DEFAULT_REPLY_TEMPLATES.map(template => ({ ...template }))
       };
       normalizeState();
     }
 
     function save(show = true) {
+      state.settings.neonApiUrl = $("neonApiUrl").value.trim() || DEFAULT_NEON.apiUrl;
+      state.settings.neonApiKey = $("neonApiKey").value.trim() || DEFAULT_NEON.apiKey;
+      state.settings.neonStateKey = $("neonStateKey").value.trim() || DEFAULT_NEON.stateKey;
       state.settings.scriptUrl = $("scriptUrl").value.trim() || DEFAULT_SYNC.scriptUrl;
       state.settings.apiKey = $("apiKey").value.trim() || DEFAULT_SYNC.apiKey;
       state.settings.crmScriptUrl = $("crmScriptUrl").value.trim() || DEFAULT_SYNC.crmScriptUrl;
@@ -1852,17 +1891,15 @@
 
     function scheduleAutoPush() {
       if (suppressAutoPush) return;
-      if (!$("scriptUrl").value.trim() || !$("apiKey").value.trim()) return;
+      if (!neonConfigured()) return;
       clearTimeout(autoPushTimer);
       autoPushTimer = setTimeout(async () => {
         try {
-          await syncPush();
+          await neonPush(false, "Saved and synced to Neon database.");
           state.settings.pendingLocalSync = false;
           state.settings.lastSyncedAt = new Date().toISOString();
-          setStatus("Saved and synced to Google Sheet.");
         } catch (err) {
-          clearPendingSyncFlag();
-          setStatus(`Saved in this browser. Auto-sync failed, but next refresh will still load Google Sheet data: ${err.message}`, "warn");
+          setStatus(`Saved in this browser. Neon auto-sync failed: ${err.message}`, "warn");
         }
       }, 5000);
     }
@@ -4082,11 +4119,155 @@
       }
     }
 
-    function startAutoLoadCountdown(totalSeconds = Math.ceil(SYNC_READ_TIMEOUT_MS / 1000)) {
+    function neonApiBase() {
+      return ($("neonApiUrl")?.value || state.settings.neonApiUrl || DEFAULT_NEON.apiUrl).trim().replace(/\/+$/, "");
+    }
+
+    function neonApiKey() {
+      return ($("neonApiKey")?.value || state.settings.neonApiKey || DEFAULT_NEON.apiKey).trim();
+    }
+
+    function neonStateKey() {
+      return ($("neonStateKey")?.value || state.settings.neonStateKey || DEFAULT_NEON.stateKey).trim() || DEFAULT_NEON.stateKey;
+    }
+
+    function neonConfigured() {
+      return Boolean(neonApiBase() && neonApiKey());
+    }
+
+    function remoteStatePayload() {
+      const payload = JSON.parse(JSON.stringify(state));
+      payload.settings ||= {};
+      payload.settings.pendingLocalSync = false;
+      payload.settings.lastLocalChangeAt = "";
+      return payload;
+    }
+
+    function hasMeaningfulStateData() {
+      return [
+        state.teachers,
+        state.students,
+        state.bookings,
+        state.leads,
+        state.tutorLeads,
+        state.replacements,
+        state.replacementCredits,
+        state.publicHolidays,
+        state.revenueEntries,
+        state.activityLogs
+      ].some(list => Array.isArray(list) && list.length > 0);
+    }
+
+    function splitIntoChunks(text, chunkSize = NEON_CHUNK_SIZE) {
+      const chunks = [];
+      for (let index = 0; index < text.length; index += chunkSize) {
+        chunks.push(text.slice(index, index + chunkSize));
+      }
+      return chunks.length ? chunks : [""];
+    }
+
+    async function fetchNeonJson(path, options = {}, label = "Neon database", timeoutMs = SYNC_SAVE_TIMEOUT_MS) {
+      const url = `${neonApiBase()}${path}`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, {
+          ...options,
+          signal: controller.signal,
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": neonApiKey(),
+            ...(options.headers || {})
+          }
+        });
+        const text = await res.text();
+        const data = text ? JSON.parse(text) : {};
+        if (!res.ok || data.ok === false) throw new Error(data.error || `${label} failed with HTTP ${res.status}.`);
+        return data;
+      } catch (err) {
+        if (err.name === "AbortError") throw new Error(`${label} took too long to respond. Data is still saved in this browser.`);
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    async function neonPull(logManual = false) {
+      if (!neonConfigured()) return alert("Neon API URL and API key are required.");
+      const manifest = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon load", SYNC_READ_TIMEOUT_MS);
+      state.settings.neonVersion = Number(manifest.version || 0);
+      if (manifest.empty || !manifest.totalChunks) {
+        if (logManual) setStatus("Neon database is empty. Current browser data is unchanged.", "warn");
+        return { empty: true };
+      }
+      const chunks = [];
+      for (let index = 0; index < Number(manifest.totalChunks || 0); index += 1) {
+        const part = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}&version=${encodeURIComponent(manifest.version)}&chunk=${index}`, { method: "GET" }, `Neon load chunk ${index + 1}/${manifest.totalChunks}`, SYNC_READ_TIMEOUT_MS);
+        chunks.push(part.chunk || "");
+      }
+      const payload = JSON.parse(chunks.join(""));
+      applyPulledPayload(payload);
+      state.settings.neonVersion = Number(manifest.version || 0);
+      state.settings.lastSyncedAt = new Date().toISOString();
+      clearPendingSyncFlag();
+      suppressAutoPush = true;
+      save(false);
+      suppressAutoPush = false;
+      if (logManual) logAction("Neon Loaded", "Neon Database", "", "Loaded latest app data", "Manual Neon load completed.");
+      setStatus("Loaded latest data from Neon database.");
+      return { empty: false, version: state.settings.neonVersion };
+    }
+
+    async function neonPush(logManual = false, successMessage = "Saved to Neon database.") {
+      if (!neonConfigured()) {
+        setStatus(`${successMessage} Saved in this browser only. Neon API is not configured.`, "warn");
+        return;
+      }
+      const currentVersion = Number(state.settings.neonVersion || 0);
+      const serialized = JSON.stringify(remoteStatePayload());
+      const chunks = splitIntoChunks(serialized);
+      const init = await fetchNeonJson("/api/state-chunk", {
+        method: "POST",
+        body: JSON.stringify({
+          mode: "init",
+          key: neonStateKey(),
+          expectedVersion: currentVersion,
+          totalChunks: chunks.length,
+          updatedBy: safeStorageGet("classOneStaffName") || "Class One Admin"
+        })
+      }, "Neon save init", SYNC_SAVE_TIMEOUT_MS);
+      for (let index = 0; index < chunks.length; index += 1) {
+        await fetchNeonJson("/api/state-chunk", {
+          method: "POST",
+          body: JSON.stringify({
+            mode: "chunk",
+            uploadId: init.uploadId,
+            index,
+            chunk: chunks[index]
+          })
+        }, `Neon save chunk ${index + 1}/${chunks.length}`, SYNC_SAVE_TIMEOUT_MS);
+      }
+      const data = await fetchNeonJson("/api/state-chunk", {
+        method: "POST",
+        body: JSON.stringify({
+          mode: "complete",
+          uploadId: init.uploadId
+        })
+      }, "Neon save complete", SYNC_SAVE_TIMEOUT_MS);
+      state.settings.neonVersion = Number(data.version || currentVersion || 0);
+      state.settings.pendingLocalSync = false;
+      state.settings.lastLocalChangeAt = "";
+      state.settings.lastSyncedAt = new Date().toISOString();
+      persistState();
+      if (logManual) logAction("Neon Saved", "Neon Database", "", "Saved latest app data", "Manual Neon save completed.");
+      setStatus(successMessage);
+    }
+
+    function startAutoLoadCountdown(totalSeconds = Math.ceil(SYNC_READ_TIMEOUT_MS / 1000), label = "Neon database") {
       clearInterval(autoLoadCountdownTimer);
       let remaining = totalSeconds;
       const tick = () => {
-        setStatus(`Auto-loading timetable and CRM data... ${remaining}s remaining`, "success", false);
+        setStatus(`Auto-loading ${label}... ${remaining}s remaining`, "success", false);
         remaining -= 1;
         if (remaining < 0) clearInterval(autoLoadCountdownTimer);
       };
@@ -4101,17 +4282,31 @@
 
     async function autoPullOnStart() {
       applySettingsInputs();
-      if (state.settings.pendingLocalSync) {
-        state.settings.pendingLocalSync = false;
-        state.settings.lastLocalChangeAt = "";
-        persistState();
-        setStatus("Cleared old browser pending-sync flag. Loading latest Google Sheet data...", "warn");
+      if (neonConfigured()) {
+        startAutoLoadCountdown(Math.ceil(SYNC_READ_TIMEOUT_MS / 1000), "Neon database");
+        try {
+          const result = await neonPull(false);
+          stopAutoLoadCountdown();
+          if (result?.empty) {
+            if (hasMeaningfulStateData()) {
+              await neonPush(false, "Neon database was empty. Current browser data saved as first Neon version.");
+            } else {
+              setStatus("Neon database is empty. Import old Google Sheet data first, then Save To Neon.", "warn");
+            }
+          } else {
+            setStatus("Auto-loaded latest data from Neon database.");
+          }
+        } catch (err) {
+          stopAutoLoadCountdown();
+          setStatus(`Neon auto-load failed. Browser data is still available: ${err.message}`, "error");
+        }
+        return;
       }
       const jobs = [];
       if ($("scriptUrl").value.trim() && $("apiKey").value.trim()) jobs.push({ label: "Timetable", run: () => syncPull(false, { skipLocalWarning: true }) });
       if ($("crmScriptUrl").value.trim() && $("crmApiKey").value.trim()) jobs.push({ label: "CRM", run: () => crmPull() });
       if (!jobs.length) return;
-      startAutoLoadCountdown();
+      startAutoLoadCountdown(Math.ceil(SYNC_READ_TIMEOUT_MS / 1000), "Google Sheet data");
       const results = await Promise.allSettled(jobs.map(job => job.run()));
       stopAutoLoadCountdown();
       const loaded = results.map((result, index) => result.status === "fulfilled" ? jobs[index].label : "").filter(Boolean);
@@ -4122,31 +4317,18 @@
     }
 
     async function autoPushIfConfigured(successMessage) {
-      const url = $("scriptUrl").value.trim();
-      const key = $("apiKey").value.trim();
-      if (!url || !key) {
-        setStatus(`${successMessage} Saved in this browser. Add sync settings to share it.`);
-        return;
-      }
       try {
-        await postToAppsScript(url, { action: "write", key, payload: state });
-        state.settings.pendingLocalSync = false;
-        state.settings.lastSyncedAt = new Date().toISOString();
-        persistState();
-        setStatus(`${successMessage} Synced to Google Sheet.`);
+        await neonPush(false, `${successMessage} Synced to Neon database.`);
       } catch (err) {
-        setStatus(`${successMessage} Sync failed: ${err.message}`, "error");
+        setStatus(`${successMessage} Neon sync failed: ${err.message}`, "error");
       }
     }
 
     async function autoPushCrmIfConfigured() {
-      const url = $("crmScriptUrl").value.trim();
-      const key = $("crmApiKey").value.trim();
-      if (!url || !key) return;
       try {
-        await postToAppsScript(url, { action: "write", key, leads: state.leads || [] });
+        await neonPush(false, "CRM saved to Neon database.");
       } catch (err) {
-        setStatus(`CRM sync failed: ${err.message}`, "error");
+        setStatus(`CRM Neon sync failed: ${err.message}`, "error");
       }
     }
 
@@ -5222,6 +5404,8 @@
     };
     $("exportActivityCsvBtn").onclick = () => downloadCsv("class-one-activity-log.csv", ["No.", "Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], numbered(activityExportRows()));
     $("exportActivityPdfBtn").onclick = () => openPrintReport("Activity Log", ["No.", "Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], numbered(activityExportRows()));
+    $("neonPullBtn").onclick = () => animateClick($("neonPullBtn"), () => neonPull(true).catch(err => alert(err.message)));
+    $("neonPushBtn").onclick = () => animateClick($("neonPushBtn"), () => neonPush(true, "Saved to Neon database.").catch(err => alert(err.message)));
     $("pullBtn").onclick = () => animateClick($("pullBtn"), () => syncPull(true).catch(err => alert(err.message)));
     $("pushBtn").onclick = () => animateClick($("pushBtn"), () => syncPush(true).catch(err => alert(err.message)));
     $("crmPullBtn").onclick = () => animateClick($("crmPullBtn"), () => crmPull().catch(err => alert(err.message)));
@@ -5265,12 +5449,12 @@
             setTimeout(() => autoPullOnStart(), 250);
           })
           .catch(err => {
-            setStatus(`${err.message} Continuing with Google Sheet sync.`, "warn");
+            setStatus(`${err.message} Continuing with Neon auto-load.`, "warn");
             setTimeout(() => autoPullOnStart(), 250);
           });
       } catch (err) {
         applySettingsInputs();
-        setStatus(`Startup error: ${err.message}. Trying Google Sheet auto-load.`, "error");
+        setStatus(`Startup error: ${err.message}. Trying Neon auto-load.`, "error");
         setTimeout(() => autoPullOnStart(), 250);
       }
     }
