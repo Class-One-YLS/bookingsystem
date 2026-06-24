@@ -4148,17 +4148,53 @@
       $("teacherViewLink").value = teacherTimetableLink({ id: $("teacherId").value || current?.id, viewToken: $("teacherViewToken").value });
     }
 
+    function applyTeacherViewToken(teacher, token) {
+      const before = teacherLogSummary(teacher);
+      teacher.viewToken = token;
+      teacher.viewTokenUpdatedAt = new Date().toISOString();
+      $("teacherId").value = teacher.id;
+      $("teacherViewToken").value = token;
+      logAction("Teacher View Link Generated", teacher.name, before, teacherLogSummary(teacher), "Read-only teacher timetable link generated.");
+      save(false);
+    }
+
+    async function pushTeacherViewTokenWithRetry(teacherId, teacherName, token) {
+      try {
+        await neonPush(false, "Teacher timetable view link generated. Synced to Neon database. You can copy the link now.");
+        return teacherById(teacherId) || state.teachers.find(item => teacherNameKey(item.name) === teacherNameKey(teacherName));
+      } catch (err) {
+        if (!/version conflict/i.test(err.message || "")) throw err;
+        setStatus("Neon has newer data. Loading latest data and retrying teacher link sync... please wait.", "warn");
+        await neonPull(false);
+        const latestTeacher = teacherById(teacherId) || state.teachers.find(item => teacherNameKey(item.name) === teacherNameKey(teacherName));
+        if (!latestTeacher) throw new Error("Latest Neon data loaded, but this teacher could not be found. Please reopen the teacher profile and try again.");
+        applyTeacherViewToken(latestTeacher, token);
+        await neonPush(false, "Teacher timetable view link generated after loading latest Neon data. You can copy the link now.");
+        return latestTeacher;
+      }
+    }
+
     async function generateTeacherViewLink() {
       const teacher = teacherById($("teacherId").value);
       if (!teacher) return alert("Save this teacher first, then generate the timetable view link.");
-      const before = teacherLogSummary(teacher);
-      teacher.viewToken = randomShareToken();
-      teacher.viewTokenUpdatedAt = new Date().toISOString();
-      $("teacherViewToken").value = teacher.viewToken;
-      updateTeacherViewLinkField(teacher);
-      logAction("Teacher View Link Generated", teacher.name, before, teacherLogSummary(teacher), "Read-only teacher timetable link generated.");
-      save(false);
-      await neonPush(false, "Teacher timetable view link generated. Synced to Neon database.");
+      const generateBtn = $("generateTeacherViewLinkBtn");
+      const copyBtn = $("copyTeacherViewLinkBtn");
+      const originalLabel = generateBtn.textContent;
+      generateBtn.disabled = true;
+      copyBtn.disabled = true;
+      generateBtn.textContent = "Syncing...";
+      $("teacherViewLink").value = "";
+      setStatus("Generating teacher timetable view link... syncing to Neon. Please wait, this can take up to 90 seconds.", "success");
+      try {
+        const token = randomShareToken();
+        applyTeacherViewToken(teacher, token);
+        const syncedTeacher = await pushTeacherViewTokenWithRetry(teacher.id, teacher.name, token);
+        updateTeacherViewLinkField(syncedTeacher || teacher);
+      } finally {
+        generateBtn.disabled = false;
+        copyBtn.disabled = false;
+        generateBtn.textContent = originalLabel;
+      }
     }
 
     async function copyTeacherViewLink() {
@@ -5258,7 +5294,7 @@
     $("newTeacherBtn").onclick = clearTeacherForm;
     $("generateTeacherViewLinkBtn").onclick = () => generateTeacherViewLink().catch(err => {
       setStatus(`Teacher link sync failed: ${err.message}`, "error");
-      alert(`Teacher link generated locally, but sync failed: ${err.message}`);
+      alert(`Teacher timetable link is not ready yet. Please click Generate again after checking the connection. Error: ${err.message}`);
     });
     $("copyTeacherViewLinkBtn").onclick = copyTeacherViewLink;
     $("openTeacherModalBtn").onclick = () => {
