@@ -127,7 +127,7 @@
       display: grid;
       gap: 14px;
     }
-    .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
     .metric {
       background: #fff;
       border: 1px solid var(--line);
@@ -205,6 +205,7 @@
       color: #111;
       font-weight: 800;
     }
+    .status-completed { background: #dcf8ea; color: #111; }
     .type-assessment, .type-exam, .type-trial-class { background: var(--warning); }
     .type-new, .type-new-students { background: var(--new-yellow); }
     .type-replacement-class { background: var(--blue); }
@@ -290,13 +291,14 @@
 
     <div class="grid metrics">
       <div class="metric"><span>Classes In Selected Month</span><strong id="metricTotal">0</strong></div>
-      <div class="metric"><span>Upcoming Next 7 Days</span><strong id="metricUpcoming">0</strong></div>
+      <div class="metric"><span>Today's Remaining Classes</span><strong id="metricUpcoming">0</strong></div>
       <div class="metric"><span>Completed / Passed</span><strong id="metricCompleted">0</strong></div>
       <div class="metric"><span>Cancelled / Leave</span><strong id="metricCancelled">0</strong></div>
+      <div class="metric"><span>Income To Date</span><strong id="metricIncome">RM 0.00</strong></div>
     </div>
 
     <section>
-      <h2>Next 7 Days</h2>
+      <h2>Today's Classes</h2>
       <div id="upcomingList" class="cards"></div>
     </section>
 
@@ -313,6 +315,11 @@
     <section id="monthlySection">
       <h2>Selected Month Classes</h2>
       <div id="monthList" class="timetable-wrap"></div>
+    </section>
+
+    <section>
+      <h2>Income History</h2>
+      <div id="incomeList" class="timetable-wrap"></div>
     </section>
 
     <section>
@@ -367,8 +374,41 @@
       return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
     }
 
+    function rawTimePart(value) {
+      const text = String(value || "").trim();
+      if (!text) return "";
+      if (text.includes("T")) {
+        const match = text.match(/T(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+        if (match) return `${match[1].padStart(2, "0")}:${match[2]}:${match[3] || "00"}`;
+      }
+      const ampm = text.match(/\b(\d{1,2})(?::(\d{2}))?(?::(\d{2}))?\s*(AM|PM)\b/i);
+      if (ampm) {
+        let hour = Number(ampm[1]);
+        const minute = Number(ampm[2] || 0);
+        const second = Number(ampm[3] || 0);
+        const suffix = ampm[4].toUpperCase();
+        if (suffix === "PM" && hour !== 12) hour += 12;
+        if (suffix === "AM" && hour === 12) hour = 0;
+        return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}`;
+      }
+      const match = text.match(/\b(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+      if (match) return `${match[1].padStart(2, "0")}:${match[2]}:${match[3] || "00"}`;
+      return "";
+    }
+
+    function normalizeTime(value) {
+      const part = rawTimePart(value);
+      if (!part) return "";
+      const [hour, minute, second] = part.split(":").map(Number);
+      if (Number.isNaN(hour) || Number.isNaN(minute)) return "";
+      let total = (hour * 60) + minute + (Number(second || 0) >= 30 ? 1 : 0);
+      total = Math.round(total / 30) * 30;
+      if (total >= 24 * 60) total = (24 * 60) - 30;
+      return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+    }
+
     function timeLabel(value) {
-      const text = String(value || "");
+      const text = normalizeTime(value) || String(value || "");
       const match = text.match(/^(\d{1,2}):(\d{2})/);
       if (!match) return text;
       const hour = Number(match[1]);
@@ -380,6 +420,10 @@
 
     function clockLabel(date = new Date()) {
       return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+
+    function money(value) {
+      return `RM ${Number(value || 0).toFixed(2)}`;
     }
 
     function minutes(value) {
@@ -406,7 +450,7 @@
     }
 
     function slotDateTime(date, time) {
-      return new Date(`${date}T${time || "00:00"}:00`);
+      return new Date(`${date}T${normalizeTime(time) || time || "00:00"}:00`);
     }
 
     function slotHasPassed(date, time) {
@@ -433,6 +477,13 @@
         return "This teacher timetable link is not active yet. Please ask admin to open Teachers > Edit Teacher > Generate under Teacher Timetable View Link, wait for the Neon sync success message, then copy/share the new link.";
       }
       return message;
+    }
+
+    function normalizeLoadedTimetable(data) {
+      data.regularSlots = (data.regularSlots || []).map(slot => ({ ...slot, time: normalizeTime(slot.time) || slot.time }));
+      data.overrideSlots = (data.overrideSlots || []).map(slot => ({ ...slot, time: normalizeTime(slot.time) || slot.time }));
+      data.bookings = (data.bookings || []).map(booking => ({ ...booking, time: normalizeTime(booking.time) || booking.time }));
+      return data;
     }
 
     function fillControls() {
@@ -508,11 +559,11 @@
       const response = await fetch(url.toString(), { method: "GET" });
       const data = await response.json();
       if (!response.ok || data.ok === false) throw new Error(teacherLinkErrorMessage(data.error || `Load failed with HTTP ${response.status}`));
-      timetableData = data;
+      timetableData = normalizeLoadedTimetable(data);
       $("teacherChip").textContent = data.teacher.name || "Teacher";
       lastAutoSyncAt = new Date();
       setSyncChip(`Auto-sync: ${clockLabel(lastAutoSyncAt)}`);
-      setStatus(`${silent ? "Auto-synced" : "Loaded latest timetable"} at ${clockLabel(lastAutoSyncAt)}. Timetable last updated: ${data.updatedAt ? new Date(data.updatedAt).toLocaleString() : "-"}`);
+      setStatus(`${silent ? "Auto-synced" : "Loaded latest timetable"} at ${clockLabel(lastAutoSyncAt)}.`);
       renderAll();
     }
 
@@ -615,11 +666,13 @@
       const booking = findBooking(dateISO, time);
       if (booking) {
         const displayStatus = statusForDisplay(booking);
-        return `<td class="cell-booking ${typeClass(booking.type)} ${statusClass(displayStatus)}${outsideClass}">${escapeHtml(booking.studentName || "Class")}${booking.subject ? ` (${escapeHtml(booking.subject)})` : ""}<span class="cell-small">${escapeHtml(statusLabel(displayStatus))} | ${escapeHtml(booking.type || "class")}</span></td>`;
+        const detail = displayStatus === "completed" ? (booking.type || "class") : `${statusLabel(displayStatus)} | ${booking.type || "class"}`;
+        return `<td class="cell-booking ${typeClass(booking.type)} ${statusClass(displayStatus)}${outsideClass}">${escapeHtml(booking.studentName || "Class")}${booking.subject ? ` (${escapeHtml(booking.subject)})` : ""}<span class="cell-small">${escapeHtml(detail)}</span></td>`;
       }
       const slot = collectSlotsForDate(date).find(item => item.time === time);
       if (slot?.locked) {
-        return `<td class="cell-fixed${outsideClass}">${escapeHtml(slot.studentName || "Fixed Regular")}${slot.subject ? ` (${escapeHtml(slot.subject)})` : ""}<span class="cell-small">Fixed regular</span></td>`;
+        const completedClass = slotHasPassed(dateISO, time) ? " status-completed" : "";
+        return `<td class="cell-fixed${completedClass}${outsideClass}">${escapeHtml(slot.studentName || "Fixed Regular")}${slot.subject ? ` (${escapeHtml(slot.subject)})` : ""}<span class="cell-small">regular class</span></td>`;
       }
       if (slot) return `<td class="cell-open${outsideClass}"><span class="cell-small">${escapeHtml(slot.subject || "Open")}</span></td>`;
       return `<td class="cell-off${outsideClass}">OFF</td>`;
@@ -677,7 +730,8 @@
           subject: entry.booking.subject || "",
           type: entry.booking.type || "class",
           status,
-          remark: entry.booking.remark || ""
+          remark: entry.booking.remark || "",
+          estimatedPay: Number(entry.booking.estimatedPay || 0)
         };
       }
       return {
@@ -685,13 +739,21 @@
         subject: entry.slot.subject || "",
         type: "regular class",
         status: slotHasPassed(entry.date, entry.time) ? "completed" : "booked",
-        remark: ""
+        remark: "",
+        estimatedPay: Number(entry.slot.estimatedPay || timetableData?.teacher?.rate || 0)
       };
+    }
+
+    function incomePayForEntry(entry) {
+      const meta = entryMeta(entry);
+      if (meta.status === "student_not_show") return 5;
+      if (meta.status === "completed") return Number(meta.estimatedPay || 0);
+      return 0;
     }
 
     function renderUpcoming() {
       const from = localISO(new Date());
-      const to = dateOffsetISO(from, 6);
+      const to = from;
       const entries = classEntries(from, to).filter(entry => !CANCELLED.includes(entryMeta(entry).status) && !slotHasPassed(entry.date, entry.time));
       $("metricUpcoming").textContent = entries.length;
       $("upcomingList").innerHTML = entries.slice(0, 12).map(entry => {
@@ -701,7 +763,7 @@
           <div class="subtle">${dateLabel(entry.date)} | ${timeLabel(entry.time)}</div>
           <span class="pill">${escapeHtml(meta.type)}</span>
         </div>`;
-      }).join("") || `<div class="subtle">No upcoming classes in the next 7 days.</div>`;
+      }).join("") || `<div class="subtle">No remaining classes today.</div>`;
     }
 
     function tableHtml(headers, rows) {
@@ -751,6 +813,30 @@
       $("leaveList").innerHTML = rows.length ? tableHtml(["No.", "Date", "Time", "Student", "Subject", "Status", "Remark"], rows) : `<div class="subtle" style="padding:12px;">No cancelled, leave, public holiday, or not-show records in selected month.</div>`;
     }
 
+    function renderIncomeHistory() {
+      const { from, month, year } = selectedMonthRange();
+      const monthEnd = localISO(new Date(year, month + 1, 0));
+      const today = localISO(new Date());
+      const to = today < from ? "" : (today > monthEnd ? monthEnd : today);
+      const entries = to ? classEntries(from, to).filter(entry => incomePayForEntry(entry) > 0) : [];
+      const total = entries.reduce((sum, entry) => sum + incomePayForEntry(entry), 0);
+      $("metricIncome").textContent = money(total);
+      const rows = entries.map((entry, index) => {
+        const meta = entryMeta(entry);
+        return [
+          String(index + 1),
+          escapeHtml(dateLabel(entry.date)),
+          escapeHtml(timeLabel(entry.time)),
+          escapeHtml(meta.studentName),
+          escapeHtml(meta.subject),
+          escapeHtml(meta.type),
+          escapeHtml(statusLabel(meta.status)),
+          escapeHtml(money(incomePayForEntry(entry)))
+        ];
+      });
+      $("incomeList").innerHTML = rows.length ? tableHtml(["No.", "Date", "Time", "Student", "Subject", "Type", "Status", "Pay"], rows) : `<div class="subtle" style="padding:12px;">No income counted yet for the selected month.</div>`;
+    }
+
     function renderVisibility() {
       const view = $("viewSelect").value;
       $("monthCalendarSection").classList.toggle("hide", view !== "month");
@@ -765,6 +851,7 @@
       renderUpcoming();
       renderMonthList();
       renderLeaveList();
+      renderIncomeHistory();
       renderVisibility();
     }
 
