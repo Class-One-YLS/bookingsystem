@@ -81,7 +81,7 @@
     }
     .toolbar {
       display: grid;
-      grid-template-columns: repeat(4, minmax(150px, 1fr)) auto;
+      grid-template-columns: repeat(2, minmax(150px, 1fr)) auto;
       gap: 12px;
       align-items: end;
       margin: 16px 0;
@@ -205,11 +205,11 @@
       color: #111;
       font-weight: 800;
     }
-    .status-completed { background: #dcf8ea; color: #111; }
     .type-assessment, .type-exam, .type-trial-class { background: var(--warning); }
     .type-new, .type-new-students { background: var(--new-yellow); }
     .type-replacement-class { background: var(--blue); }
     .type-extra-class { background: var(--purple); }
+    .status-completed { background: #dcf8ea; color: #111; }
     .status-student-not-show { background: var(--danger); color: #fff; }
     .status-cancelled, .status-public-holiday, .status-teacher-leave { background: var(--grey); color: #111; }
     .cell-small {
@@ -230,7 +230,14 @@
       padding: 11px;
       background: #fbfefd;
     }
-    .class-card strong { display: block; margin-bottom: 4px; }
+    .class-card strong { display: block; margin-bottom: 4px; font-size: 18px; line-height: 1.2; }
+    .class-time {
+      margin-top: 6px;
+      color: var(--mint-dark);
+      font-size: 16px;
+      line-height: 1.2;
+      font-weight: 900;
+    }
     .subtle { color: var(--muted); font-size: 13px; }
     .pill {
       display: inline-flex;
@@ -282,8 +289,6 @@
     <div class="toolbar">
       <div><label>Month</label><select id="monthSelect"></select></div>
       <div><label>Year</label><select id="yearSelect"></select></div>
-      <div><label>Week</label><select id="weekSelect"></select></div>
-      <div><label>View</label><select id="viewSelect"><option value="month">Whole Month Calendar</option><option value="week">Selected Week Table</option><option value="list">Monthly List</option></select></div>
       <button class="btn" id="refreshBtn">Refresh</button>
     </div>
 
@@ -307,11 +312,6 @@
       <div id="monthCalendar" class="month-calendar"></div>
     </section>
 
-    <section id="weeklySection">
-      <h2>Selected Week Timetable</h2>
-      <div id="weekTable" class="timetable-wrap"></div>
-    </section>
-
     <section id="monthlySection">
       <h2>Selected Month Classes</h2>
       <div id="monthList" class="timetable-wrap"></div>
@@ -332,6 +332,8 @@
     const API_BASE = "https://classone-booking-api-yiit.vercel.app";
     const STATE_KEY = "production";
     const AUTO_SYNC_MS = 120000;
+    const FIRST_VIEW_YEAR = 2026;
+    const FIRST_VIEW_MONTH = 5;
     const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
     const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
     const STATUS_LABELS = {
@@ -397,6 +399,16 @@
     }
 
     function normalizeTime(value) {
+      const text = String(value || "").trim();
+      const sheetDateTime = text.match(/^1899-12-\d{2}T(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+      if (sheetDateTime) {
+        let total = (Number(sheetDateTime[1]) * 60) + Number(sheetDateTime[2]) + (Number(sheetDateTime[3] || 0) / 60);
+        total -= 83 + (18 / 60);
+        total = Math.round(total / 30) * 30;
+        if (total < 0) total = 0;
+        if (total >= 24 * 60) total = (24 * 60) - 30;
+        return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+      }
       const part = rawTimePart(value);
       if (!part) return "";
       const [hour, minute, second] = part.split(":").map(Number);
@@ -483,18 +495,34 @@
       data.regularSlots = (data.regularSlots || []).map(slot => ({ ...slot, time: normalizeTime(slot.time) || slot.time }));
       data.overrideSlots = (data.overrideSlots || []).map(slot => ({ ...slot, time: normalizeTime(slot.time) || slot.time }));
       data.bookings = (data.bookings || []).map(booking => ({ ...booking, time: normalizeTime(booking.time) || booking.time }));
+      data.cells = (data.cells || []).map(cell => ({ ...cell, time: normalizeTime(cell.time) || cell.time }));
       return data;
     }
 
+    function availableMonthsForYear(year) {
+      const startMonth = Number(year) === FIRST_VIEW_YEAR ? FIRST_VIEW_MONTH : 0;
+      return MONTHS
+        .map((month, index) => ({ month, index }))
+        .filter(item => Number(year) > FIRST_VIEW_YEAR || item.index >= startMonth);
+    }
+
+    function fillMonthSelect(year, preferredMonth = null) {
+      const months = availableMonthsForYear(year);
+      $("monthSelect").innerHTML = months.map(item => `<option value="${item.index}">${item.month}</option>`).join("");
+      const fallback = months[0]?.index ?? FIRST_VIEW_MONTH;
+      const safeMonth = months.some(item => item.index === Number(preferredMonth)) ? Number(preferredMonth) : fallback;
+      $("monthSelect").value = String(safeMonth);
+    }
+
     function fillControls() {
-      $("monthSelect").innerHTML = MONTHS.map((month, index) => `<option value="${index}">${month}</option>`).join("");
       const currentYear = new Date().getFullYear();
-      $("yearSelect").innerHTML = Array.from({ length: 5 }, (_, index) => currentYear - 1 + index).map(year => `<option value="${year}">${year}</option>`).join("");
+      const startYear = FIRST_VIEW_YEAR;
+      const endYear = Math.max(currentYear + 4, FIRST_VIEW_YEAR + 4);
+      $("yearSelect").innerHTML = Array.from({ length: endYear - startYear + 1 }, (_, index) => startYear + index).map(year => `<option value="${year}">${year}</option>`).join("");
       const selectedMonth = Number(params.get("month") || new Date().getMonth());
-      const selectedYear = Number(params.get("year") || currentYear);
-      $("monthSelect").value = String(Math.max(0, Math.min(11, selectedMonth)));
+      const selectedYear = Math.max(FIRST_VIEW_YEAR, Number(params.get("year") || currentYear));
       $("yearSelect").value = String(selectedYear);
-      fillWeekSelect();
+      fillMonthSelect(selectedYear, selectedMonth);
     }
 
     function mondayOf(date) {
@@ -516,19 +544,6 @@
         weeks.push(localISO(date));
       }
       return weeks;
-    }
-
-    function fillWeekSelect() {
-      const month = Number($("monthSelect").value);
-      const year = Number($("yearSelect").value);
-      const weeks = weeksForMonth(year, month);
-      $("weekSelect").innerHTML = weeks.map(startISO => {
-        const dates = weekDates(startISO);
-        return `<option value="${startISO}">${dateLabel(localISO(dates[0]))} - ${dateLabel(localISO(dates[6]))}</option>`;
-      }).join("");
-      const today = new Date();
-      const currentWeek = localISO(mondayOf(today));
-      $("weekSelect").value = weeks.includes(currentWeek) ? currentWeek : weeks[0];
     }
 
     function selectedMonthRange() {
@@ -631,6 +646,16 @@
       return uniqueSlots([...regular, ...overrides]);
     }
 
+    function scheduleCells() {
+      return (timetableData?.cells || [])
+        .filter(cell => cell.time)
+        .sort((a, b) => `${a.date || ""} ${a.time || ""}`.localeCompare(`${b.date || ""} ${b.time || ""}`));
+    }
+
+    function findCell(dateISO, time) {
+      return scheduleCells().find(cell => cell.date === dateISO && cell.time === time);
+    }
+
     function scheduleBookings() {
       const byTime = new Map();
       (timetableData?.bookings || [])
@@ -654,8 +679,13 @@
       }
       dates.forEach(date => {
         const dateISO = localISO(date);
-        collectSlotsForDate(date).forEach(slot => values.add(slot.time));
-        scheduleBookings().filter(booking => booking.date === dateISO).forEach(booking => values.add(booking.time));
+        const cells = scheduleCells().filter(cell => cell.date === dateISO);
+        if (cells.length) {
+          cells.forEach(cell => values.add(cell.time));
+        } else {
+          collectSlotsForDate(date).forEach(slot => values.add(slot.time));
+          scheduleBookings().filter(booking => booking.date === dateISO).forEach(booking => values.add(booking.time));
+        }
       });
       return [...values].sort((a, b) => minutes(a) - minutes(b));
     }
@@ -663,6 +693,16 @@
     function cellHtml(date, time, options = {}) {
       const dateISO = localISO(date);
       const outsideClass = options.month != null && date.getMonth() !== options.month ? " outside-month" : "";
+      const cell = findCell(dateISO, time);
+      if (cell) {
+        if (cell.kind === "open") {
+          return `<td class="cell-open${outsideClass}"><span class="cell-small">${escapeHtml(cell.subject || "Open")}</span></td>`;
+        }
+        const displayStatus = (cell.status || "booked") === "booked" && slotHasPassed(cell.date, cell.time) ? "completed" : (cell.status || "booked");
+        const statusText = displayStatus === "completed" ? (cell.type || "class") : `${statusLabel(displayStatus)} | ${cell.type || "class"}`;
+        const cellClass = cell.kind === "fixed" ? "cell-fixed" : "cell-booking";
+        return `<td class="${cellClass} ${typeClass(cell.type)} ${statusClass(displayStatus)}${outsideClass}">${escapeHtml(cell.studentName || "Class")}${cell.subject ? ` (${escapeHtml(cell.subject)})` : ""}<span class="cell-small">${escapeHtml(statusText)}</span></td>`;
+      }
       const booking = findBooking(dateISO, time);
       if (booking) {
         const displayStatus = statusForDisplay(booking);
@@ -685,11 +725,6 @@
       return `<table class="teacher-timetable"><thead>${header}</thead><tbody>${rows}</tbody></table>`;
     }
 
-    function renderWeekTable() {
-      const dates = weekDates($("weekSelect").value);
-      $("weekTable").innerHTML = weekTableHtml(dates);
-    }
-
     function renderMonthCalendar() {
       const month = Number($("monthSelect").value);
       const year = Number($("yearSelect").value);
@@ -704,6 +739,11 @@
     }
 
     function classEntries(fromISO, toISO) {
+      const cells = scheduleCells().filter(cell => cell.date >= fromISO && cell.date <= toISO && cell.kind !== "open");
+      if (cells.length) {
+        return cells.map(cell => ({ kind: "cell", date: cell.date, time: cell.time, cell }))
+          .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+      }
       const entries = [];
       for (let dateISO = fromISO; dateISO <= toISO; dateISO = dateOffsetISO(dateISO, 1)) {
         const date = parseISODate(dateISO);
@@ -723,6 +763,19 @@
     }
 
     function entryMeta(entry) {
+      const teacherRate = Number(timetableData?.teacher?.rate || 0);
+      const defaultPay = (value) => Number(value || 0) || teacherRate;
+      if (entry.kind === "cell") {
+        const status = (entry.cell.status || "booked") === "booked" && slotHasPassed(entry.date, entry.time) ? "completed" : (entry.cell.status || "booked");
+        return {
+          studentName: entry.cell.studentName || "Class",
+          subject: entry.cell.subject || "",
+          type: entry.cell.type || "class",
+          status,
+          remark: entry.cell.remark || "",
+          estimatedPay: defaultPay(entry.cell.estimatedPay)
+        };
+      }
       if (entry.kind === "booking") {
         const status = statusForDisplay(entry.booking);
         return {
@@ -731,7 +784,7 @@
           type: entry.booking.type || "class",
           status,
           remark: entry.booking.remark || "",
-          estimatedPay: Number(entry.booking.estimatedPay || 0)
+          estimatedPay: defaultPay(entry.booking.estimatedPay)
         };
       }
       return {
@@ -740,7 +793,7 @@
         type: "regular class",
         status: slotHasPassed(entry.date, entry.time) ? "completed" : "booked",
         remark: "",
-        estimatedPay: Number(entry.slot.estimatedPay || timetableData?.teacher?.rate || 0)
+        estimatedPay: defaultPay(entry.slot.estimatedPay)
       };
     }
 
@@ -760,7 +813,8 @@
         const meta = entryMeta(entry);
         return `<div class="class-card">
           <strong>${escapeHtml(meta.studentName)} ${meta.subject ? `(${escapeHtml(meta.subject)})` : ""}</strong>
-          <div class="subtle">${dateLabel(entry.date)} | ${timeLabel(entry.time)}</div>
+          <div class="class-time">${timeLabel(entry.time)}</div>
+          <div class="subtle">${dateLabel(entry.date)}</div>
           <span class="pill">${escapeHtml(meta.type)}</span>
         </div>`;
       }).join("") || `<div class="subtle">No remaining classes today.</div>`;
@@ -838,16 +892,13 @@
     }
 
     function renderVisibility() {
-      const view = $("viewSelect").value;
-      $("monthCalendarSection").classList.toggle("hide", view !== "month");
-      $("weeklySection").classList.toggle("hide", view !== "week");
-      $("monthlySection").classList.toggle("hide", view !== "list");
+      $("monthCalendarSection").classList.remove("hide");
+      $("monthlySection").classList.remove("hide");
     }
 
     function renderAll() {
       if (!timetableData) return;
       renderMonthCalendar();
-      renderWeekTable();
       renderUpcoming();
       renderMonthList();
       renderLeaveList();
@@ -855,10 +906,11 @@
       renderVisibility();
     }
 
-    $("monthSelect").addEventListener("change", () => { fillWeekSelect(); loadTimetable().catch(error => setStatus(error.message, "error")); });
-    $("yearSelect").addEventListener("change", () => { fillWeekSelect(); loadTimetable().catch(error => setStatus(error.message, "error")); });
-    $("weekSelect").addEventListener("change", renderWeekTable);
-    $("viewSelect").addEventListener("change", renderVisibility);
+    $("monthSelect").addEventListener("change", () => loadTimetable().catch(error => setStatus(error.message, "error")));
+    $("yearSelect").addEventListener("change", () => {
+      fillMonthSelect(Number($("yearSelect").value), Number($("monthSelect").value));
+      loadTimetable().catch(error => setStatus(error.message, "error"));
+    });
     $("refreshBtn").addEventListener("click", () => loadTimetable().catch(error => setStatus(error.message, "error")));
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) autoSyncTimetable();

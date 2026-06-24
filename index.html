@@ -1295,9 +1295,36 @@
       date.setDate(date.getDate() + days);
       return localISO(date);
     };
+    const normalizeTimeValue = (value) => {
+      const text = String(value || "").trim();
+      const sheetDateTime = text.match(/^1899-12-\d{2}T(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+      let total = null;
+      if (sheetDateTime) {
+        total = (Number(sheetDateTime[1]) * 60) + Number(sheetDateTime[2]) + (Number(sheetDateTime[3] || 0) / 60) - (83 + (18 / 60));
+      } else {
+        const ampm = text.match(/\b(\d{1,2})(?::(\d{2}))?(?::(\d{2}))?\s*(AM|PM)\b/i);
+        if (ampm) {
+          let hour = Number(ampm[1]);
+          const minute = Number(ampm[2] || 0);
+          const second = Number(ampm[3] || 0);
+          const suffix = ampm[4].toUpperCase();
+          if (suffix === "PM" && hour !== 12) hour += 12;
+          if (suffix === "AM" && hour === 12) hour = 0;
+          total = (hour * 60) + minute + (second / 60);
+        } else {
+          const match = text.match(/(?:T|\b)(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+          if (match) total = (Number(match[1]) * 60) + Number(match[2]) + (Number(match[3] || 0) / 60);
+        }
+      }
+      if (total == null || Number.isNaN(total)) return "";
+      total = Math.round(total / 30) * 30;
+      if (total < 0) total = 0;
+      if (total >= 24 * 60) total = (24 * 60) - 30;
+      return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+    };
     const timeLabel = (t) => {
       if (!t) return "";
-      const text = String(t);
+      const text = normalizeTimeValue(t) || String(t);
       if (text.includes("T")) return formatTimeFromAny(text);
       const [hh, mm] = text.split(":").map(Number);
       if (Number.isNaN(hh)) return "";
@@ -1306,7 +1333,7 @@
       return `${h}:${String(mm || 0).padStart(2, "0")} ${suffix}`;
     };
     const minutes = (t) => {
-      const [h, m] = String(t || "00:00").split(":").map(Number);
+      const [h, m] = String(normalizeTimeValue(t) || t || "00:00").split(":").map(Number);
       return h * 60 + m;
     };
     const halfHourOptions = (start = 8 * 60, end = 22 * 60) => {
@@ -1537,8 +1564,8 @@
         teacher.subjects = normalizeSubjects(Array.isArray(teacher.subjects) ? teacher.subjects : []);
         teacher.regularSlots = Array.isArray(teacher.regularSlots) ? teacher.regularSlots : [];
         teacher.overrideSlots = Array.isArray(teacher.overrideSlots) ? teacher.overrideSlots : [];
-        teacher.regularSlots.forEach(slot => { slot.subject = normalizeSubject(slot.subject); slot.studentName = cleanStudentName(slot.studentName); });
-        teacher.overrideSlots.forEach(slot => { slot.subject = normalizeSubject(slot.subject); slot.studentName = cleanStudentName(slot.studentName); });
+        teacher.regularSlots.forEach(slot => { slot.subject = normalizeSubject(slot.subject); slot.studentName = cleanStudentName(slot.studentName); slot.time = normalizeTimeValue(slot.time) || slot.time; });
+        teacher.overrideSlots.forEach(slot => { slot.subject = normalizeSubject(slot.subject); slot.studentName = cleanStudentName(slot.studentName); slot.time = normalizeTimeValue(slot.time) || slot.time; });
         teacher.category ||= "freelance";
         teacher.profitShare = Number(teacher.profitShare || 0);
         teacher.status = teacher.status || (teacher.archived ? "archived" : "active");
@@ -1599,6 +1626,7 @@
       });
       state.bookings.forEach(booking => {
         booking.studentName = cleanStudentName(booking.studentName);
+        booking.time = normalizeTimeValue(booking.time) || booking.time;
       });
       state.activityLogs.forEach(log => {
         log.id ||= uid("log");
