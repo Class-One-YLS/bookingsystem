@@ -86,6 +86,25 @@
       align-items: end;
       margin: 16px 0;
     }
+    .view-tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 16px 0;
+    }
+    .view-tab {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 12px;
+      background: #fff;
+      color: var(--ink);
+      font-weight: 900;
+    }
+    .view-tab.active {
+      background: var(--mint);
+      border-color: var(--mint);
+      color: #0f3324;
+    }
     label {
       display: block;
       color: var(--muted);
@@ -101,6 +120,17 @@
       padding: 9px 10px;
       background: #fff;
       color: var(--ink);
+    }
+    textarea {
+      width: 100%;
+      min-height: 70px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 10px;
+      background: #fff;
+      color: var(--ink);
+      resize: vertical;
+      font: inherit;
     }
     .btn {
       min-height: 42px;
@@ -250,6 +280,7 @@
       font-weight: 900;
     }
     .simple-table { min-width: 760px; }
+    .student-table { min-width: 900px; }
     .simple-table th { background: #e8f8f0; }
     .simple-table td, .simple-table th { border-color: var(--line); text-align: left; }
     .hide { display: none !important; }
@@ -286,6 +317,12 @@
   </header>
 
   <main>
+    <div class="view-tabs">
+      <button class="view-tab active" data-view-tab="timetable">Timetable</button>
+      <button class="view-tab" data-view-tab="students">Students</button>
+    </div>
+
+    <div id="timetableView">
     <div class="toolbar">
       <div><label>Month</label><select id="monthSelect"></select></div>
       <div><label>Year</label><select id="yearSelect"></select></div>
@@ -326,6 +363,20 @@
       <h2>Cancelled / Leave Summary</h2>
       <div id="leaveList" class="timetable-wrap"></div>
     </section>
+    </div>
+
+    <div id="studentsView" class="hide">
+      <section>
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;">
+          <div>
+            <h2>Students</h2>
+            <p class="subtle">Current level and remarks auto-save to Class One database.</p>
+          </div>
+          <span class="pill" id="studentSaveStatus">Ready</span>
+        </div>
+        <div id="studentListTable" class="timetable-wrap" style="margin-top:12px;"></div>
+      </section>
+    </div>
   </main>
 
   <script>
@@ -351,6 +402,7 @@
     let autoSyncTimer = null;
     let autoSyncInProgress = false;
     let lastAutoSyncAt = null;
+    let studentSaveTimer = null;
 
     function escapeHtml(value) {
       return String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
@@ -496,6 +548,12 @@
       data.overrideSlots = (data.overrideSlots || []).map(slot => ({ ...slot, time: normalizeTime(slot.time) || slot.time }));
       data.bookings = (data.bookings || []).map(booking => ({ ...booking, time: normalizeTime(booking.time) || booking.time }));
       data.cells = (data.cells || []).map(cell => ({ ...cell, time: normalizeTime(cell.time) || cell.time }));
+      data.students = (data.students || []).map((student, index) => ({
+        ...student,
+        no: index + 1,
+        currentLevel: student.currentLevel || "",
+        remark: student.remark || ""
+      }));
       return data;
     }
 
@@ -824,6 +882,66 @@
       return `<table class="simple-table"><thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
     }
 
+    function renderTeacherStudents() {
+      const students = timetableData?.students || [];
+      $("studentListTable").innerHTML = students.length ? `
+        <table class="simple-table student-table">
+          <thead><tr><th>No.</th><th>Student Name</th><th>Current Level</th><th>Remarks</th><th>Last Updated</th></tr></thead>
+          <tbody>
+            ${students.map((student, index) => `
+              <tr>
+                <td>${index + 1}</td>
+                <td><strong>${escapeHtml(student.studentName || "")}</strong>${student.subjects?.length ? `<div class="subtle">${student.subjects.map(escapeHtml).join(", ")}</div>` : ""}</td>
+                <td><input data-student-note="${escapeHtml(student.id)}" data-field="currentLevel" value="${escapeHtml(student.currentLevel || "")}" placeholder="Level"></td>
+                <td><textarea data-student-note="${escapeHtml(student.id)}" data-field="remark" placeholder="Remarks">${escapeHtml(student.remark || "")}</textarea></td>
+                <td class="subtle">${escapeHtml(student.lastUpdatedAt ? dateLabel(String(student.lastUpdatedAt).slice(0, 10)) : "-")}<br>${escapeHtml(student.lastUpdatedBy || "")}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      ` : `<div class="subtle" style="padding:12px;">No active students assigned to this teacher yet.</div>`;
+    }
+
+    function updateLocalStudentNote(id, field, value) {
+      const student = (timetableData?.students || []).find(item => item.id === id);
+      if (!student || !["currentLevel", "remark"].includes(field)) return;
+      student[field] = value;
+      student.lastUpdatedAt = new Date().toISOString();
+      student.lastUpdatedBy = timetableData?.teacher?.name || "Teacher";
+    }
+
+    async function saveTeacherStudents() {
+      if (!timetableData?.teacher?.id) return;
+      $("studentSaveStatus").textContent = "Saving...";
+      const token = params.get("token") || "";
+      const response = await fetch(`${API_BASE}/api/teacher-students`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          key: STATE_KEY,
+          teacherId: timetableData.teacher.id,
+          token,
+          records: timetableData.students || []
+        })
+      });
+      const data = await response.json();
+      if (!response.ok || data.ok === false) throw new Error(data.error || `Save failed with HTTP ${response.status}`);
+      timetableData.version = Number(data.version || timetableData.version || 0);
+      $("studentSaveStatus").textContent = `Saved ${clockLabel(new Date())}`;
+      setSyncChip(`Auto-sync: ${clockLabel(new Date())}`);
+    }
+
+    function scheduleStudentSave() {
+      clearTimeout(studentSaveTimer);
+      $("studentSaveStatus").textContent = "Editing...";
+      studentSaveTimer = setTimeout(() => {
+        saveTeacherStudents().catch(error => {
+          $("studentSaveStatus").textContent = "Save failed";
+          setStatus(`Student note save failed: ${error.message}`, "warn");
+        });
+      }, 900);
+    }
+
     function renderMonthList() {
       const { from, month, year } = selectedMonthRange();
       const monthEnd = localISO(new Date(year, month + 1, 0));
@@ -903,6 +1021,7 @@
       renderMonthList();
       renderLeaveList();
       renderIncomeHistory();
+      renderTeacherStudents();
       renderVisibility();
     }
 
@@ -912,6 +1031,20 @@
       loadTimetable().catch(error => setStatus(error.message, "error"));
     });
     $("refreshBtn").addEventListener("click", () => loadTimetable().catch(error => setStatus(error.message, "error")));
+    document.querySelectorAll("[data-view-tab]").forEach(button => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll("[data-view-tab]").forEach(item => item.classList.toggle("active", item === button));
+        $("timetableView").classList.toggle("hide", button.dataset.viewTab !== "timetable");
+        $("studentsView").classList.toggle("hide", button.dataset.viewTab !== "students");
+      });
+    });
+    $("studentListTable").addEventListener("input", event => {
+      const field = event.target.dataset.field;
+      const id = event.target.dataset.studentNote;
+      if (!id || !field) return;
+      updateLocalStudentNote(id, field, event.target.value);
+      scheduleStudentSave();
+    });
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) autoSyncTimetable();
     });

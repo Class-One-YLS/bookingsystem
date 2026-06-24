@@ -257,6 +257,7 @@
       <button class="nav-btn" data-tab="guidance" data-short="Guide">Guidance</button>
       <button class="nav-btn" data-tab="teachers" data-short="Teach">Teachers</button>
       <button class="nav-btn" data-tab="students" data-short="Stu">Students</button>
+      <button class="nav-btn" data-tab="teacherStudentRecords" data-short="TSR">Teacher Student Records</button>
       <button class="nav-btn" data-tab="reports" data-short="Rpt">Reports</button>
       <button class="nav-btn" data-tab="replacements" data-short="Rep">Replacement Classes</button>
       <button class="nav-btn" data-tab="publicHoliday" data-short="PH">Public Holiday</button>
@@ -737,6 +738,22 @@
           </div>
         </div>
         <datalist id="packageOptions"></datalist>
+      </section>
+
+      <section id="teacherStudentRecords" class="tab hide">
+        <div class="panel">
+          <div class="row spread">
+            <h2>Teacher Student Records</h2>
+            <span class="pill" id="teacherStudentRecordCount">0 students</span>
+          </div>
+          <div class="toolbar">
+            <div><label>Teacher</label><select id="teacherStudentRecordTeacher"></select></div>
+            <div><label>Status</label><select id="teacherStudentRecordStatus"><option value="active">Active Only</option><option value="archived">Archived Only</option><option value="all">All</option></select></div>
+            <div><label>Search</label><input id="teacherStudentRecordSearch" placeholder="Student name or remark"></div>
+          </div>
+          <p class="subtle">This table is the same record shown in each teacher's private timetable link. Teacher edits and admin edits both sync to Neon.</p>
+          <div id="teacherStudentRecordList" style="margin-top:14px;"></div>
+        </div>
       </section>
 
       <section id="reports" class="tab hide">
@@ -1235,6 +1252,7 @@
       replacementCredits: [],
       publicHolidays: [],
       revenueEntries: [],
+      teacherStudentNotes: [],
       activityLogs: [],
       settings: { scriptUrl: "", apiKey: "", crmScriptUrl: "", crmApiKey: "", neonApiUrl: "", neonApiKey: "", neonStateKey: "", replyTemplates: [] }
     };
@@ -1378,6 +1396,36 @@
     const teacherNameKey = (value) => cleanTeacherName(value).toLowerCase();
     const cleanStudentName = (value) => String(value || "").replace(/\s*\((?:BC|CN|BM|PK|SOK|PHONICS|CREATIVE MATHS)\)\s*$/ig, "").replace(/\s+/g, " ").trim();
     const studentNameKey = (value) => cleanStudentName(value).toLowerCase();
+    const isStudentArchivedProfile = (student) => !student || student.status === "archived" || student.archived === true || student.deleted === true;
+    function teacherStudentNoteId(teacherId, studentId, studentName) {
+      const studentKey = studentId || studentNameKey(studentName);
+      return `teacher_student_${teacherId || "teacher"}_${studentKey || "student"}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+    }
+    function teacherStudentNoteFor(teacherId, studentId, studentName) {
+      const id = teacherStudentNoteId(teacherId, studentId, studentName);
+      return (state.teacherStudentNotes || []).find(note =>
+        note.id === id ||
+        (note.teacherId === teacherId && studentId && note.studentId === studentId) ||
+        (note.teacherId === teacherId && !studentId && studentNameKey(note.studentName) === studentNameKey(studentName))
+      );
+    }
+    function upsertTeacherStudentNote({ teacherId, studentId, studentName }, updatedBy = "Admin") {
+      state.teacherStudentNotes ||= [];
+      const cleanName = cleanStudentName(studentName);
+      const id = teacherStudentNoteId(teacherId, studentId, cleanName);
+      let note = teacherStudentNoteFor(teacherId, studentId, cleanName);
+      if (!note) {
+        note = { id, teacherId, studentId, studentName: cleanName, currentLevel: "", remark: "", archived: false, createdAt: new Date().toISOString() };
+        state.teacherStudentNotes.push(note);
+      }
+      note.id = note.id || id;
+      note.teacherId = teacherId || note.teacherId || "";
+      note.studentId = studentId || note.studentId || "";
+      note.studentName = cleanName || cleanStudentName(note.studentName);
+      note.lastUpdatedAt = new Date().toISOString();
+      note.lastUpdatedBy = updatedBy;
+      return note;
+    }
     const isCancelledStatus = (status) => CANCELLED_STATUSES.includes(status);
     const slotDateTime = (date, time) => new Date(`${date}T${time || "00:00"}:00`);
     const slotHasPassed = (date, time) => slotDateTime(date, time) < new Date();
@@ -1565,6 +1613,7 @@
       state.replacementCredits ||= [];
       state.publicHolidays ||= [];
       state.revenueEntries ||= [];
+      state.teacherStudentNotes ||= [];
       state.activityLogs ||= [];
       state.settings ||= {};
       state.settings.scriptUrl = state.settings.scriptUrl || DEFAULT_SYNC.scriptUrl;
@@ -1644,6 +1693,35 @@
         item.remark ||= "";
         item.updatedAt ||= item.createdAt || new Date().toISOString();
       });
+      state.teacherStudentNotes.forEach(note => {
+        note.teacherId ||= "";
+        note.studentId ||= "";
+        note.studentName = cleanStudentName(note.studentName);
+        note.id = teacherStudentNoteId(note.teacherId, note.studentId, note.studentName);
+        note.currentLevel ||= "";
+        note.remark ||= "";
+        note.archived = Boolean(note.archived);
+        note.lastUpdatedAt ||= note.updatedAt || "";
+        note.lastUpdatedBy ||= "";
+      });
+      const mergedTeacherStudentNotes = new Map();
+      state.teacherStudentNotes.forEach(note => {
+        if (!note.id) return;
+        const existing = mergedTeacherStudentNotes.get(note.id);
+        if (!existing) {
+          mergedTeacherStudentNotes.set(note.id, note);
+          return;
+        }
+        if (!existing.currentLevel && note.currentLevel) existing.currentLevel = note.currentLevel;
+        if (!existing.remark && note.remark) existing.remark = note.remark;
+        if (String(note.lastUpdatedAt || "") > String(existing.lastUpdatedAt || "")) {
+          existing.currentLevel = note.currentLevel || existing.currentLevel;
+          existing.remark = note.remark || existing.remark;
+          existing.lastUpdatedAt = note.lastUpdatedAt || existing.lastUpdatedAt;
+          existing.lastUpdatedBy = note.lastUpdatedBy || existing.lastUpdatedBy;
+        }
+      });
+      state.teacherStudentNotes = [...mergedTeacherStudentNotes.values()];
       state.bookings.forEach(booking => {
         repairFixedSnapshotBooking(booking);
         booking.studentName = cleanStudentName(booking.studentName);
@@ -1999,9 +2077,17 @@
           state.settings.pendingLocalSync = false;
           state.settings.lastSyncedAt = new Date().toISOString();
         } catch (err) {
-          setStatus(`Saved in this browser. Neon auto-sync failed: ${err.message}`, "warn");
+          if (isNeonVersionConflict(err)) {
+            setStatus("Saved in this browser only. Neon has newer data. Click Load From Neon first, then make this edit again so it can sync.", "warn");
+          } else {
+            setStatus(`Saved in this browser. Neon auto-sync failed: ${err.message}`, "warn");
+          }
         }
       }, 5000);
+    }
+
+    function isNeonVersionConflict(error) {
+      return /version conflict|reload latest data/i.test(String(error?.message || error || ""));
     }
 
     function setStatus(msg, type = "success", showToast = true) {
@@ -2024,7 +2110,7 @@
       const studentOptions = [...state.students].sort(byName).filter(s => (s.status || "registered") !== "archived").map(s => ({ value: s.id, label: `${s.name}${s.package ? " - " + s.package : ""}` }));
       const packageOptions = [...new Set(state.students.map(s => s.package).filter(Boolean))].sort();
       ["monthSelect", "reportMonth", "businessDashboardMonth", "revenueFromMonth", "revenueToMonth", "revenueEntryMonth"].forEach(id => fillSelect($(id), Array.from({ length: 12 }, (_, i) => ({ value: i, label: new Date(2026, i, 1).toLocaleString("en", { month: "long" }) }))));
-      ["teacherFilter"].forEach(id => fillSelect($(id), teacherOptions, "All Teachers"));
+      ["teacherFilter", "teacherStudentRecordTeacher"].forEach(id => fillSelect($(id), teacherOptions, "All Teachers"));
       ["overviewTeacherFilter"].forEach(id => fillSelect($(id), teacherOptions, "Choose Teacher"));
       ["slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher"].forEach(id => fillSelect($(id), teacherOptions));
       fillSelect($("reportTeacher"), reportTeacherOptions);
@@ -2661,6 +2747,108 @@
         return [{ teacherId: student.teacherId || "", day: student.day || "", time: student.time || "", subject: student.subject || "" }];
       }
       return [];
+    }
+
+    function activeTeacherStudentRows(teacher) {
+      if (!teacher) return [];
+      const rows = new Map();
+      const addStudent = (student, subject = "") => {
+        if (isStudentArchivedProfile(student)) return;
+        const studentName = cleanStudentName(student.name || "");
+        const key = student.id || studentNameKey(studentName);
+        if (!key || !studentName) return;
+        const existing = rows.get(key) || { teacherId: teacher.id, studentId: student.id || "", studentName, subjects: new Set() };
+        if (subject) existing.subjects.add(normalizeSubject(subject));
+        rows.set(key, existing);
+      };
+      const addByName = (studentName, subject = "") => {
+        const student = state.students.find(item => studentNameKey(item.name) === studentNameKey(studentName));
+        addStudent(student, subject);
+      };
+
+      (teacher.regularSlots || [])
+        .filter(slot => slot.locked && slot.studentName)
+        .forEach(slot => addByName(slot.studentName, slot.subject || ""));
+
+      (state.students || [])
+        .filter(student => !isStudentArchivedProfile(student))
+        .forEach(student => {
+          getStudentRegularSlots(student)
+            .filter(slot => slot.teacherId === teacher.id)
+            .forEach(slot => addStudent(student, slot.subject || student.subject || ""));
+        });
+
+      return [...rows.values()]
+        .map(row => {
+          const note = teacherStudentNoteFor(teacher.id, row.studentId, row.studentName);
+          return {
+            ...row,
+            id: note?.id || teacherStudentNoteId(teacher.id, row.studentId, row.studentName),
+            teacherName: teacher.name || "",
+            subjects: [...row.subjects].filter(Boolean),
+            currentLevel: note?.currentLevel || "",
+            remark: note?.remark || "",
+            lastUpdatedAt: note?.lastUpdatedAt || "",
+            lastUpdatedBy: note?.lastUpdatedBy || "",
+            archived: false
+          };
+        })
+        .sort((a, b) => a.studentName.localeCompare(b.studentName, "en", { sensitivity: "base" }));
+    }
+
+    function teacherStudentRecordRows() {
+      const activeRows = activeTeachers().flatMap(activeTeacherStudentRows);
+      const activeKeys = new Set(activeRows.map(row => row.id));
+      const archivedRows = (state.teacherStudentNotes || [])
+        .filter(note => note.id && !activeKeys.has(note.id))
+        .map(note => {
+          const teacher = teacherById(note.teacherId);
+          return {
+            id: note.id,
+            teacherId: note.teacherId || "",
+            teacherName: teacher ? teacher.name : "Archived / deleted teacher",
+            studentId: note.studentId || "",
+            studentName: cleanStudentName(note.studentName || ""),
+            subjects: [],
+            currentLevel: note.currentLevel || "",
+            remark: note.remark || "",
+            lastUpdatedAt: note.lastUpdatedAt || "",
+            lastUpdatedBy: note.lastUpdatedBy || "",
+            archived: true
+          };
+        })
+        .filter(row => row.studentName);
+      return [...activeRows, ...archivedRows].sort((a, b) =>
+        a.teacherName.localeCompare(b.teacherName, "en", { sensitivity: "base" }) ||
+        a.studentName.localeCompare(b.studentName, "en", { sensitivity: "base" })
+      );
+    }
+
+    function renderTeacherStudentRecords() {
+      if (!$("teacherStudentRecordList")) return;
+      const teacherFilter = $("teacherStudentRecordTeacher")?.value || "all";
+      const statusFilter = $("teacherStudentRecordStatus")?.value || "active";
+      const search = ($("teacherStudentRecordSearch")?.value || "").trim().toLowerCase();
+      const rows = teacherStudentRecordRows()
+        .filter(row => teacherFilter === "all" || row.teacherId === teacherFilter)
+        .filter(row => statusFilter === "all" || (statusFilter === "archived" ? row.archived : !row.archived))
+        .filter(row => !search || [row.teacherName, row.studentName, row.currentLevel, row.remark].some(value => String(value || "").toLowerCase().includes(search)));
+      $("teacherStudentRecordCount").textContent = `${rows.length} student${rows.length === 1 ? "" : "s"}`;
+      const body = rows.map((row, index) => {
+        const attrs = `data-teacher-id="${escapeHtml(row.teacherId)}" data-student-id="${escapeHtml(row.studentId)}" data-student-name="${escapeHtml(row.studentName)}"`;
+        return `
+          <tr>
+            <td>${index + 1}</td>
+            <td>${escapeHtml(row.teacherName || "-")}</td>
+            <td>${escapeHtml(row.studentName || "-")}</td>
+            <td>${(row.subjects || []).length ? row.subjects.map(subject => `<span class="pill">${escapeHtml(subject)}</span>`).join("") : "-"}</td>
+            <td><input data-teacher-student-record="currentLevel" ${attrs} value="${escapeHtml(row.currentLevel || "")}" placeholder="Current level"></td>
+            <td><textarea data-teacher-student-record="remark" ${attrs} placeholder="Teacher/admin remark">${escapeHtml(row.remark || "")}</textarea></td>
+            <td><span class="pill ${row.archived ? "archived" : ""}">${row.archived ? "Archived" : "Active"}</span></td>
+            <td>${row.lastUpdatedAt ? formatDateTimeStamp(row.lastUpdatedAt) : "-"}${row.lastUpdatedBy ? `<br><span class="subtle">${escapeHtml(row.lastUpdatedBy)}</span>` : ""}</td>
+          </tr>`;
+      }).join("") || `<tr><td colspan="8">No teacher student records found.</td></tr>`;
+      $("teacherStudentRecordList").innerHTML = `<table><thead><tr><th>No.</th><th>Teacher</th><th>Student</th><th>Subject</th><th>Current Level</th><th>Remarks</th><th>Status</th><th>Last Updated</th></tr></thead><tbody>${body}</tbody></table>`;
     }
 
     function renderStudentRegularSlotDraft() {
@@ -4151,12 +4339,13 @@
     }
 
     function renderAll() {
-      const old = Object.fromEntries(["monthSelect", "reportMonth", "businessDashboardMonth", "businessDashboardYear", "revenueFromMonth", "revenueFromYear", "revenueToMonth", "revenueToYear", "revenueEntryMonth", "revenueEntryYear", "weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear", "slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher", "reportTeacher", "tutorLeadFilterStatus", "tutorLeadFilterCategory"].map(id => [id, $(id)?.value]));
+      const old = Object.fromEntries(["monthSelect", "reportMonth", "businessDashboardMonth", "businessDashboardYear", "revenueFromMonth", "revenueFromYear", "revenueToMonth", "revenueToYear", "revenueEntryMonth", "revenueEntryYear", "weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear", "slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher", "teacherStudentRecordTeacher", "teacherStudentRecordStatus", "teacherStudentRecordSearch", "reportTeacher", "tutorLeadFilterStatus", "tutorLeadFilterCategory"].map(id => [id, $(id)?.value]));
       hydrateSelects();
       Object.entries(old).forEach(([id, value]) => { if ($(id) && value) $(id).value = value; });
       renderSchedule();
       renderTeachers();
       renderStudents();
+      renderTeacherStudentRecords();
       renderArchive();
       renderRevenueDashboard();
       renderBusinessDashboard();
@@ -4493,6 +4682,7 @@
         state.replacementCredits,
         state.publicHolidays,
         state.revenueEntries,
+        state.teacherStudentNotes,
         state.activityLogs
       ].some(list => Array.isArray(list) && list.length > 0);
     }
@@ -4555,6 +4745,24 @@
       if (logManual) logAction("Neon Loaded", "Neon Database", "", "Loaded latest app data", "Manual Neon load completed.");
       setStatus("Loaded latest data from Neon database.");
       return { empty: false, version: state.settings.neonVersion };
+    }
+
+    async function autoLoadLatestNeonIfNeeded(label = "saving") {
+      if (!neonConfigured()) return true;
+      try {
+        const manifest = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon version check", SYNC_READ_TIMEOUT_MS);
+        if (manifest.empty) return true;
+        const remoteVersion = Number(manifest.version || 0);
+        const localVersion = Number(state.settings.neonVersion || 0);
+        if (remoteVersion > localVersion) {
+          setStatus(`Auto-loading latest Neon data before ${label}...`, "success", false);
+          await neonPull(false);
+        }
+        return true;
+      } catch (err) {
+        setStatus(`Could not auto-load latest Neon data before ${label}: ${err.message}`, "error");
+        return false;
+      }
     }
 
     async function neonPush(logManual = false, successMessage = "Saved to Neon database.") {
@@ -4656,18 +4864,28 @@
     }
 
     async function autoPushIfConfigured(successMessage) {
+      clearTimeout(autoPushTimer);
       try {
         await neonPush(false, `${successMessage} Synced to Neon database.`);
       } catch (err) {
-        setStatus(`${successMessage} Neon sync failed: ${err.message}`, "error");
+        if (isNeonVersionConflict(err)) {
+          setStatus(`${successMessage} Saved in this browser only. Neon has newer data. Click Load From Neon first, then make this edit again so it can sync.`, "warn");
+        } else {
+          setStatus(`${successMessage} Neon sync failed: ${err.message}`, "error");
+        }
       }
     }
 
     async function autoPushCrmIfConfigured() {
+      clearTimeout(autoPushTimer);
       try {
         await neonPush(false, "CRM saved to Neon database.");
       } catch (err) {
-        setStatus(`CRM Neon sync failed: ${err.message}`, "error");
+        if (isNeonVersionConflict(err)) {
+          setStatus("CRM saved in this browser only. Neon has newer data. Click Load From Neon first, then make this edit again so it can sync.", "warn");
+        } else {
+          setStatus(`CRM Neon sync failed: ${err.message}`, "error");
+        }
       }
     }
 
@@ -5291,6 +5509,27 @@
     });
 
     document.addEventListener("change", (e) => {
+      const teacherStudentRecord = e.target.closest("[data-teacher-student-record]");
+      if (teacherStudentRecord) {
+        const field = teacherStudentRecord.dataset.teacherStudentRecord;
+        if (!["currentLevel", "remark"].includes(field)) return;
+        const note = upsertTeacherStudentNote({
+          teacherId: teacherStudentRecord.dataset.teacherId || "",
+          studentId: teacherStudentRecord.dataset.studentId || "",
+          studentName: teacherStudentRecord.dataset.studentName || ""
+        }, "Admin");
+        const before = `${note.currentLevel || ""} | ${note.remark || ""}`;
+        const nextValue = teacherStudentRecord.value.trim();
+        if ((note[field] || "") === nextValue) return;
+        note[field] = nextValue;
+        note.lastUpdatedAt = new Date().toISOString();
+        note.lastUpdatedBy = "Admin";
+        logAction("Teacher Student Record Updated", note.studentName || note.studentId, before, `${note.currentLevel || ""} | ${note.remark || ""}`, `Changed ${field}.`);
+        save(false);
+        setStatus("Teacher student record saved.");
+        return;
+      }
+
       const registeredStudent = e.target.closest("[data-registered-student]");
       if (registeredStudent) {
         const [studentIdValue, field] = registeredStudent.dataset.registeredStudent.split("|");
@@ -5612,15 +5851,19 @@
     $("savePublicHolidayBtn").onclick = async () => {
       const startDate = $("holidayStartDate").value;
       const endDate = $("holidayEndDate").value || startDate;
+      const holidayName = $("holidayName").value.trim() || "Public Holiday";
+      const replacementDefault = $("holidayReplacementDefault").value;
       if (!startDate) return alert("Choose public holiday start date.");
       if (endDate < startDate) return alert("End date cannot be before start date.");
+      const latestLoaded = await autoLoadLatestNeonIfNeeded("saving public holiday");
+      if (!latestLoaded) return;
       const existing = (state.publicHolidays || []).find(item => holidayStartDate(item) === startDate && holidayEndDate(item) === endDate);
       const holiday = existing || { id: uid("holiday"), createdAt: new Date().toISOString() };
       holiday.startDate = startDate;
       holiday.endDate = endDate;
       holiday.date = startDate;
-      holiday.name = $("holidayName").value.trim() || "Public Holiday";
-      holiday.replacementDefault = $("holidayReplacementDefault").value;
+      holiday.name = holidayName;
+      holiday.replacementDefault = replacementDefault;
       holiday.updatedAt = new Date().toISOString();
       if (!existing) state.publicHolidays.push(holiday);
       const changed = applyPublicHolidayToBookings(holiday);
@@ -5679,6 +5922,8 @@
     $("studentSearch").addEventListener("input", renderStudents);
     $("registeredStudentFilter").addEventListener("change", renderRegisteredStudents);
     $("registeredStudentSearch").addEventListener("input", renderRegisteredStudents);
+    ["teacherStudentRecordTeacher", "teacherStudentRecordStatus"].forEach(id => $(id).addEventListener("change", renderTeacherStudentRecords));
+    $("teacherStudentRecordSearch").addEventListener("input", renderTeacherStudentRecords);
     const resetLeadPageAndRender = () => {
       leadPage = 1;
       renderLeads();
