@@ -1626,6 +1626,8 @@
         existing.rate = Number(existing.rate || 0) || Number(teacher.rate || 0);
         existing.profitShare = Number(existing.profitShare || 0) || Number(teacher.profitShare || 0);
         existing.photo = existing.photo || teacher.photo || "";
+        existing.viewToken = existing.viewToken || teacher.viewToken || "";
+        existing.viewTokenUpdatedAt = existing.viewTokenUpdatedAt || teacher.viewTokenUpdatedAt || "";
         existing.subjects = normalizeSubjects([...(existing.subjects || []), ...(teacher.subjects || [])]);
         existing.status = !isTeacherArchived(existing) || !isTeacherArchived(teacher) ? "active" : "archived";
         existing.regularSlots = mergeSlots(existing.regularSlots || [], teacher.regularSlots || []);
@@ -4156,7 +4158,7 @@
       updateTeacherViewLinkField(teacher);
       logAction("Teacher View Link Generated", teacher.name, before, teacherLogSummary(teacher), "Read-only teacher timetable link generated.");
       save(false);
-      await autoPushIfConfigured("Teacher timetable view link generated.");
+      await neonPush(false, "Teacher timetable view link generated. Synced to Neon database.");
     }
 
     async function copyTeacherViewLink() {
