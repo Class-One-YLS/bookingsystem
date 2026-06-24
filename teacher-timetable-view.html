@@ -14,6 +14,7 @@
       --paper: #f4fbf7;
       --danger: #d92d20;
       --warning: #fff2a8;
+      --new-yellow: #fff8cf;
       --blue: #dceafe;
       --purple: #e8dcff;
       --grey: #d0d5dd;
@@ -46,6 +47,12 @@
     h1 { font-size: clamp(18px, 3vw, 26px); line-height: 1.1; }
     h2 { font-size: 18px; margin-bottom: 12px; }
     h3 { font-size: 15px; }
+    .header-status {
+      margin-top: 4px;
+      color: var(--mint-dark);
+      font-size: 13px;
+      font-weight: 800;
+    }
     main {
       width: min(1380px, 100%);
       margin: 0 auto;
@@ -59,6 +66,18 @@
       color: var(--mint-dark);
       font-weight: 800;
       white-space: nowrap;
+    }
+    .top-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .sync-chip {
+      color: var(--muted);
+      background: #f8fffb;
+      font-weight: 700;
     }
     .toolbar {
       display: grid;
@@ -103,6 +122,7 @@
       font-size: 14px;
     }
     .status.error { border-color: #f1b4ae; background: #fff3f2; color: #912018; }
+    .status.warn { border-color: #f3d28a; background: #fff8e6; color: #7a4b00; }
     .grid {
       display: grid;
       gap: 14px;
@@ -136,6 +156,22 @@
       min-width: 1060px;
       table-layout: fixed;
     }
+    .month-calendar {
+      display: grid;
+      gap: 16px;
+    }
+    .month-week {
+      display: grid;
+      gap: 8px;
+    }
+    .month-week h3 {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      color: var(--mint-dark);
+      font-size: 14px;
+    }
     th, td {
       border: 1px solid #111;
       padding: 5px 6px;
@@ -160,13 +196,17 @@
       font-style: italic;
       font-weight: 900;
     }
+    .outside-month {
+      opacity: .48;
+    }
     .cell-open { background: #fff; color: #98a2b3; }
     .cell-fixed, .cell-booking {
       background: #fff;
       color: #111;
       font-weight: 800;
     }
-    .type-assessment, .type-exam, .type-trial-class, .type-new-students { background: var(--warning); }
+    .type-assessment, .type-exam, .type-trial-class { background: var(--warning); }
+    .type-new, .type-new-students { background: var(--new-yellow); }
     .type-replacement-class { background: var(--blue); }
     .type-extra-class { background: var(--purple); }
     .status-student-not-show { background: var(--danger); color: #fff; }
@@ -207,6 +247,7 @@
     .hide { display: none !important; }
     @media (max-width: 860px) {
       .topbar { grid-template-columns: 1fr; }
+      .top-actions { justify-content: flex-start; }
       .teacher-chip { justify-self: start; }
       .toolbar { grid-template-columns: 1fr 1fr; }
       .toolbar .btn { grid-column: span 2; }
@@ -227,9 +268,13 @@
       <div>
         <h1>Teacher Timetable View</h1>
         <p class="subtle">Read-only monthly timetable</p>
+        <p class="header-status" id="headerStatusText">Loading latest timetable...</p>
       </div>
     </div>
-    <div class="teacher-chip" id="teacherChip">Loading...</div>
+    <div class="top-actions">
+      <div class="teacher-chip" id="teacherChip">Loading...</div>
+      <div class="teacher-chip sync-chip" id="syncChip">Auto-sync starting</div>
+    </div>
   </header>
 
   <main>
@@ -237,14 +282,14 @@
       <div><label>Month</label><select id="monthSelect"></select></div>
       <div><label>Year</label><select id="yearSelect"></select></div>
       <div><label>Week</label><select id="weekSelect"></select></div>
-      <div><label>View</label><select id="viewSelect"><option value="week">Weekly Table</option><option value="list">Monthly List</option></select></div>
+      <div><label>View</label><select id="viewSelect"><option value="month">Whole Month Calendar</option><option value="week">Selected Week Table</option><option value="list">Monthly List</option></select></div>
       <button class="btn" id="refreshBtn">Refresh</button>
     </div>
 
-    <div class="status" id="statusText">Loading latest timetable...</div>
+    <div class="status hide" id="statusText"></div>
 
     <div class="grid metrics">
-      <div class="metric"><span>Classes This Month</span><strong id="metricTotal">0</strong></div>
+      <div class="metric"><span>Classes In Selected Month</span><strong id="metricTotal">0</strong></div>
       <div class="metric"><span>Upcoming Next 7 Days</span><strong id="metricUpcoming">0</strong></div>
       <div class="metric"><span>Completed / Passed</span><strong id="metricCompleted">0</strong></div>
       <div class="metric"><span>Cancelled / Leave</span><strong id="metricCancelled">0</strong></div>
@@ -255,8 +300,13 @@
       <div id="upcomingList" class="cards"></div>
     </section>
 
+    <section id="monthCalendarSection">
+      <h2>Whole Month Calendar</h2>
+      <div id="monthCalendar" class="month-calendar"></div>
+    </section>
+
     <section id="weeklySection">
-      <h2>Weekly Timetable</h2>
+      <h2>Selected Week Timetable</h2>
       <div id="weekTable" class="timetable-wrap"></div>
     </section>
 
@@ -274,6 +324,7 @@
   <script>
     const API_BASE = "https://classone-booking-api-yiit.vercel.app";
     const STATE_KEY = "production";
+    const AUTO_SYNC_MS = 120000;
     const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
     const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
     const STATUS_LABELS = {
@@ -288,6 +339,9 @@
     const $ = id => document.getElementById(id);
     const params = new URLSearchParams(window.location.search);
     let timetableData = null;
+    let autoSyncTimer = null;
+    let autoSyncInProgress = false;
+    let lastAutoSyncAt = null;
 
     function escapeHtml(value) {
       return String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
@@ -324,6 +378,10 @@
       return `${displayHour}:${minute} ${suffix}`;
     }
 
+    function clockLabel(date = new Date()) {
+      return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+
     function minutes(value) {
       const [hour, minute] = String(value || "00:00").split(":").map(Number);
       return (Number(hour) || 0) * 60 + (Number(minute) || 0);
@@ -356,8 +414,18 @@
     }
 
     function setStatus(message, type = "") {
-      $("statusText").textContent = message;
-      $("statusText").className = `status ${type}`.trim();
+      $("headerStatusText").textContent = message;
+      if (type === "error" || type === "warn") {
+        $("statusText").textContent = message;
+        $("statusText").className = `status ${type}`.trim();
+        $("statusText").classList.remove("hide");
+        return;
+      }
+      $("statusText").classList.add("hide");
+    }
+
+    function setSyncChip(message) {
+      $("syncChip").textContent = message;
     }
 
     function teacherLinkErrorMessage(message) {
@@ -422,7 +490,7 @@
       return { from: localISO(monthStart), to: localISO(toDate), month, year };
     }
 
-    async function loadTimetable() {
+    async function loadTimetable({ silent = false } = {}) {
       const teacherId = params.get("teacherId") || params.get("teacher") || "";
       const token = params.get("token") || "";
       if (!teacherId || !token) {
@@ -436,14 +504,62 @@
       url.searchParams.set("token", token);
       url.searchParams.set("from", range.from);
       url.searchParams.set("to", range.to);
-      setStatus("Loading latest timetable...");
+      if (!silent) setStatus("Loading latest timetable...");
       const response = await fetch(url.toString(), { method: "GET" });
       const data = await response.json();
       if (!response.ok || data.ok === false) throw new Error(teacherLinkErrorMessage(data.error || `Load failed with HTTP ${response.status}`));
       timetableData = data;
       $("teacherChip").textContent = data.teacher.name || "Teacher";
-      setStatus(`Loaded latest timetable. Last updated: ${data.updatedAt ? new Date(data.updatedAt).toLocaleString() : "-"}`);
+      lastAutoSyncAt = new Date();
+      setSyncChip(`Auto-sync: ${clockLabel(lastAutoSyncAt)}`);
+      setStatus(`${silent ? "Auto-synced" : "Loaded latest timetable"} at ${clockLabel(lastAutoSyncAt)}. Timetable last updated: ${data.updatedAt ? new Date(data.updatedAt).toLocaleString() : "-"}`);
       renderAll();
+    }
+
+    async function autoSyncTimetable() {
+      if (autoSyncInProgress) return;
+      autoSyncInProgress = true;
+      setSyncChip("Auto-sync: checking...");
+      try {
+        await loadTimetable({ silent: true });
+      } catch (error) {
+        setSyncChip("Auto-sync failed");
+        setStatus(`Auto-sync failed at ${clockLabel(new Date())}. Showing last loaded timetable. ${error.message}`, "warn");
+      } finally {
+        autoSyncInProgress = false;
+      }
+    }
+
+    function startAutoSync() {
+      clearInterval(autoSyncTimer);
+      setSyncChip("Auto-sync: every 2 min");
+      autoSyncTimer = setInterval(autoSyncTimetable, AUTO_SYNC_MS);
+    }
+
+    function slotRank(slot) {
+      if (slot.unavailable) return 5;
+      if (slot.locked && slot.studentName) return 4;
+      if (slot.locked) return 3;
+      if (slot.source === "override") return 2;
+      return 1;
+    }
+
+    function uniqueSlots(slots) {
+      const byTime = new Map();
+      slots.forEach(slot => {
+        const key = `${slot.date || ""}|${slot.time || ""}`;
+        const existing = byTime.get(key);
+        if (!existing || slotRank(slot) > slotRank(existing)) byTime.set(key, slot);
+      });
+      return [...byTime.values()];
+    }
+
+    function bookingRank(booking) {
+      const status = booking.status || "booked";
+      if (CANCELLED.includes(status) || status === "student_not_show") return 5;
+      if (status === "booked") return 4;
+      if (status === "completed") return 3;
+      return 1;
     }
 
     function collectSlotsForDate(date) {
@@ -461,11 +577,19 @@
       const overrides = overrideSlots
         .filter(slot => slot.date === dateStr && !slot.unavailable)
         .map(slot => ({ ...slot, date: dateStr, source: "override" }));
-      return [...regular, ...overrides];
+      return uniqueSlots([...regular, ...overrides]);
     }
 
     function scheduleBookings() {
-      return (timetableData?.bookings || []).filter(booking => booking.status !== "deleted");
+      const byTime = new Map();
+      (timetableData?.bookings || [])
+        .filter(booking => booking.status !== "deleted")
+        .forEach(booking => {
+          const key = `${booking.date || ""}|${booking.time || ""}`;
+          const existing = byTime.get(key);
+          if (!existing || bookingRank(booking) > bookingRank(existing)) byTime.set(key, booking);
+        });
+      return [...byTime.values()];
     }
 
     function findBooking(dateISO, time) {
@@ -485,27 +609,45 @@
       return [...values].sort((a, b) => minutes(a) - minutes(b));
     }
 
-    function cellHtml(date, time) {
+    function cellHtml(date, time, options = {}) {
       const dateISO = localISO(date);
+      const outsideClass = options.month != null && date.getMonth() !== options.month ? " outside-month" : "";
       const booking = findBooking(dateISO, time);
       if (booking) {
         const displayStatus = statusForDisplay(booking);
-        return `<td class="cell-booking ${typeClass(booking.type)} ${statusClass(displayStatus)}">${escapeHtml(booking.studentName || "Class")}${booking.subject ? ` (${escapeHtml(booking.subject)})` : ""}<span class="cell-small">${escapeHtml(statusLabel(displayStatus))} | ${escapeHtml(booking.type || "class")}</span></td>`;
+        return `<td class="cell-booking ${typeClass(booking.type)} ${statusClass(displayStatus)}${outsideClass}">${escapeHtml(booking.studentName || "Class")}${booking.subject ? ` (${escapeHtml(booking.subject)})` : ""}<span class="cell-small">${escapeHtml(statusLabel(displayStatus))} | ${escapeHtml(booking.type || "class")}</span></td>`;
       }
       const slot = collectSlotsForDate(date).find(item => item.time === time);
       if (slot?.locked) {
-        return `<td class="cell-fixed">${escapeHtml(slot.studentName || "Fixed Regular")}${slot.subject ? ` (${escapeHtml(slot.subject)})` : ""}<span class="cell-small">Fixed regular</span></td>`;
+        return `<td class="cell-fixed${outsideClass}">${escapeHtml(slot.studentName || "Fixed Regular")}${slot.subject ? ` (${escapeHtml(slot.subject)})` : ""}<span class="cell-small">Fixed regular</span></td>`;
       }
-      if (slot) return `<td class="cell-open"><span class="cell-small">${escapeHtml(slot.subject || "Open")}</span></td>`;
-      return `<td class="cell-off">OFF</td>`;
+      if (slot) return `<td class="cell-open${outsideClass}"><span class="cell-small">${escapeHtml(slot.subject || "Open")}</span></td>`;
+      return `<td class="cell-off${outsideClass}">OFF</td>`;
+    }
+
+    function weekTableHtml(dates, options = {}) {
+      const times = weekTimes(dates);
+      const header = `<tr><th class="time-col">Time</th>${dates.map(date => `<th>${DAYS[(date.getDay() + 6) % 7].slice(0, 3)}<br><span>${date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span></th>`).join("")}</tr>`;
+      const rows = times.map(time => `<tr><td class="time-col">${timeLabel(time)}</td>${dates.map(date => cellHtml(date, time, options)).join("")}</tr>`).join("");
+      return `<table class="teacher-timetable"><thead>${header}</thead><tbody>${rows}</tbody></table>`;
     }
 
     function renderWeekTable() {
       const dates = weekDates($("weekSelect").value);
-      const times = weekTimes(dates);
-      const header = `<tr><th class="time-col">Time</th>${dates.map(date => `<th>${DAYS[(date.getDay() + 6) % 7].slice(0, 3)}<br><span>${date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span></th>`).join("")}</tr>`;
-      const rows = times.map(time => `<tr><td class="time-col">${timeLabel(time)}</td>${dates.map(date => cellHtml(date, time)).join("")}</tr>`).join("");
-      $("weekTable").innerHTML = `<table class="teacher-timetable"><thead>${header}</thead><tbody>${rows}</tbody></table>`;
+      $("weekTable").innerHTML = weekTableHtml(dates);
+    }
+
+    function renderMonthCalendar() {
+      const month = Number($("monthSelect").value);
+      const year = Number($("yearSelect").value);
+      const weeks = weeksForMonth(year, month);
+      $("monthCalendar").innerHTML = weeks.map((startISO, index) => {
+        const dates = weekDates(startISO);
+        return `<div class="month-week">
+          <h3><span>Week ${index + 1}</span><span>${dateLabel(localISO(dates[0]))} - ${dateLabel(localISO(dates[6]))}</span></h3>
+          <div class="timetable-wrap">${weekTableHtml(dates, { month })}</div>
+        </div>`;
+      }).join("");
     }
 
     function classEntries(fromISO, toISO) {
@@ -514,10 +656,14 @@
         const date = parseISODate(dateISO);
         const slots = collectSlotsForDate(date);
         const bookings = scheduleBookings().filter(booking => booking.date === dateISO);
-        bookings.forEach(booking => entries.push({ kind: "booking", date: dateISO, time: booking.time, booking }));
+        const occupiedTimes = new Set();
+        bookings.forEach(booking => {
+          occupiedTimes.add(booking.time);
+          entries.push({ kind: "booking", date: dateISO, time: booking.time, booking });
+        });
         slots
           .filter(slot => slot.locked)
-          .filter(slot => !bookings.some(booking => booking.time === slot.time))
+          .filter(slot => !occupiedTimes.has(slot.time))
           .forEach(slot => entries.push({ kind: "fixed", date: dateISO, time: slot.time, slot }));
       }
       return entries.sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
@@ -545,8 +691,8 @@
 
     function renderUpcoming() {
       const from = localISO(new Date());
-      const to = dateOffsetISO(from, 7);
-      const entries = classEntries(from, to).filter(entry => !CANCELLED.includes(entryMeta(entry).status));
+      const to = dateOffsetISO(from, 6);
+      const entries = classEntries(from, to).filter(entry => !CANCELLED.includes(entryMeta(entry).status) && !slotHasPassed(entry.date, entry.time));
       $("metricUpcoming").textContent = entries.length;
       $("upcomingList").innerHTML = entries.slice(0, 12).map(entry => {
         const meta = entryMeta(entry);
@@ -606,13 +752,15 @@
     }
 
     function renderVisibility() {
-      const weekly = $("viewSelect").value === "week";
-      $("weeklySection").classList.toggle("hide", !weekly);
-      $("monthlySection").classList.toggle("hide", weekly);
+      const view = $("viewSelect").value;
+      $("monthCalendarSection").classList.toggle("hide", view !== "month");
+      $("weeklySection").classList.toggle("hide", view !== "week");
+      $("monthlySection").classList.toggle("hide", view !== "list");
     }
 
     function renderAll() {
       if (!timetableData) return;
+      renderMonthCalendar();
       renderWeekTable();
       renderUpcoming();
       renderMonthList();
@@ -625,9 +773,14 @@
     $("weekSelect").addEventListener("change", renderWeekTable);
     $("viewSelect").addEventListener("change", renderVisibility);
     $("refreshBtn").addEventListener("click", () => loadTimetable().catch(error => setStatus(error.message, "error")));
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) autoSyncTimetable();
+    });
 
     fillControls();
-    loadTimetable().catch(error => setStatus(error.message, "error"));
+    loadTimetable()
+      .then(startAutoSync)
+      .catch(error => setStatus(error.message, "error"));
   </script>
 </body>
 </html>
