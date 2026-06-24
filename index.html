@@ -290,6 +290,7 @@
             <div><label>From Time</label><div class="field-actions"><select id="timeFromFilter"></select><button class="btn ghost" data-clear-filter="timeFromFilter">Clear</button></div></div>
             <div><label>To Time</label><div class="field-actions"><select id="timeToFilter"></select><button class="btn ghost" data-clear-filter="timeToFilter">Clear</button></div></div>
             <div><label>Status</label><div class="field-actions"><select id="statusFilter"><option value="all">All</option><option value="open">Open only</option><option value="booked">Booked/Fixed only</option></select><button class="btn ghost" data-clear-filter="statusFilter">Clear</button></div></div>
+            <div><label>Class Type</label><div class="field-actions"><select id="typeFilter"></select><button class="btn ghost" data-clear-filter="typeFilter">Clear</button></div></div>
             <div><label>&nbsp;</label><button class="btn ghost" id="clearSalesFiltersBtn">Clear Filters</button></div>
           </div>
           <div class="sales-summary" id="salesSummary"></div>
@@ -919,7 +920,7 @@
       <section id="settings" class="tab hide">
         <div class="panel">
           <h2>Neon Database Sync</h2>
-          <div class="subtle">This is the new main database. The app auto-loads and auto-saves here, so different devices can share the same latest records.</div>
+          <div class="subtle">This is the new main database. The app auto-loads on open, auto-refreshes every 60 seconds when safe, and auto-saves edits so different devices can share the same latest records.</div>
           <div class="grid three" style="margin-top:14px;">
             <div><label>API URL</label><input id="neonApiUrl" placeholder="https://classone-booking-api.vercel.app"></div>
             <div><label>API Key</label><input id="neonApiKey" placeholder="Private API key"></div>
@@ -983,6 +984,32 @@
       <div class="row" style="margin-top:14px;">
         <button class="btn mint" id="saveTeacherBtn">Save Teacher</button>
         <button class="btn ghost" id="newTeacherBtn">Clear / New</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="teacherFeedbackModal" class="modal hide">
+    <div class="modal-card" style="width:min(860px,100%);">
+      <div class="row spread"><h2>Private Parent Feedback</h2><button class="btn ghost small" data-close>Close</button></div>
+      <input id="feedbackId" type="hidden">
+      <input id="feedbackTeacherId" type="hidden">
+      <input id="feedbackBookingId" type="hidden">
+      <div class="subtle" id="feedbackContext">Admin-only record. Not visible to teacher.</div>
+      <div class="grid two" style="margin-top:14px;">
+        <div><label>Student</label><input id="feedbackStudentName" placeholder="Student name"></div>
+        <div><label>Class Date</label><input id="feedbackClassDate" type="date"></div>
+        <div><label>Class Time</label><input id="feedbackClassTime" type="time" step="1800"></div>
+        <div><label>Category</label><select id="feedbackCategory"></select></div>
+        <div><label>Follow-up Status</label><select id="feedbackActionStatus"></select></div>
+      </div>
+      <div style="margin-top:12px;"><label>Parent Feedback</label><textarea id="feedbackText" placeholder="Record parent feedback here. This stays private to admin."></textarea></div>
+      <div class="row" style="margin-top:14px;">
+        <button class="btn mint" id="saveTeacherFeedbackBtn">Save Feedback</button>
+        <button class="btn ghost" id="newTeacherFeedbackBtn">New Feedback</button>
+      </div>
+      <div style="margin-top:18px;">
+        <h3 style="margin:0 0 8px;">Feedback History</h3>
+        <div id="teacherFeedbackList"></div>
       </div>
     </div>
   </div>
@@ -1055,6 +1082,14 @@
             <option value="no">No Replacement Needed</option>
           </select>
         </div>
+      </div>
+      <div class="panel" style="margin-top:12px;">
+        <div class="row spread"><strong>Private Parent Feedback</strong><span class="pill">Admin only</span></div>
+        <div class="grid two" style="margin-top:10px;">
+          <div><label>Category</label><select id="outcomeFeedbackCategory"></select></div>
+          <div><label>Follow-up Status</label><select id="outcomeFeedbackActionStatus"></select></div>
+        </div>
+        <div style="margin-top:10px;"><label>Feedback</label><textarea id="outcomeParentFeedback" placeholder="Optional feedback from parent. This will not be visible to teacher."></textarea></div>
       </div>
       <div class="row" style="margin-top:14px;">
         <button class="btn mint" id="saveOutcomeBtn">Save Outcome</button>
@@ -1211,6 +1246,8 @@
     const TUTOR_STATUSES = ["New Applicant", "Responded", "Sent Self Introduction Video", "Paid", "Start Training", "Accepted", "Rejected", "Lost", "Onboard"];
     const TUTOR_ONBOARDING_STEPS = ["Contact", "Paid", "Access Learn.Class.One", "Contact Trainer", "Training (Hybrid)", "Passed Demo Class (Record Video)", "Passed Practical Class", "Approved Rate & Onboard"];
     const URGENCIES = ["hot", "warm", "cold"];
+    const TEACHER_FEEDBACK_CATEGORIES = ["positive", "concern", "complaint", "improvement"];
+    const TEACHER_FEEDBACK_STATUSES = ["No action needed", "Action needed", "Followed up", "Closed"];
     const DEFAULT_REPLY_TEMPLATES = [
       { id: "tpl_first_contact", title: "First Contact", category: "New lead", body: "Hi, good day. This is [Salesperson Name] from Class One.\n\nThank you for your enquiry. May I know your child's name, age/year, and which subject you are looking for?\n\nWe will help check the most suitable class/teacher and available time slot for your child." },
       { id: "tpl_child_details", title: "Ask Child Details", category: "Qualification", body: "May I know more about your child so we can recommend properly?\n\nChild name:\nAge / school year:\nSubject interested:\nMother tongue:\nPreferred class day/time:" },
@@ -1237,6 +1274,7 @@
     };
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
+    const AUTO_NEON_REFRESH_MS = 60000;
     const NEON_CHUNK_SIZE = 300000;
     const STORE_KEY = "classOneBookingRevamp.v1";
     const DB_NAME = "ClassOneBookingDB";
@@ -1253,6 +1291,7 @@
       publicHolidays: [],
       revenueEntries: [],
       teacherStudentNotes: [],
+      teacherFeedback: [],
       activityLogs: [],
       settings: { scriptUrl: "", apiKey: "", crmScriptUrl: "", crmApiKey: "", neonApiUrl: "", neonApiKey: "", neonStateKey: "", replyTemplates: [] }
     };
@@ -1286,6 +1325,8 @@
     let completedClassPage = 1;
     let autoPushTimer = null;
     let autoLoadCountdownTimer = null;
+    let autoNeonRefreshTimer = null;
+    let autoNeonRefreshInProgress = false;
     let suppressAutoPush = false;
     let pendingReplacementId = "";
     let pendingMoveDraftBookingId = "";
@@ -1614,6 +1655,7 @@
       state.publicHolidays ||= [];
       state.revenueEntries ||= [];
       state.teacherStudentNotes ||= [];
+      state.teacherFeedback ||= [];
       state.activityLogs ||= [];
       state.settings ||= {};
       state.settings.scriptUrl = state.settings.scriptUrl || DEFAULT_SYNC.scriptUrl;
@@ -1722,6 +1764,22 @@
         }
       });
       state.teacherStudentNotes = [...mergedTeacherStudentNotes.values()];
+      state.teacherFeedback.forEach(item => {
+        item.id ||= uid("feedback");
+        item.teacherId ||= "";
+        item.teacherName = cleanTeacherName(item.teacherName || teacherById(item.teacherId)?.name || "");
+        item.bookingId ||= "";
+        item.studentId ||= "";
+        item.studentName = cleanStudentName(item.studentName);
+        item.classDate = dateOnly(item.classDate || "");
+        item.classTime = normalizeTimeValue(item.classTime) || item.classTime || "";
+        item.category = TEACHER_FEEDBACK_CATEGORIES.includes(item.category) ? item.category : "concern";
+        item.actionStatus = TEACHER_FEEDBACK_STATUSES.includes(item.actionStatus) ? item.actionStatus : "No action needed";
+        item.feedback ||= "";
+        item.archived = Boolean(item.archived);
+        item.createdAt ||= new Date().toISOString();
+        item.updatedAt ||= item.createdAt;
+      });
       state.bookings.forEach(booking => {
         repairFixedSnapshotBooking(booking);
         booking.studentName = cleanStudentName(booking.studentName);
@@ -1846,6 +1904,153 @@
       if (!s) return "";
       const slots = getStudentRegularSlots(s).map(slot => `${slot.day} ${timeLabel(slot.time)} ${slot.subject}`).join("; ");
       return `Package: ${s.package || "-"} | Amount: RM${Number(s.packageAmount || 0).toFixed(2)} | Classes: ${Number(s.packageClasses || 0)} | Status: ${s.status || "registered"} | Registered: ${s.registeredStatus || "active"} | Subject: ${s.subject || "-"} | Slots: ${slots || "-"}`;
+    }
+
+    function teacherFeedbackRows(teacherId, includeArchived = false) {
+      return (state.teacherFeedback || [])
+        .filter(item => item.teacherId === teacherId)
+        .filter(item => includeArchived || !item.archived)
+        .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+    }
+
+    function feedbackForBooking(bookingId) {
+      return (state.teacherFeedback || []).find(item => item.bookingId === bookingId && !item.archived) || null;
+    }
+
+    function teacherFeedbackSummaryHtml(teacher) {
+      const rows = teacherFeedbackRows(teacher.id);
+      const latest = rows[0];
+      const actionNeeded = rows.filter(item => item.actionStatus === "Action needed").length;
+      return `
+        <div class="subtle" style="margin-top:8px;">
+          Parent feedback: <strong>${rows.length}</strong>${actionNeeded ? ` | <span style="color:#b91c1c;font-weight:900;">${actionNeeded} action needed</span>` : ""}
+          ${latest ? `<br>Latest: ${escapeHtml(latest.category || "-")} | ${escapeHtml(latest.feedback || "").slice(0, 120)}${String(latest.feedback || "").length > 120 ? "..." : ""}` : "<br>No parent feedback yet."}
+        </div>`;
+    }
+
+    function clearTeacherFeedbackForm(teacher = null) {
+      $("feedbackId").value = "";
+      $("feedbackBookingId").value = "";
+      $("feedbackTeacherId").value = teacher?.id || $("feedbackTeacherId").value || "";
+      $("feedbackStudentName").value = "";
+      $("feedbackClassDate").value = "";
+      $("feedbackClassTime").value = "";
+      $("feedbackCategory").value = "concern";
+      $("feedbackActionStatus").value = "No action needed";
+      $("feedbackText").value = "";
+    }
+
+    function renderTeacherFeedbackList(teacherId) {
+      const rows = teacherFeedbackRows(teacherId, true);
+      $("teacherFeedbackList").innerHTML = rows.length ? rows.map(item => `
+        <div class="card">
+          <div class="row spread">
+            <strong>${escapeHtml(item.studentName || "General feedback")}</strong>
+            <span><span class="pill">${escapeHtml(item.category || "concern")}</span><span class="pill">${escapeHtml(item.actionStatus || "No action needed")}</span>${item.archived ? `<span class="pill archived">Archived</span>` : ""}</span>
+          </div>
+          <div class="subtle">${item.classDate ? `${formatClassDateTime(item.classDate, item.classTime)} | ` : ""}${escapeHtml(item.feedback || "")}<br>Updated: ${escapeHtml(formatDateTimeStamp(item.updatedAt || item.createdAt))}</div>
+          <div class="row" style="margin-top:8px;">
+            <button class="btn small ghost" data-edit-teacher-feedback="${item.id}">Edit</button>
+            <button class="btn small danger" data-archive-teacher-feedback="${item.id}">${item.archived ? "Restore" : "Archive"}</button>
+          </div>
+        </div>
+      `).join("") : `<div class="empty">No parent feedback recorded for this teacher yet.</div>`;
+    }
+
+    function openTeacherFeedbackModal(teacherId, feedbackId = "") {
+      const teacher = teacherById(teacherId);
+      if (!teacher) return alert("Teacher not found.");
+      $("feedbackTeacherId").value = teacher.id;
+      $("feedbackContext").textContent = `${teacher.name} | Admin-only parent feedback. Not visible to teacher.`;
+      const item = feedbackId ? (state.teacherFeedback || []).find(row => row.id === feedbackId) : null;
+      if (item) {
+        $("feedbackId").value = item.id;
+        $("feedbackBookingId").value = item.bookingId || "";
+        $("feedbackStudentName").value = item.studentName || "";
+        $("feedbackClassDate").value = item.classDate || "";
+        $("feedbackClassTime").value = item.classTime || "";
+        $("feedbackCategory").value = item.category || "concern";
+        $("feedbackActionStatus").value = item.actionStatus || "No action needed";
+        $("feedbackText").value = item.feedback || "";
+      } else {
+        clearTeacherFeedbackForm(teacher);
+      }
+      renderTeacherFeedbackList(teacher.id);
+      $("teacherFeedbackModal").classList.remove("hide");
+    }
+
+    function saveTeacherFeedbackFromModal() {
+      const teacher = teacherById($("feedbackTeacherId").value);
+      if (!teacher) return alert("Teacher not found.");
+      const text = $("feedbackText").value.trim();
+      if (!text) return alert("Parent feedback cannot be empty.");
+      const now = new Date().toISOString();
+      const id = $("feedbackId").value || uid("feedback");
+      const existing = (state.teacherFeedback || []).find(item => item.id === id) || { id, createdAt: now };
+      const before = existing.feedback || "";
+      Object.assign(existing, {
+        teacherId: teacher.id,
+        teacherName: teacher.name || "",
+        bookingId: $("feedbackBookingId").value || "",
+        studentName: cleanStudentName($("feedbackStudentName").value),
+        classDate: $("feedbackClassDate").value || "",
+        classTime: $("feedbackClassTime").value || "",
+        category: $("feedbackCategory").value || "concern",
+        actionStatus: $("feedbackActionStatus").value || "No action needed",
+        feedback: text,
+        archived: false,
+        updatedAt: now,
+        createdBy: safeStorageGet("classOneStaffName") || "Admin"
+      });
+      state.teacherFeedback ||= [];
+      if (!state.teacherFeedback.some(item => item.id === id)) state.teacherFeedback.push(existing);
+      const linkedBooking = existing.bookingId ? state.bookings.find(booking => booking.id === existing.bookingId) : null;
+      if (linkedBooking) {
+        linkedBooking.parentFeedback = existing.feedback;
+        linkedBooking.feedbackCategory = existing.category;
+        linkedBooking.feedbackActionStatus = existing.actionStatus;
+        linkedBooking.updatedAt = now;
+      }
+      logAction(before ? "Teacher Feedback Updated" : "Teacher Feedback Added", teacher.name, before, existing.feedback, `${existing.studentName || "General"} | ${existing.category}`);
+      save(false);
+      renderTeacherFeedbackList(teacher.id);
+      renderTeachers();
+      setStatus("Teacher feedback saved.");
+    }
+
+    function upsertFeedbackFromOutcome(booking) {
+      const text = $("outcomeParentFeedback").value.trim();
+      const existing = feedbackForBooking(booking.id);
+      booking.parentFeedback = text;
+      booking.feedbackCategory = $("outcomeFeedbackCategory").value || "concern";
+      booking.feedbackActionStatus = $("outcomeFeedbackActionStatus").value || "No action needed";
+      if (!text && !existing) return;
+      if (!text && existing) {
+        existing.archived = true;
+        existing.updatedAt = new Date().toISOString();
+        return;
+      }
+      const teacher = teacherById(booking.teacherId);
+      const now = new Date().toISOString();
+      const item = existing || { id: uid("feedback"), bookingId: booking.id, createdAt: now };
+      Object.assign(item, {
+        teacherId: booking.teacherId || "",
+        teacherName: teacher ? teacher.name : "",
+        bookingId: booking.id,
+        studentId: booking.studentId || "",
+        studentName: cleanStudentName(booking.studentName || ""),
+        classDate: booking.date || "",
+        classTime: booking.time || "",
+        subject: booking.subject || "",
+        category: booking.feedbackCategory,
+        actionStatus: booking.feedbackActionStatus,
+        feedback: text,
+        archived: false,
+        updatedAt: now,
+        createdBy: safeStorageGet("classOneStaffName") || "Admin"
+      });
+      state.teacherFeedback ||= [];
+      if (!state.teacherFeedback.some(row => row.id === item.id)) state.teacherFeedback.push(item);
     }
 
     function leadLogSummary(lead) {
@@ -2117,11 +2322,16 @@
       ["assessmentTeacher", "trialTeacher"].forEach(id => fillSelect($(id), teacherOptions, "Choose teacher"));
       ["subjectFilter"].forEach(id => fillSelect($(id), SUBJECTS, "All Subjects"));
       ["timeFromFilter", "timeToFilter"].forEach(id => fillSelect($(id), halfHourOptions()));
+      fillSelect($("typeFilter"), BOOKING_TYPES.map(type => ({ value: type, label: type.replace(/\b\w/g, char => char.toUpperCase()) })), "All Types");
       ["slotSubject", "bulkSubject", "overrideSubject", "studentSubject", "studentRegularSubject", "bookingSubject", "assessmentSubject", "trialSubject", "openSlotSubject"].forEach(id => fillSelect($(id), SUBJECTS));
       fillSelect($("leadStatus"), LEAD_STATUSES);
       fillSelect($("leadUrgency"), URGENCIES);
       fillSelect($("leadFilterStatus"), LEAD_STATUSES, "All Status");
       fillSelect($("leadFilterUrgency"), URGENCIES, "All Urgency");
+      fillSelect($("feedbackCategory"), TEACHER_FEEDBACK_CATEGORIES.map(value => ({ value, label: value.replace(/\b\w/g, char => char.toUpperCase()) })));
+      fillSelect($("feedbackActionStatus"), TEACHER_FEEDBACK_STATUSES);
+      fillSelect($("outcomeFeedbackCategory"), TEACHER_FEEDBACK_CATEGORIES.map(value => ({ value, label: value.replace(/\b\w/g, char => char.toUpperCase()) })));
+      fillSelect($("outcomeFeedbackActionStatus"), TEACHER_FEEDBACK_STATUSES);
       fillSelect($("tutorLeadStatus"), TUTOR_STATUSES);
       fillSelect($("tutorLeadFilterStatus"), TUTOR_STATUSES, "All Status");
       fillSelect($("replacementFilterStatus"), REPLACEMENT_STATUSES, "All Status");
@@ -2235,6 +2445,12 @@
       return (start == null || value >= start) && (end == null || value < end);
     }
 
+    function scheduleItemType(slot, booking) {
+      if (booking) return booking.type || "regular class";
+      if (slot.locked) return "regular class";
+      return "open";
+    }
+
     function renderSchedule() {
       const dates = weekDates();
       finalizePassedClassesForRange(dates[0], dates[dates.length - 1]);
@@ -2252,6 +2468,7 @@
           const teacherFilter = $("teacherFilter").value;
           const subjectFilter = $("subjectFilter").value;
           const statusFilter = $("statusFilter").value;
+          const typeFilter = $("typeFilter").value;
           const timeFrom = $("timeFromFilter").value;
           const timeTo = $("timeToFilter").value;
           let slots = collectSlotsForDate(d).filter(s => s.time === t);
@@ -2261,7 +2478,9 @@
           const items = slots.map(s => ({ slot: s, booking: findBooking(s) }));
           let filtered = items.filter(x => {
             const isBooked = Boolean(x.booking || x.slot.locked);
-            return statusFilter === "all" || (statusFilter === "open" && !isBooked) || (statusFilter === "booked" && isBooked);
+            const matchesStatus = statusFilter === "all" || (statusFilter === "open" && !isBooked) || (statusFilter === "booked" && isBooked);
+            const matchesType = typeFilter === "all" || scheduleItemType(x.slot, x.booking) === typeFilter;
+            return matchesStatus && matchesType;
           });
           filtered.forEach(x => {
             summary.visibleTeachers.add(x.slot.teacherId);
@@ -2675,7 +2894,8 @@
             <div class="row spread"><strong>${escapeHtml(t.name)}</strong><span class="pill">${escapeHtml(t.tier)}</span></div>
             <div>${(t.subjects || []).map(s => `<span class="pill">${escapeHtml(s)}</span>`).join("")}</div>
             <div class="subtle">${t.category === "micro_franchisee" ? `Micro Franchisee | Profit share: ${Number(t.profitShare || 0).toFixed(2)}%` : `Freelance Tutor | Rate: ${Number(t.rate || 0).toFixed(2)}`} | Slots: ${(t.regularSlots || []).length} regular, ${(t.overrideSlots || []).length} date-specific${(t.regularSlots || []).some(s => s.source === "teacher-sheet") ? " | Imported from teacher sheet" : ""}</div>
-            <div class="row" style="margin-top:8px;"><button class="btn small ghost" data-edit-teacher="${t.id}">Edit</button><button class="btn small ghost" data-archive-teacher="${t.id}">Archive</button><button class="btn small danger" data-delete-teacher="${t.id}">Delete</button></div>
+            ${teacherFeedbackSummaryHtml(t)}
+            <div class="row" style="margin-top:8px;"><button class="btn small ghost" data-edit-teacher="${t.id}">Edit</button><button class="btn small ghost" data-add-teacher-feedback="${t.id}">Add Feedback</button><button class="btn small ghost" data-view-teacher-feedback="${t.id}">View Feedback</button><button class="btn small ghost" data-archive-teacher="${t.id}">Archive</button><button class="btn small danger" data-delete-teacher="${t.id}">Delete</button></div>
           </div>
         </div>`).join("") || `<div class="empty">Add your first tutor profile.</div>`;
       renderSlotList();
@@ -4275,16 +4495,21 @@
     }
 
     function teacherExportRows() {
-      return [...state.teachers].filter(t => !isImportedOnlyTeacher(t)).sort(byName).map(teacher => [
-        teacher.name || "",
-        (teacher.subjects || []).join(", "),
-        teacher.category === "micro_franchisee" ? "Micro Franchisee" : "Freelance Tutor",
-        teacher.tier || "",
-        Number(teacher.rate || 0).toFixed(2),
-        `${Number(teacher.profitShare || 0).toFixed(2)}%`,
-        (teacher.regularSlots || []).length,
-        (teacher.overrideSlots || []).length
-      ]);
+      return [...state.teachers].filter(t => !isImportedOnlyTeacher(t)).sort(byName).map(teacher => {
+        const feedbackRows = teacherFeedbackRows(teacher.id);
+        return [
+          teacher.name || "",
+          (teacher.subjects || []).join(", "),
+          teacher.category === "micro_franchisee" ? "Micro Franchisee" : "Freelance Tutor",
+          teacher.tier || "",
+          Number(teacher.rate || 0).toFixed(2),
+          `${Number(teacher.profitShare || 0).toFixed(2)}%`,
+          (teacher.regularSlots || []).length,
+          (teacher.overrideSlots || []).length,
+          feedbackRows.length,
+          feedbackRows[0]?.feedback || ""
+        ];
+      });
     }
 
     function tableHtml(headers, rows) {
@@ -4339,7 +4564,7 @@
     }
 
     function renderAll() {
-      const old = Object.fromEntries(["monthSelect", "reportMonth", "businessDashboardMonth", "businessDashboardYear", "revenueFromMonth", "revenueFromYear", "revenueToMonth", "revenueToYear", "revenueEntryMonth", "revenueEntryYear", "weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear", "slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher", "teacherStudentRecordTeacher", "teacherStudentRecordStatus", "teacherStudentRecordSearch", "reportTeacher", "tutorLeadFilterStatus", "tutorLeadFilterCategory"].map(id => [id, $(id)?.value]));
+      const old = Object.fromEntries(["monthSelect", "reportMonth", "businessDashboardMonth", "businessDashboardYear", "revenueFromMonth", "revenueFromYear", "revenueToMonth", "revenueToYear", "revenueEntryMonth", "revenueEntryYear", "weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "typeFilter", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear", "slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher", "teacherStudentRecordTeacher", "teacherStudentRecordStatus", "teacherStudentRecordSearch", "reportTeacher", "tutorLeadFilterStatus", "tutorLeadFilterCategory"].map(id => [id, $(id)?.value]));
       hydrateSelects();
       Object.entries(old).forEach(([id, value]) => { if ($(id) && value) $(id).value = value; });
       renderSchedule();
@@ -4683,6 +4908,7 @@
         state.publicHolidays,
         state.revenueEntries,
         state.teacherStudentNotes,
+        state.teacherFeedback,
         state.activityLogs
       ].some(list => Array.isArray(list) && list.length > 0);
     }
@@ -4847,6 +5073,7 @@
           stopAutoLoadCountdown();
           setStatus(`Neon auto-load failed. Browser data is still available: ${err.message}`, "error");
         }
+        startAutoNeonRefresh();
         return;
       }
       const jobs = [];
@@ -4861,6 +5088,48 @@
       if (loaded.length && !failed.length) setStatus(`Auto-loaded ${loaded.join(" and ")} data.`);
       else if (loaded.length) setStatus(`Auto-loaded ${loaded.join(" and ")}. ${failed.join(" | ")}`, "warn");
       else setStatus(`Auto-load failed. ${failed.join(" | ")}`, "error");
+    }
+
+    function modalIsOpen() {
+      return Boolean(document.querySelector(".modal:not(.hide)"));
+    }
+
+    function canAutoRefreshFromNeon() {
+      if (!neonConfigured()) return false;
+      if (document.hidden) return false;
+      if (autoNeonRefreshInProgress) return false;
+      if (state.settings.pendingLocalSync) return false;
+      if (modalIsOpen()) return false;
+      return true;
+    }
+
+    async function autoRefreshFromNeon({ force = false } = {}) {
+      if (!neonConfigured()) return;
+      if (!force && document.hidden) return;
+      if (autoNeonRefreshInProgress) return;
+      if (state.settings.pendingLocalSync) return;
+      if (modalIsOpen()) return;
+      autoNeonRefreshInProgress = true;
+      try {
+        const manifest = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon auto-refresh", SYNC_READ_TIMEOUT_MS);
+        if (manifest.empty || !manifest.totalChunks) return;
+        const remoteVersion = Number(manifest.version || 0);
+        const localVersion = Number(state.settings.neonVersion || 0);
+        if (remoteVersion > localVersion) {
+          await neonPull(false);
+          setStatus(`Auto-refreshed latest data from Neon. Version ${remoteVersion}.`);
+        }
+      } catch (err) {
+        if (force) setStatus(`Auto-refresh from Neon failed: ${err.message}`, "warn");
+      } finally {
+        autoNeonRefreshInProgress = false;
+      }
+    }
+
+    function startAutoNeonRefresh() {
+      clearInterval(autoNeonRefreshTimer);
+      if (!neonConfigured()) return;
+      autoNeonRefreshTimer = setInterval(() => autoRefreshFromNeon(), AUTO_NEON_REFRESH_MS);
     }
 
     async function autoPushIfConfigured(successMessage) {
@@ -4904,6 +5173,10 @@
       $("outcomeStatus").value = booking.status === "completed" ? "booked" : (booking.status || "booked");
       $("outcomeRemark").value = booking.remark || "";
       $("outcomeReplacementNeeded").value = "";
+      const linkedFeedback = feedbackForBooking(booking.id);
+      $("outcomeFeedbackCategory").value = linkedFeedback?.category || booking.feedbackCategory || "concern";
+      $("outcomeFeedbackActionStatus").value = linkedFeedback?.actionStatus || booking.feedbackActionStatus || "No action needed";
+      $("outcomeParentFeedback").value = linkedFeedback?.feedback || booking.parentFeedback || "";
       $("outcomeInfo").textContent = `${teacher ? teacher.name : ""} | ${booking.date} | ${timeLabel(booking.time)} | ${booking.studentName || ""} | Current: ${bookingStatusLabel(booking.status)}`;
       updateOutcomeReplacementField();
       $("bookingOutcomeModal").classList.remove("hide");
@@ -4934,6 +5207,7 @@
       } else {
         withdrawReplacementForBooking(booking);
       }
+      upsertFeedbackFromOutcome(booking);
       logAction("Class Outcome Updated", booking.studentName || booking.id, before, bookingLogSummary(booking), booking.remark || "");
       $("bookingOutcomeModal").classList.add("hide");
       save(false);
@@ -5243,6 +5517,40 @@
         updateTeacherViewLinkField(t);
         document.querySelectorAll("#teacherSubjects input").forEach(cb => cb.checked = (t.subjects || []).includes(cb.value));
         $("teacherProfileModal").classList.remove("hide");
+      }
+      const addTeacherFeedback = e.target.closest("[data-add-teacher-feedback]");
+      if (addTeacherFeedback) {
+        openTeacherFeedbackModal(addTeacherFeedback.dataset.addTeacherFeedback);
+      }
+      const viewTeacherFeedback = e.target.closest("[data-view-teacher-feedback]");
+      if (viewTeacherFeedback) {
+        openTeacherFeedbackModal(viewTeacherFeedback.dataset.viewTeacherFeedback);
+      }
+      const editTeacherFeedback = e.target.closest("[data-edit-teacher-feedback]");
+      if (editTeacherFeedback) {
+        const item = (state.teacherFeedback || []).find(row => row.id === editTeacherFeedback.dataset.editTeacherFeedback);
+        if (item) openTeacherFeedbackModal(item.teacherId, item.id);
+      }
+      const archiveTeacherFeedback = e.target.closest("[data-archive-teacher-feedback]");
+      if (archiveTeacherFeedback) {
+        const item = (state.teacherFeedback || []).find(row => row.id === archiveTeacherFeedback.dataset.archiveTeacherFeedback);
+        if (item) {
+          const before = `${item.actionStatus || ""} | ${item.feedback || ""}`;
+          item.archived = !item.archived;
+          item.updatedAt = new Date().toISOString();
+          const linkedBooking = item.bookingId ? state.bookings.find(booking => booking.id === item.bookingId) : null;
+          if (linkedBooking) {
+            linkedBooking.parentFeedback = item.archived ? "" : item.feedback || "";
+            linkedBooking.feedbackCategory = item.category || "concern";
+            linkedBooking.feedbackActionStatus = item.actionStatus || "No action needed";
+            linkedBooking.updatedAt = new Date().toISOString();
+          }
+          logAction(item.archived ? "Teacher Feedback Archived" : "Teacher Feedback Restored", item.teacherName || item.teacherId, before, `${item.archived ? "Archived" : "Active"} | ${item.feedback || ""}`, item.studentName || "");
+          save(false);
+          renderTeacherFeedbackList(item.teacherId);
+          renderTeachers();
+          setStatus(item.archived ? "Teacher feedback archived." : "Teacher feedback restored.");
+        }
       }
       const archiveTeacher = e.target.closest("[data-archive-teacher]");
       if (archiveTeacher && confirm("Archive this teacher? They will be removed from active teacher lists and timetable setup.")) {
@@ -5591,6 +5899,11 @@
       alert(`Teacher saved locally, but sync failed: ${err.message}`);
     });
     $("newTeacherBtn").onclick = clearTeacherForm;
+    $("saveTeacherFeedbackBtn").onclick = saveTeacherFeedbackFromModal;
+    $("newTeacherFeedbackBtn").onclick = () => {
+      const teacher = teacherById($("feedbackTeacherId").value);
+      clearTeacherFeedbackForm(teacher);
+    };
     $("generateTeacherViewLinkBtn").onclick = () => generateTeacherViewLink().catch(err => {
       setStatus(`Teacher link sync failed: ${err.message}`, "error");
       alert(`Teacher timetable link is not ready yet. Please click Generate again after checking the connection. Error: ${err.message}`);
@@ -5873,7 +6186,7 @@
       await autoPushIfConfigured(`Public holiday saved. ${changed} class${changed === 1 ? "" : "es"} updated.`);
     };
     ["monthSelect", "yearInput"].forEach(id => $(id).addEventListener("change", () => { refreshWeeks(); renderSchedule(); }));
-    ["weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter"].forEach(id => $(id).addEventListener("change", renderSchedule));
+    ["weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "typeFilter"].forEach(id => $(id).addEventListener("change", renderSchedule));
     ["weekSelect", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear"].forEach(id => $(id).addEventListener("change", renderTeacherOverview));
     ["revenueFromMonth", "revenueFromYear", "revenueToMonth", "revenueToYear"].forEach(id => $(id).addEventListener("change", renderRevenueDashboard));
     $("clearOverviewFiltersBtn").onclick = () => {
@@ -5888,6 +6201,7 @@
       $("timeFromFilter").value = "all";
       $("timeToFilter").value = "all";
       $("statusFilter").value = "all";
+      $("typeFilter").value = "all";
       renderSchedule();
     };
     document.querySelectorAll("[data-clear-filter]").forEach(btn => {
@@ -5995,8 +6309,8 @@
     $("generateCrmDashboardBtn").onclick = renderCrmDashboard;
     $("exportStudentsCsvBtn").onclick = () => downloadCsv("class-one-students.csv", ["No.", "Name", "Subject", "Package", "Amount", "Total Classes", "Package Notes", "Status", "Regular Slots"], numbered(studentExportRows()));
     $("exportStudentsPdfBtn").onclick = () => openPrintReport("Class One Students", ["No.", "Name", "Subject", "Package", "Amount", "Total Classes", "Package Notes", "Status", "Regular Slots"], numbered(studentExportRows()));
-    $("exportTeachersCsvBtn").onclick = () => downloadCsv("class-one-teachers.csv", ["No.", "Name", "Subjects", "Category", "Tier", "Rate", "Profit Share", "Regular Slots", "Date Slots"], numbered(teacherExportRows()));
-    $("exportTeachersPdfBtn").onclick = () => openPrintReport("Class One Teachers", ["No.", "Name", "Subjects", "Category", "Tier", "Rate", "Profit Share", "Regular Slots", "Date Slots"], numbered(teacherExportRows()));
+    $("exportTeachersCsvBtn").onclick = () => downloadCsv("class-one-teachers.csv", ["No.", "Name", "Subjects", "Category", "Tier", "Rate", "Profit Share", "Regular Slots", "Date Slots", "Feedback Count", "Latest Feedback"], numbered(teacherExportRows()));
+    $("exportTeachersPdfBtn").onclick = () => openPrintReport("Class One Teachers", ["No.", "Name", "Subjects", "Category", "Tier", "Rate", "Profit Share", "Regular Slots", "Date Slots", "Feedback Count", "Latest Feedback"], numbered(teacherExportRows()));
     $("exportCrmCsvBtn").onclick = () => downloadCsv("class-one-crm-monthly-dashboard.csv", ["No.", ...crmDashboardExportHeaders()], numbered(crmDashboardExportRows()));
     $("exportCrmPdfBtn").onclick = () => openPrintReport("CRM Leads Monthly Dashboard", ["No.", ...crmDashboardExportHeaders()], numbered(crmDashboardExportRows()));
     $("exportAllTeacherPayoutCsvBtn").onclick = () => downloadCsv("class-one-all-teacher-payout.csv", ["No.", "Teacher", "Category", "Tier", "Rate", "Share", "Completed", "Not Show", "Cancelled", "Lesson Pay", "Not Show Pay", "Total Pay"], numbered(teacherMonthlyPayoutRows()));
@@ -6024,8 +6338,14 @@
     };
     $("exportActivityCsvBtn").onclick = () => downloadCsv("class-one-activity-log.csv", ["No.", "Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], numbered(activityExportRows()));
     $("exportActivityPdfBtn").onclick = () => openPrintReport("Activity Log", ["No.", "Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], numbered(activityExportRows()));
-    $("neonPullBtn").onclick = () => animateClick($("neonPullBtn"), () => neonPull(true).catch(err => alert(err.message)));
-    $("neonPushBtn").onclick = () => animateClick($("neonPushBtn"), () => neonPush(true, "Saved to Neon database.").catch(err => alert(err.message)));
+    $("neonPullBtn").onclick = () => animateClick($("neonPullBtn"), async () => {
+      await neonPull(true);
+      startAutoNeonRefresh();
+    }).catch(err => alert(err.message));
+    $("neonPushBtn").onclick = () => animateClick($("neonPushBtn"), async () => {
+      await neonPush(true, "Saved to Neon database.");
+      startAutoNeonRefresh();
+    }).catch(err => alert(err.message));
     $("pullBtn").onclick = () => animateClick($("pullBtn"), () => syncPull(true).catch(err => alert(err.message)));
     $("pushBtn").onclick = () => animateClick($("pushBtn"), () => syncPush(true).catch(err => alert(err.message)));
     $("crmPullBtn").onclick = () => animateClick($("crmPullBtn"), () => crmPull().catch(err => alert(err.message)));
@@ -6053,6 +6373,10 @@
       $("actionPopup").classList.add("hide");
       document.querySelector('[data-tab="replacements"]').click();
     };
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) autoRefreshFromNeon({ force: true });
+    });
+    window.addEventListener("focus", () => autoRefreshFromNeon({ force: true }));
 
     async function initApp() {
       try {
