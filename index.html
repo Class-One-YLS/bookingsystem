@@ -951,6 +951,16 @@
         <div><label>Profile Picture</label><input id="teacherPhoto" type="file" accept="image/*"></div>
       </div>
       <div style="margin-top:12px;"><label>Teaching Subjects</label><div id="teacherSubjects" class="row"></div></div>
+      <input id="teacherViewToken" type="hidden">
+      <div class="panel" style="margin-top:12px;">
+        <label>Teacher Timetable View Link</label>
+        <div class="field-actions">
+          <input id="teacherViewLink" readonly placeholder="Generate after saving this teacher">
+          <button class="btn ghost" id="generateTeacherViewLinkBtn">Generate</button>
+          <button class="btn ghost" id="copyTeacherViewLinkBtn">Copy</button>
+        </div>
+        <div class="subtle" style="margin-top:8px;">This link is read-only and only shows this teacher's timetable.</div>
+      </div>
       <div class="row" style="margin-top:14px;">
         <button class="btn mint" id="saveTeacherBtn">Save Teacher</button>
         <button class="btn ghost" id="newTeacherBtn">Clear / New</button>
@@ -4111,7 +4121,54 @@
       $("teacherTier").value = "standard";
       $("teacherCategory").value = "freelance";
       $("teacherPhoto").value = "";
+      $("teacherViewToken").value = "";
+      $("teacherViewLink").value = "";
       document.querySelectorAll("#teacherSubjects input").forEach(cb => cb.checked = false);
+    }
+
+    function randomShareToken() {
+      const bytes = new Uint8Array(18);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+    }
+
+    function teacherTimetableLink(teacher) {
+      if (!teacher?.id || !teacher?.viewToken) return "";
+      const url = new URL("teacher-timetable-view.html", window.location.href);
+      url.searchParams.set("teacherId", teacher.id);
+      url.searchParams.set("token", teacher.viewToken);
+      return url.href;
+    }
+
+    function updateTeacherViewLinkField(teacher = null) {
+      const current = teacher || teacherById($("teacherId").value);
+      $("teacherViewToken").value = current?.viewToken || $("teacherViewToken").value || "";
+      $("teacherViewLink").value = teacherTimetableLink({ id: $("teacherId").value || current?.id, viewToken: $("teacherViewToken").value });
+    }
+
+    async function generateTeacherViewLink() {
+      const teacher = teacherById($("teacherId").value);
+      if (!teacher) return alert("Save this teacher first, then generate the timetable view link.");
+      const before = teacherLogSummary(teacher);
+      teacher.viewToken = randomShareToken();
+      teacher.viewTokenUpdatedAt = new Date().toISOString();
+      $("teacherViewToken").value = teacher.viewToken;
+      updateTeacherViewLinkField(teacher);
+      logAction("Teacher View Link Generated", teacher.name, before, teacherLogSummary(teacher), "Read-only teacher timetable link generated.");
+      save(false);
+      await autoPushIfConfigured("Teacher timetable view link generated.");
+    }
+
+    async function copyTeacherViewLink() {
+      const link = $("teacherViewLink").value.trim();
+      if (!link) return alert("Generate the teacher timetable view link first.");
+      try {
+        await navigator.clipboard.writeText(link);
+      } catch (err) {
+        $("teacherViewLink").select();
+        document.execCommand("copy");
+      }
+      setStatus("Teacher timetable view link copied.");
     }
 
     async function saveTeacher() {
@@ -4127,6 +4184,7 @@
       existing.rate = Number($("teacherRate").value || 0);
       existing.profitShare = Number($("teacherProfitShare").value || 0);
       existing.subjects = normalizeSubjects([...document.querySelectorAll("#teacherSubjects input:checked")].map(cb => cb.value));
+      existing.viewToken = $("teacherViewToken").value || existing.viewToken || "";
       existing.status = existing.status || "active";
       existing.updatedAt = new Date().toISOString();
       if (!state.teachers.some(t => t.id === existing.id)) state.teachers.push(existing);
@@ -4865,6 +4923,8 @@
       if (editTeacher) {
         const t = teacherById(editTeacher.dataset.editTeacher);
         $("teacherId").value = t.id; $("teacherName").value = t.name; $("teacherRate").value = t.rate || ""; $("teacherProfitShare").value = t.profitShare || ""; $("teacherTier").value = t.tier || "standard"; $("teacherCategory").value = t.category || "freelance";
+        $("teacherViewToken").value = t.viewToken || "";
+        updateTeacherViewLinkField(t);
         document.querySelectorAll("#teacherSubjects input").forEach(cb => cb.checked = (t.subjects || []).includes(cb.value));
         $("teacherProfileModal").classList.remove("hide");
       }
@@ -5194,6 +5254,11 @@
       alert(`Teacher saved locally, but sync failed: ${err.message}`);
     });
     $("newTeacherBtn").onclick = clearTeacherForm;
+    $("generateTeacherViewLinkBtn").onclick = () => generateTeacherViewLink().catch(err => {
+      setStatus(`Teacher link sync failed: ${err.message}`, "error");
+      alert(`Teacher link generated locally, but sync failed: ${err.message}`);
+    });
+    $("copyTeacherViewLinkBtn").onclick = copyTeacherViewLink;
     $("openTeacherModalBtn").onclick = () => {
       clearTeacherForm();
       $("teacherProfileModal").classList.remove("hide");
