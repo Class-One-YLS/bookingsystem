@@ -355,7 +355,10 @@
     </section>
 
     <section>
-      <h2>Income History</h2>
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;">
+        <h2>Income History</h2>
+        <button class="btn ghost" id="exportIncomePdfBtn">Export Month PDF</button>
+      </div>
       <div id="incomeList" class="timetable-wrap"></div>
     </section>
 
@@ -678,6 +681,19 @@
       return [...byTime.values()];
     }
 
+    function overrideAppliesOnDate(slot, dateStr, day) {
+      if (slot.date) return slot.date === dateStr;
+      return slot.day === day && (!slot.startDate || slot.startDate <= dateStr) && (!slot.endDate || slot.endDate >= dateStr);
+    }
+
+    function latestOverridesForDate(dateStr, day) {
+      const byTime = new Map();
+      (timetableData?.overrideSlots || [])
+        .filter(slot => overrideAppliesOnDate(slot, dateStr, day))
+        .forEach(slot => byTime.set(slot.time, slot));
+      return byTime;
+    }
+
     function bookingRank(booking) {
       const status = booking.status || "booked";
       if (CANCELLED.includes(status) || status === "student_not_show") return 5;
@@ -691,16 +707,15 @@
       const dateStr = localISO(date);
       const day = DAYS[(date.getDay() + 6) % 7];
       const regularSlots = timetableData.regularSlots || [];
-      const overrideSlots = timetableData.overrideSlots || [];
-      const offOverrides = overrideSlots.filter(slot => slot.date === dateStr && slot.unavailable);
+      const latestOverrides = latestOverridesForDate(dateStr, day);
       const regular = regularSlots
         .filter(slot => slot.day === day)
         .filter(slot => (!slot.startDate || slot.startDate <= dateStr) && (!slot.endDate || slot.endDate >= dateStr))
-        .filter(slot => !offOverrides.some(off => off.time === slot.time))
+        .filter(slot => !latestOverrides.has(slot.time))
         .map(slot => ({ ...slot, date: dateStr, source: slot.source || "regular" }));
-      const overrides = overrideSlots
-        .filter(slot => slot.date === dateStr && !slot.unavailable)
-        .map(slot => ({ ...slot, date: dateStr, source: "override" }));
+      const overrides = [...latestOverrides.values()]
+        .filter(slot => !slot.unavailable)
+        .map(slot => ({ ...slot, date: dateStr, day, source: "override" }));
       return uniqueSlots([...regular, ...overrides]);
     }
 
@@ -1009,6 +1024,69 @@
       $("incomeList").innerHTML = rows.length ? tableHtml(["No.", "Date", "Time", "Student", "Subject", "Type", "Status", "Pay"], rows) : `<div class="subtle" style="padding:12px;">No income counted yet for the selected month.</div>`;
     }
 
+    function selectedIncomeReportEntries() {
+      const { from, month, year } = selectedMonthRange();
+      const monthEnd = localISO(new Date(year, month + 1, 0));
+      const today = localISO(new Date());
+      const to = today < from ? "" : (today > monthEnd ? monthEnd : today);
+      return to ? classEntries(from, to).filter(entry => incomePayForEntry(entry) > 0) : [];
+    }
+
+    function exportIncomePdf() {
+      if (!timetableData) return;
+      const month = Number($("monthSelect").value);
+      const year = Number($("yearSelect").value);
+      const monthLabel = `${MONTHS[month]} ${year}`;
+      const teacherName = timetableData?.teacher?.name || "Teacher";
+      const entries = selectedIncomeReportEntries();
+      const completedCount = entries.filter(entry => entryMeta(entry).status === "completed").length;
+      const notShowCount = entries.filter(entry => entryMeta(entry).status === "student_not_show").length;
+      const total = entries.reduce((sum, entry) => sum + incomePayForEntry(entry), 0);
+      const rows = entries.map((entry, index) => {
+        const meta = entryMeta(entry);
+        return `<tr>
+          <td>${index + 1}</td>
+          <td>${escapeHtml(dateLabel(entry.date))}</td>
+          <td>${escapeHtml(timeLabel(entry.time))}</td>
+          <td>${escapeHtml(meta.studentName || "")}</td>
+          <td>${escapeHtml(meta.subject || "")}</td>
+          <td>${escapeHtml(meta.type || "")}</td>
+          <td>${escapeHtml(statusLabel(meta.status))}</td>
+          <td>${escapeHtml(money(incomePayForEntry(entry)))}</td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="8">No completed or payable classes counted for this month yet.</td></tr>`;
+      const popup = window.open("", "_blank");
+      if (!popup) return alert("Please allow popups to export PDF.");
+      popup.document.write(`<!doctype html><html><head><title>${escapeHtml(teacherName)} ${escapeHtml(monthLabel)} Income</title>
+        <style>
+          body { font-family: Arial, sans-serif; color:#17231f; padding:24px; }
+          h1 { margin:0 0 4px; font-size:24px; }
+          .subtle { color:#647067; margin-bottom:18px; }
+          .metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:18px 0; }
+          .metric { border:1px solid #dbe8e1; border-radius:8px; padding:12px; }
+          .metric span { color:#647067; font-size:12px; font-weight:700; }
+          .metric strong { display:block; margin-top:6px; font-size:20px; }
+          table { width:100%; border-collapse:collapse; font-size:12px; }
+          th,td { border:1px solid #dbe8e1; padding:8px; text-align:left; vertical-align:top; }
+          th { background:#72D0A1; color:#17231f; }
+          @media print { button { display:none; } body { padding:0; } }
+        </style></head><body>
+        <button onclick="window.print()" style="float:right;padding:8px 12px;">Print / Save PDF</button>
+        <h1>${escapeHtml(teacherName)} - Completed Lessons & Income</h1>
+        <div class="subtle">${escapeHtml(monthLabel)} | Generated ${escapeHtml(new Date().toLocaleString())}</div>
+        <div class="metrics">
+          <div class="metric"><span>Payable Classes</span><strong>${entries.length}</strong></div>
+          <div class="metric"><span>Completed</span><strong>${completedCount}</strong></div>
+          <div class="metric"><span>Student Not Show</span><strong>${notShowCount}</strong></div>
+          <div class="metric"><span>Total Income</span><strong>${escapeHtml(money(total))}</strong></div>
+        </div>
+        <table><thead><tr><th>No.</th><th>Date</th><th>Time</th><th>Student</th><th>Subject</th><th>Type</th><th>Status</th><th>Pay</th></tr></thead><tbody>${rows}</tbody></table>
+      </body></html>`);
+      popup.document.close();
+      popup.focus();
+      setTimeout(() => popup.print(), 250);
+    }
+
     function renderVisibility() {
       $("monthCalendarSection").classList.remove("hide");
       $("monthlySection").classList.remove("hide");
@@ -1031,6 +1109,7 @@
       loadTimetable().catch(error => setStatus(error.message, "error"));
     });
     $("refreshBtn").addEventListener("click", () => loadTimetable().catch(error => setStatus(error.message, "error")));
+    $("exportIncomePdfBtn").addEventListener("click", exportIncomePdf);
     document.querySelectorAll("[data-view-tab]").forEach(button => {
       button.addEventListener("click", () => {
         document.querySelectorAll("[data-view-tab]").forEach(item => item.classList.toggle("active", item === button));

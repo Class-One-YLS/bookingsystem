@@ -1127,10 +1127,13 @@
       <input id="openSlotData" type="hidden">
       <div class="subtle" id="openSlotInfo"></div>
       <div class="grid two" style="margin-top:14px;">
+        <div><label>Apply</label><select id="openSlotApplyMode"><option value="one_date">One Date Only</option><option value="temporary">Temporary Period</option><option value="permanent">Permanent From Start Date</option></select></div>
+        <div><label>Date / Start Date</label><input id="openSlotStartDate" type="date"></div>
+        <div id="openSlotEndField" class="hide"><label>End Date</label><input id="openSlotEndDate" type="date"></div>
         <div><label>Subject</label><select id="openSlotSubject"></select></div>
         <div><label>Remark</label><input id="openSlotRemark" placeholder="Optional note"></div>
       </div>
-      <div class="subtle" style="margin-top:10px;">This creates a one-time date-specific open slot only. It will not change the teacher's regular weekly timetable.</div>
+      <div class="subtle" style="margin-top:10px;">One date creates a date-specific open slot. Temporary/permanent opens this weekly day and time from the selected start date.</div>
       <div class="row" style="margin-top:14px;">
         <button class="btn mint" id="confirmOpenSlotBtn">Confirm Open Slot</button>
         <button class="btn ghost" data-close>Cancel</button>
@@ -1148,7 +1151,26 @@
         <button class="btn ghost" id="changeRegularSlotBtn">Change Regular Class</button>
         <button class="btn danger" id="setOpenSlotOffBtn">Set To OFF</button>
       </div>
-      <div class="subtle" style="margin-top:10px;">Set To OFF only affects this exact date and time slot.</div>
+      <div class="subtle" style="margin-top:10px;">Set To OFF can now be one date, temporary period, or permanent from a start date.</div>
+    </div>
+  </div>
+
+  <div id="offSlotModal" class="modal hide">
+    <div class="modal-card">
+      <div class="row spread"><h2>Set Slot To OFF</h2><button class="btn ghost small" data-close>Close</button></div>
+      <input id="offSlotData" type="hidden">
+      <div class="subtle" id="offSlotInfo"></div>
+      <div class="grid two" style="margin-top:14px;">
+        <div><label>Apply</label><select id="offSlotApplyMode"><option value="one_date">One Date Only</option><option value="temporary">Temporary Period</option><option value="permanent">Permanent From Start Date</option></select></div>
+        <div><label>Date / Start Date</label><input id="offSlotStartDate" type="date"></div>
+        <div id="offSlotEndField" class="hide"><label>End Date</label><input id="offSlotEndDate" type="date"></div>
+        <div><label>Remark</label><input id="offSlotRemark" placeholder="Optional note"></div>
+      </div>
+      <div class="subtle" style="margin-top:10px;">Temporary/permanent OFF applies to this weekly day and time. Existing booked classes are not deleted.</div>
+      <div class="row" style="margin-top:14px;">
+        <button class="btn danger" id="confirmOffSlotBtn">Confirm OFF</button>
+        <button class="btn ghost" data-close>Cancel</button>
+      </div>
     </div>
   </div>
 
@@ -1204,7 +1226,8 @@
     <div class="modal-card">
       <div class="row spread"><h2>Add Replacement Class Credit</h2><button class="btn ghost small" data-close>Close</button></div>
       <div class="grid two" style="margin-top:14px;">
-        <div><label>Student</label><select id="creditStudent"></select></div>
+        <div><label>Saved Student</label><select id="creditStudent"></select></div>
+        <div><label>Student Name</label><input id="creditStudentName" placeholder="Type if not in saved list"></div>
         <div><label>Credit Count</label><input id="creditAmount" type="number" min="1" step="1" value="1"></div>
         <div><label>Reason</label><input id="creditReason" placeholder="Cancelled / Teacher leave / Manual adjustment"></div>
         <div><label>Remark</label><input id="creditRemark" placeholder="Optional note"></div>
@@ -2402,20 +2425,33 @@
       });
     }
 
+    function availabilitySlotApplies(slot, dateStr, day) {
+      if (slot.date) return slot.date === dateStr;
+      return slot.day === day && (!slot.startDate || slot.startDate <= dateStr) && (!slot.endDate || slot.endDate >= dateStr);
+    }
+
+    function latestOverrideSlotsForDate(teacher, dateStr, day) {
+      const byTime = new Map();
+      (teacher.overrideSlots || [])
+        .filter(slot => availabilitySlotApplies(slot, dateStr, day))
+        .forEach(slot => byTime.set(slot.time, slot));
+      return byTime;
+    }
+
     function collectSlotsForDate(date) {
       const dateStr = localISO(date);
       const day = DAYS[(date.getDay() + 6) % 7];
       const slots = [];
       activeTeachers().forEach(t => {
-        const offOverrides = (t.overrideSlots || []).filter(s => s.date === dateStr && s.unavailable);
+        const latestOverrides = latestOverrideSlotsForDate(t, dateStr, day);
         (t.regularSlots || [])
           .filter(s => s.day === day)
           .filter(s => (!s.startDate || s.startDate <= dateStr) && (!s.endDate || s.endDate >= dateStr))
-          .filter(s => !offOverrides.some(off => off.time === s.time))
+          .filter(s => !latestOverrides.has(s.time))
           .forEach(s => slots.push({ ...s, id: s.id, teacherId: t.id, date: dateStr, source: s.source || "regular" }));
-        (t.overrideSlots || [])
-          .filter(s => s.date === dateStr && !s.unavailable)
-          .forEach(s => slots.push({ ...s, id: s.id, teacherId: t.id, date: dateStr, source: "override" }));
+        [...latestOverrides.values()]
+          .filter(s => !s.unavailable)
+          .forEach(s => slots.push({ ...s, id: s.id, teacherId: t.id, date: dateStr, day, source: "override" }));
       });
       return slots;
     }
@@ -2595,7 +2631,11 @@
       $("openSlotInfo").textContent = `${teacher.name} | ${formatClassDateTime(data.date, data.time)} | ${data.day}`;
       const subject = (teacher.subjects || [])[0] || SUBJECTS[0];
       if ([...$("openSlotSubject").options].some(option => option.value === subject)) $("openSlotSubject").value = subject;
+      $("openSlotApplyMode").value = "one_date";
+      $("openSlotStartDate").value = data.date || todayISO();
+      $("openSlotEndDate").value = "";
       $("openSlotRemark").value = "";
+      updateAvailabilityEndFields();
       $("openSlotModal").classList.remove("hide");
     }
 
@@ -2673,6 +2713,31 @@
 
     function updateRegularChangeEndField() {
       $("regularChangeEndField").classList.toggle("hide", $("regularChangeType").value !== "temporary");
+    }
+
+    function updateAvailabilityEndFields() {
+      $("openSlotEndField").classList.toggle("hide", $("openSlotApplyMode").value !== "temporary");
+      $("offSlotEndField").classList.toggle("hide", $("offSlotApplyMode").value !== "temporary");
+    }
+
+    function availabilityRuleFromForm(data, mode, startDate, endDate, extra = {}) {
+      if (!startDate) throw new Error("Choose date / start date.");
+      if (mode === "temporary" && !endDate) throw new Error("Choose an end date for temporary period.");
+      if (mode === "temporary" && endDate < startDate) throw new Error("End date cannot be before start date.");
+      const oneDate = mode === "one_date";
+      return {
+        id: uid(extra.unavailable ? "off" : "slot"),
+        day: oneDate ? dayFromISO(startDate) : data.day,
+        time: data.time,
+        ...(oneDate ? { date: startDate } : { startDate, ...(mode === "temporary" ? { endDate } : {}) }),
+        ...extra
+      };
+    }
+
+    function availabilityScopeLabel(mode, slot) {
+      if (mode === "one_date") return formatDateFromAny(slot.date);
+      if (mode === "temporary") return `${slot.day} from ${formatDateFromAny(slot.startDate)} to ${formatDateFromAny(slot.endDate)}`;
+      return `${slot.day} from ${formatDateFromAny(slot.startDate)} onward`;
     }
 
     function syncStudentRegularSlotRange(studentName, sourceTeacher, sourceSlot, targetTeacher, targetSlot, startDate, endDate, changeType) {
@@ -2771,28 +2836,41 @@
       if (!teacher) return alert("Teacher not found.");
       const duplicateBooking = scheduleBookings().find(booking => booking.teacherId === data.teacherId && booking.date === data.date && booking.time === data.time);
       if (duplicateBooking) return alert(`This time already has a class: ${duplicateBooking.studentName || "Booked class"}.`);
-      if (!confirm(`Set ${teacher.name} ${formatClassDateTime(data.date, data.time)} to OFF?`)) return;
+      $("offSlotData").value = JSON.stringify(data);
+      $("offSlotInfo").textContent = `${teacher.name} | ${formatClassDateTime(data.date, data.time)} | ${data.subject || "Open slot"}`;
+      $("offSlotApplyMode").value = "one_date";
+      $("offSlotStartDate").value = data.date || todayISO();
+      $("offSlotEndDate").value = "";
+      $("offSlotRemark").value = "";
+      updateAvailabilityEndFields();
+      $("openSlotActionModal").classList.add("hide");
+      $("offSlotModal").classList.remove("hide");
+    }
+
+    async function confirmOffSlot() {
+      const data = JSON.parse($("offSlotData").value || "null");
+      if (!data) return alert("Open slot data missing.");
+      const teacher = teacherById(data.teacherId);
+      if (!teacher) return alert("Teacher not found.");
+      const mode = $("offSlotApplyMode").value;
+      const startDate = dateOnly($("offSlotStartDate").value || data.date);
+      const endDate = dateOnly($("offSlotEndDate").value);
+      const oneDateBooking = mode === "one_date" ? scheduleBookings().find(booking => booking.teacherId === data.teacherId && booking.date === startDate && booking.time === data.time) : null;
+      if (oneDateBooking) return alert(`This time already has a class: ${oneDateBooking.studentName || "Booked class"}.`);
+      const offRule = availabilityRuleFromForm(data, mode, startDate, endDate, {
+        subject: data.subject || "",
+        unavailable: true,
+        remark: $("offSlotRemark").value.trim() || "Set to OFF from Teacher Overview",
+        source: "manual-off",
+        applyMode: mode,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
       const before = teacherLogSummary(teacher);
       teacher.overrideSlots ||= [];
-      if (data.source === "override" && data.slotId) {
-        teacher.overrideSlots = teacher.overrideSlots.filter(slot => slot.id !== data.slotId);
-      } else {
-        const existingOff = teacher.overrideSlots.find(slot => slot.date === data.date && slot.time === data.time && slot.unavailable);
-        if (!existingOff) {
-          teacher.overrideSlots.push({
-            id: uid("off"),
-            date: data.date,
-            day: data.day,
-            time: data.time,
-            subject: data.subject || "",
-            unavailable: true,
-            remark: "Set to OFF from Teacher Overview",
-            source: "manual-off"
-          });
-        }
-      }
-      logAction("Open Slot Set To OFF", teacher.name, before, teacherLogSummary(teacher), formatClassDateTime(data.date, data.time));
-      $("openSlotActionModal").classList.add("hide");
+      teacher.overrideSlots.push(offRule);
+      logAction("Open Slot Set To OFF", teacher.name, before, teacherLogSummary(teacher), `${availabilityScopeLabel(mode, offRule)} | ${timeLabel(offRule.time)}`);
+      $("offSlotModal").classList.add("hide");
       save(false);
       renderAll();
       await autoPushIfConfigured("Open slot set to OFF.");
@@ -2803,27 +2881,33 @@
       if (!data) return alert("Open slot data missing.");
       const teacher = teacherById(data.teacherId);
       if (!teacher) return alert("Teacher not found.");
-      const duplicateBooking = scheduleBookings().find(booking => booking.teacherId === data.teacherId && booking.date === data.date && booking.time === data.time);
-      if (duplicateBooking) return alert(`This time already has a class: ${duplicateBooking.studentName || "Booked class"}.`);
-      teacher.overrideSlots ||= [];
+      const mode = $("openSlotApplyMode").value;
+      const startDate = dateOnly($("openSlotStartDate").value || data.date);
+      const endDate = dateOnly($("openSlotEndDate").value);
       const subject = $("openSlotSubject").value;
-      const duplicateSlot = teacher.overrideSlots.find(slot => slot.date === data.date && slot.time === data.time && !slot.locked);
-      const before = teacherLogSummary(teacher);
-      if (duplicateSlot) {
-        duplicateSlot.subject = subject;
-        duplicateSlot.remark = $("openSlotRemark").value.trim();
+      const openRule = availabilityRuleFromForm(data, mode, startDate, endDate, {
+        subject,
+        remark: $("openSlotRemark").value.trim(),
+        source: "manual",
+        applyMode: mode,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      if (mode === "one_date") {
+        const duplicateBooking = scheduleBookings().find(booking => booking.teacherId === data.teacherId && booking.date === startDate && booking.time === data.time);
+        if (duplicateBooking) return alert(`This time already has a class: ${duplicateBooking.studentName || "Booked class"}.`);
       } else {
-        teacher.overrideSlots.push({
-          id: uid("slot"),
-          date: data.date,
-          day: data.day,
-          time: data.time,
-          subject,
-          remark: $("openSlotRemark").value.trim(),
-          source: "manual"
-        });
+        const rangeEnd = mode === "temporary" ? endDate : "9999-12-31";
+        const duplicateBookings = scheduleBookings()
+          .filter(booking => booking.teacherId === data.teacherId && booking.time === data.time)
+          .filter(booking => booking.date >= startDate && booking.date <= rangeEnd)
+          .filter(booking => dayFromISO(booking.date) === data.day);
+        if (duplicateBookings.length && !confirm(`${duplicateBookings.length} booked class(es) already exist in this period/time. Open slot rule will not delete them. Continue?`)) return;
       }
-      logAction("Open Slot Added", teacher.name, before, teacherLogSummary(teacher), `${formatClassDateTime(data.date, data.time)} | ${subject}`);
+      teacher.overrideSlots ||= [];
+      const before = teacherLogSummary(teacher);
+      teacher.overrideSlots.push(openRule);
+      logAction("Open Slot Added", teacher.name, before, teacherLogSummary(teacher), `${availabilityScopeLabel(mode, openRule)} | ${timeLabel(openRule.time)} | ${subject}`);
       $("openSlotModal").classList.add("hide");
       save(false);
       renderAll();
@@ -2901,12 +2985,21 @@
       renderSlotList();
     }
 
+    function availabilitySlotLabel(slot) {
+      const day = slot.day || (slot.date ? dayFromISO(slot.date) : "");
+      const time = timeLabel(slot.time);
+      if (slot.date) return `${formatDateFromAny(slot.date)} ${time}`;
+      if (slot.endDate) return `${day} ${time} | ${formatDateFromAny(slot.startDate)} to ${formatDateFromAny(slot.endDate)}`;
+      if (slot.startDate) return `${day} ${time} | from ${formatDateFromAny(slot.startDate)}`;
+      return `${day} ${time}`;
+    }
+
     function renderSlotList() {
       const rows = [];
       state.teachers.forEach(t => {
         (t.overrideSlots || [])
-          .filter(s => !s.source || s.source === "manual")
-          .forEach(s => rows.push(`<div class="card"><strong>${escapeHtml(t.name)}</strong> <span class="pill">Date</span><div class="subtle">${s.date} ${timeLabel(s.time)} | ${s.subject}</div><button class="btn small danger" data-delete-slot="${t.id}|override|${s.id}">Delete</button></div>`));
+          .filter(s => !s.source || String(s.source).startsWith("manual"))
+          .forEach(s => rows.push(`<div class="card"><strong>${escapeHtml(t.name)}</strong> <span class="pill">${s.unavailable ? "OFF" : "Open"}</span><div class="subtle">${escapeHtml(availabilitySlotLabel(s))} | ${escapeHtml(s.subject || "-")}${s.remark ? " | " + escapeHtml(s.remark) : ""}</div><button class="btn small danger" data-delete-slot="${t.id}|override|${s.id}">Delete</button></div>`));
       });
       $("slotList").innerHTML = rows.join("") || `<div class="empty">No particular date slots added by admin yet.</div>`;
     }
@@ -3962,6 +4055,7 @@
         createdAt: now,
         updatedAt: now
       };
+      state.replacementCredits ||= [];
       state.replacementCredits.push(credit);
       return credit;
     }
@@ -6136,20 +6230,31 @@
     $("ignoreCancelledClassBtn").onclick = () => keepCancelledNoReplacement($("undoReplacementId").value);
     $("addReplacementCreditBtn").onclick = () => {
       $("creditStudent").value = "all";
+      $("creditStudentName").value = "";
       $("creditAmount").value = 1;
       $("creditReason").value = "";
       $("creditRemark").value = "";
       $("replacementCreditModal").classList.remove("hide");
     };
+    $("creditStudent").addEventListener("change", () => {
+      const student = studentById($("creditStudent").value);
+      if (student) $("creditStudentName").value = student.name || "";
+    });
     $("saveReplacementCreditBtn").onclick = async () => {
       const student = studentById($("creditStudent").value);
+      const typedName = cleanStudentName($("creditStudentName").value);
       const amount = Number($("creditAmount").value || 0);
-      if (!student || amount <= 0) return alert("Choose student and enter credit count.");
-      const before = `${student.name}: ${replacementCreditBalance(student.id, student.name)} credit`;
-      addReplacementCredit({ studentId: student.id, studentName: student.name, amount, reason: $("creditReason").value.trim(), remark: $("creditRemark").value.trim() });
-      logAction("Replacement Credit Added", student.name, before, `${student.name}: ${replacementCreditBalance(student.id, student.name)} credit`, $("creditReason").value.trim());
+      if (!student && !typedName) return alert("Choose a saved student or type the student name.");
+      if (amount <= 0) return alert("Enter credit count.");
+      const studentId = student ? student.id : "";
+      const studentName = student ? student.name : typedName;
+      const before = `${studentName}: ${replacementCreditBalance(studentId, studentName)} credit`;
+      addReplacementCredit({ studentId, studentName, amount, reason: $("creditReason").value.trim(), remark: $("creditRemark").value.trim() });
+      logAction("Replacement Credit Added", studentName, before, `${studentName}: ${replacementCreditBalance(studentId, studentName)} credit`, $("creditReason").value.trim());
       $("replacementCreditModal").classList.add("hide");
       save(false);
+      renderReplacementCredits();
+      setStatus("Replacement credit added.");
       await autoPushIfConfigured("Replacement credit added.");
     };
     $("publicHolidayYear").value = new Date().getFullYear();
@@ -6295,7 +6400,13 @@
     });
     $("bookOpenSlotBtn").onclick = startBookingFromOpenSlotAction;
     $("changeRegularSlotBtn").onclick = openRegularChangeModalFromOpenSlot;
+    $("openSlotApplyMode").addEventListener("change", updateAvailabilityEndFields);
+    $("offSlotApplyMode").addEventListener("change", updateAvailabilityEndFields);
     $("regularChangeType").addEventListener("change", updateRegularChangeEndField);
+    $("confirmOffSlotBtn").onclick = () => confirmOffSlot().catch(err => {
+      setStatus(`Set OFF failed: ${err.message}`, "error");
+      alert(`Set OFF failed: ${err.message}`);
+    });
     $("confirmRegularChangeBtn").onclick = () => confirmRegularChange().catch(err => {
       setStatus(`Regular class change failed: ${err.message}`, "error");
       alert(`Regular class change failed: ${err.message}`);
