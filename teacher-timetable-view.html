@@ -417,6 +417,7 @@
     let autoSyncTimer = null;
     let autoSyncInProgress = false;
     let lastAutoSyncAt = null;
+    let lastLoadedVersion = 0;
     let studentSaveTimer = null;
 
     function escapeHtml(value) {
@@ -644,10 +645,11 @@
       url.searchParams.set("from", range.from);
       url.searchParams.set("to", range.to);
       if (!silent) setStatus("Loading latest timetable...");
-      const response = await fetch(url.toString(), { method: "GET" });
+      const response = await fetch(url.toString(), { method: "GET", cache: "no-store" });
       const data = await response.json();
       if (!response.ok || data.ok === false) throw new Error(teacherLinkErrorMessage(data.error || `Load failed with HTTP ${response.status}`));
       timetableData = normalizeLoadedTimetable(data);
+      lastLoadedVersion = Number(data.version || 0);
       $("teacherChip").textContent = data.teacher.name || "Teacher";
       lastAutoSyncAt = new Date();
       setSyncChip(`Auto-sync: ${clockLabel(lastAutoSyncAt)}`);
@@ -655,12 +657,34 @@
       renderAll();
     }
 
+    async function loadTeacherVersion() {
+      const teacherId = params.get("teacherId") || params.get("teacher") || "";
+      const token = params.get("token") || "";
+      if (!teacherId || !token) throw new Error("Teacher timetable link is missing.");
+      const url = new URL(`${API_BASE}/api/teacher-version`);
+      url.searchParams.set("key", STATE_KEY);
+      url.searchParams.set("teacherId", teacherId);
+      url.searchParams.set("token", token);
+      const response = await fetch(url.toString(), { method: "GET", cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok || data.ok === false) throw new Error(teacherLinkErrorMessage(data.error || `Version check failed with HTTP ${response.status}`));
+      return data;
+    }
+
     async function autoSyncTimetable() {
       if (autoSyncInProgress) return;
       autoSyncInProgress = true;
       setSyncChip("Auto-sync: checking...");
       try {
-        await loadTimetable({ silent: true });
+        const versionData = await loadTeacherVersion();
+        const checkedAt = new Date();
+        if (lastLoadedVersion && Number(versionData.version || 0) === lastLoadedVersion) {
+          lastAutoSyncAt = checkedAt;
+          setSyncChip(`Up to date: ${clockLabel(checkedAt)}`);
+          setStatus(`Timetable is up to date as of ${clockLabel(checkedAt)}.`);
+        } else {
+          await loadTimetable({ silent: true });
+        }
       } catch (error) {
         setSyncChip("Auto-sync failed");
         setStatus(`Auto-sync failed at ${clockLabel(new Date())}. Showing last loaded timetable. ${error.message}`, "warn");
@@ -959,6 +983,7 @@
       const data = await response.json();
       if (!response.ok || data.ok === false) throw new Error(data.error || `Save failed with HTTP ${response.status}`);
       timetableData.version = Number(data.version || timetableData.version || 0);
+      lastLoadedVersion = timetableData.version;
       $("studentSaveStatus").textContent = `Saved ${clockLabel(new Date())}`;
       setSyncChip(`Auto-sync: ${clockLabel(new Date())}`);
     }

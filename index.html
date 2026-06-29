@@ -5930,9 +5930,9 @@
       if (modalIsOpen()) return;
       autoNeonRefreshInProgress = true;
       try {
-        const manifest = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon auto-refresh", SYNC_READ_TIMEOUT_MS);
-        if (manifest.empty || !manifest.totalChunks) return;
-        const remoteVersion = Number(manifest.version || 0);
+        const versionInfo = await fetchNeonJson(`/api/state-version?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon version check", SYNC_READ_TIMEOUT_MS);
+        if (versionInfo.empty) return;
+        const remoteVersion = Number(versionInfo.version || 0);
         const localVersion = Number(state.settings.neonVersion || 0);
         if (remoteVersion > localVersion) {
           await neonPull(false);
@@ -7024,19 +7024,47 @@
       $("teacherProfileModal").classList.remove("hide");
       $("teacherName").focus();
     };
-    $("teacherPhoto").onchange = (e) => {
+    async function compressedProfilePhoto(file) {
+      const objectUrl = URL.createObjectURL(file);
+      try {
+        const image = await new Promise((resolve, reject) => {
+          const element = new Image();
+          element.onload = () => resolve(element);
+          element.onerror = () => reject(new Error("Unable to read this profile picture."));
+          element.src = objectUrl;
+        });
+        const maxSize = 360;
+        const scale = Math.min(1, maxSize / Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height));
+        const width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale));
+        const height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, width, height);
+        context.drawImage(image, 0, 0, width, height);
+        return canvas.toDataURL("image/jpeg", 0.78);
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    }
+
+    $("teacherPhoto").onchange = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
+      try {
+        const photo = await compressedProfilePhoto(file);
         const id = $("teacherId").value || uid("teacher");
         $("teacherId").value = id;
         let teacher = teacherById(id);
         if (!teacher) { teacher = { id, name: $("teacherName").value || "New Teacher", subjects: [], regularSlots: [], overrideSlots: [] }; state.teachers.push(teacher); }
-        teacher.photo = reader.result;
+        teacher.photo = photo;
         save(false);
-      };
-      reader.readAsDataURL(file);
+        setStatus("Profile picture compressed and saved.");
+      } catch (error) {
+        alert(error.message);
+      }
     };
     $("addSlotBtn").onclick = () => { addSlot($("slotTeacher").value, $("slotDay").value, $("slotTime").value, $("slotSubject").value); save(); };
     $("bulkAddBtn").onclick = () => {
