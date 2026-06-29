@@ -1138,9 +1138,26 @@
       </div>
       <div class="row" style="margin-top:14px;">
         <button class="btn mint" id="saveOutcomeBtn">Save Outcome</button>
+        <button class="btn mint hide" id="bookAnotherStudentBtn">Book Another Student</button>
         <button class="btn ghost" id="editBookingTimeBtn">Edit Time Slot</button>
         <button class="btn danger" id="deleteBookingBtn">Delete Booking</button>
       </div>
+    </div>
+  </div>
+
+  <div id="deleteRecurringBookingModal" class="modal hide">
+    <div class="modal-card">
+      <div class="row spread"><h2>Delete Regular Class</h2><button class="btn ghost small" data-close>Close</button></div>
+      <input id="deleteRecurringBookingId" type="hidden">
+      <div class="subtle" id="deleteRecurringInfo"></div>
+      <div class="grid two" style="margin-top:14px;">
+        <div><label>Delete Scope</label><select id="deleteRecurringScope"><option value="one_date">Particular Class Only</option><option value="temporary">Temporary Period</option><option value="permanent">Permanently From Date</option></select></div>
+        <div><label>Date / Start Date</label><input id="deleteRecurringStart" type="date"></div>
+        <div id="deleteRecurringEndField" class="hide"><label>End Date</label><input id="deleteRecurringEnd" type="date"></div>
+        <div><label>Reason / Remark</label><input id="deleteRecurringRemark" placeholder="Why is this booking being removed?"></div>
+      </div>
+      <div class="subtle" style="margin-top:10px;">Particular and temporary deletions remove the student class and leave those teacher slots open. Permanent deletion ends the fixed regular class from the selected date.</div>
+      <div class="row" style="margin-top:14px;"><button class="btn danger" id="confirmDeleteRecurringBtn">Confirm Delete</button><button class="btn ghost" data-close>Cancel</button></div>
     </div>
   </div>
 
@@ -1426,6 +1443,7 @@
     let pendingCrmBookingKind = "";
     let pendingOpenAndBook = false;
     let pendingMoveDraftBookingId = "";
+    let outcomeInteractionSource = "weekly_timetable";
     let currentDragPayloadKind = "";
     const $ = (id) => document.getElementById(id);
     const uid = (prefix) => prefix + "_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
@@ -2553,7 +2571,8 @@
     }
 
     function findBooking(slot) {
-      return scheduleBookings().find(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
+      const matches = scheduleBookings().filter(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
+      return matches.find(booking => !isCancelledStatus(booking.status)) || matches.slice().sort((a, b) => activityTime(b.updatedAt || b.createdAt) - activityTime(a.updatedAt || a.createdAt))[0];
     }
 
     function weeklyDatesInRange(startDate, endDate, day) {
@@ -2578,6 +2597,10 @@
           booking: duplicate
         };
       }
+      const reusedCancellation = options.reuseCancelledBookingId
+        ? state.bookings.find(booking => booking.id === options.reuseCancelledBookingId && isCancelledStatus(booking.status) && booking.teacherId === teacherId && booking.date === date && booking.time === time)
+        : null;
+      if (reusedCancellation) return { kind: "open", reusedCancellation };
       const slots = collectSlotsForDate(parseISODate(date)).filter(slot => slot.teacherId === teacherId && slot.time === time);
       const fixed = slots.find(slot => slot.locked && slot.id !== options.excludeSlotId);
       if (fixed) {
@@ -2596,8 +2619,8 @@
       };
     }
 
-    function validateScheduleTargets({ teacherId, dates = [], time, excludeBookingId = "", excludeBookingIds = [], excludeSlotId = "" }) {
-      const results = dates.map(date => ({ date, ...slotAvailabilityCheck(teacherId, date, time, { excludeBookingId, excludeBookingIds, excludeSlotId }) }));
+    function validateScheduleTargets({ teacherId, dates = [], time, excludeBookingId = "", excludeBookingIds = [], excludeSlotId = "", reuseCancelledBookingId = "" }) {
+      const results = dates.map(date => ({ date, ...slotAvailabilityCheck(teacherId, date, time, { excludeBookingId, excludeBookingIds, excludeSlotId, reuseCancelledBookingId }) }));
       return {
         conflicts: results.filter(item => item.kind === "conflict"),
         off: results.filter(item => item.kind === "off"),
@@ -2796,18 +2819,18 @@
     function teacherOverviewCellHtml(teacher, date, time) {
       const dateStr = localISO(date);
       const slot = collectSlotsForDate(date).find(item => item.teacherId === teacher.id && item.time === time);
-      const booking = scheduleBookings().find(item => item.teacherId === teacher.id && item.date === dateStr && item.time === time);
+      const booking = findBooking({ teacherId: teacher.id, date: dateStr, time });
       if (booking) {
         const typeClass = ` type-${String(booking.type || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
-        return `<td class="teacher-cell-booked${typeClass} ${statusClass(booking.status)}"><button class="teacher-cell-button" data-booking-id="${booking.id}">${escapeHtml(booking.studentName || "Class")} ${booking.subject ? `(${escapeHtml(booking.subject)})` : ""}</button></td>`;
+        return `<td class="teacher-cell-booked${typeClass} ${statusClass(booking.status)}"><button class="teacher-cell-button" data-booking-id="${booking.id}" data-booking-context="teacher_overview">${escapeHtml(booking.studentName || "Class")} ${booking.subject ? `(${escapeHtml(booking.subject)})` : ""}</button></td>`;
       }
       if (slot?.locked) {
-        const fixedData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject: slot.subject || "", studentName: slot.studentName || "Fixed regular class", slotId: slot.id }));
+        const fixedData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject: slot.subject || "", studentName: slot.studentName || "Fixed regular class", slotId: slot.id, interactionSource: "teacher_overview" }));
         return `<td class="teacher-cell-booked"><button class="teacher-cell-button" data-fixed-slot="${fixedData}">${escapeHtml(slot.studentName || "Fixed regular class")} ${slot.subject ? `(${escapeHtml(slot.subject)})` : ""}</button></td>`;
       }
       if (slot) {
         const day = slot.day || DAYS[(date.getDay() + 6) % 7];
-        const data = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day, time: slot.time, subject: slot.subject || (teacher.subjects || [])[0] || "", slotId: slot.id || "", source: slot.source || "" }));
+        const data = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day, time: slot.time, subject: slot.subject || (teacher.subjects || [])[0] || "", slotId: slot.id || "", source: slot.source || "", interactionSource: "teacher_overview" }));
         return `<td class="teacher-cell-open"><button class="teacher-cell-button" data-open-slot-action="${data}" title="Click to book or set this open slot to OFF"></button></td>`;
       }
       return teacherOffCellHtml(teacher, date, time);
@@ -2816,7 +2839,7 @@
     function teacherOffCellHtml(teacher, date, time) {
       const dateStr = localISO(date);
       const day = DAYS[(date.getDay() + 6) % 7];
-      const data = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day, time }));
+      const data = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day, time, interactionSource: "teacher_overview" }));
       return `<td class="teacher-cell-off"><button class="teacher-cell-button" data-open-off-slot="${data}" title="Click to set this OFF cell as an open slot">OFF</button></td>`;
     }
 
@@ -2826,7 +2849,9 @@
       const duplicate = activeBookings().find(booking => booking.teacherId === data.teacherId && booking.date === data.date && booking.time === data.time);
       if (duplicate) return alert(`This time already has a class: ${duplicate.studentName || "Booked class"}.`);
       $("openSlotData").value = JSON.stringify(data);
-      $("openSlotInfo").textContent = `${teacher.name} | ${formatClassDateTime(data.date, data.time)} | ${data.day}`;
+      $("openSlotInfo").textContent = data.interactionSource === "teacher_overview"
+        ? `${teacher.name} | ${data.day} ${timeLabel(data.time)} | choose the effective date below`
+        : `${teacher.name} | ${formatClassDateTime(data.date, data.time)} | ${data.day}`;
       const subject = (teacher.subjects || [])[0] || SUBJECTS[0];
       if ([...$("openSlotSubject").options].some(option => option.value === subject)) $("openSlotSubject").value = subject;
       $("openSlotApplyMode").value = "one_date";
@@ -2841,7 +2866,9 @@
       const teacher = teacherById(data.teacherId);
       if (!teacher) return alert("Teacher not found.");
       $("openSlotActionData").value = JSON.stringify(data);
-      $("openSlotActionInfo").textContent = `${teacher.name} | ${formatClassDateTime(data.date, data.time)} | ${data.subject || "Open slot"}`;
+      $("openSlotActionInfo").textContent = data.interactionSource === "teacher_overview"
+        ? `${teacher.name} | ${data.day} ${timeLabel(data.time)} | ${data.subject || "Open slot"}`
+        : `${teacher.name} | ${formatClassDateTime(data.date, data.time)} | ${data.subject || "Open slot"}`;
       $("openSlotActionModal").classList.remove("hide");
     }
 
@@ -2855,7 +2882,9 @@
     function openBookingModalForSlot(data) {
       $("bookingSlot").value = JSON.stringify(data);
       const teacher = teacherById(data.teacherId);
-      $("bookingInfo").textContent = `${teacher.name} | ${data.date} | ${timeLabel(data.time)} | ${data.subject}`;
+      $("bookingInfo").textContent = data.interactionSource === "teacher_overview"
+        ? `${teacher.name} | ${data.day} ${timeLabel(data.time)} | choose the booking date below`
+        : `${teacher.name} | ${data.date} | ${timeLabel(data.time)} | ${data.subject}`;
       if ([...$("bookingSubject").options].some(o => o.value === data.subject)) $("bookingSubject").value = data.subject;
       $("bookingStudent").value = "all";
       $("bookingStudentName").value = "";
@@ -3082,7 +3111,9 @@
       const duplicateBooking = activeBookings().find(booking => booking.teacherId === data.teacherId && booking.date === data.date && booking.time === data.time);
       if (duplicateBooking) return alert(`This time already has a class: ${duplicateBooking.studentName || "Booked class"}.`);
       $("offSlotData").value = JSON.stringify(data);
-      $("offSlotInfo").textContent = `${teacher.name} | ${formatClassDateTime(data.date, data.time)} | ${data.subject || "Open slot"}`;
+      $("offSlotInfo").textContent = data.interactionSource === "teacher_overview"
+        ? `${teacher.name} | ${data.day} ${timeLabel(data.time)} | choose the effective date below`
+        : `${teacher.name} | ${formatClassDateTime(data.date, data.time)} | ${data.subject || "Open slot"}`;
       $("offSlotApplyMode").value = "one_date";
       $("offSlotStartDate").value = data.date || todayISO();
       $("offSlotEndDate").value = "";
@@ -4792,7 +4823,9 @@
       if (!booking) return alert("Booking not found.");
       const recurring = recurringSlotForBooking(booking);
       $("editTimeSlotData").value = JSON.stringify({ kind: "booking", bookingId: booking.id });
-      $("editTimeSlotInfo").textContent = `${booking.studentName || "Class"} | ${teacherById(booking.teacherId)?.name || "-"} | ${formatClassDateTime(booking.date, booking.time)}${recurring ? " | recurring regular class" : " | one-time class"}`;
+      $("editTimeSlotInfo").textContent = outcomeInteractionSource === "teacher_overview"
+        ? `${booking.studentName || "Class"} | ${teacherById(booking.teacherId)?.name || "-"} | ${booking.day || recurring?.day || dayFromISO(booking.date)} ${timeLabel(booking.time)} | choose the effective date below`
+        : `${booking.studentName || "Class"} | ${teacherById(booking.teacherId)?.name || "-"} | ${formatClassDateTime(booking.date, booking.time)}${recurring ? " | recurring regular class" : " | one-time class"}`;
       $("editTimeSlotMode").value = "one_date";
       $("editTimeSlotMode").disabled = !recurring;
       $("editTimeSlotTeacher").value = booking.teacherId;
@@ -5963,9 +5996,10 @@
       return booking;
     }
 
-    function openOutcomeModal(booking) {
+    function openOutcomeModal(booking, interactionSource = "weekly_timetable") {
       const teacher = teacherById(booking.teacherId);
       const recurringSlot = recurringSlotForBooking(booking);
+      outcomeInteractionSource = interactionSource;
       $("outcomeBookingId").value = booking.id;
       $("outcomeStatus").value = booking.status === "completed" ? "booked" : (booking.status || "booked");
       $("outcomeRemark").value = booking.remark || "";
@@ -5978,9 +6012,35 @@
       $("outcomeScopeStart").value = booking.date || todayISO();
       $("outcomeScopeEnd").value = "";
       $("outcomeScope").disabled = !recurringSlot;
-      $("outcomeInfo").textContent = `${teacher ? teacher.name : ""} | ${booking.date} | ${timeLabel(booking.time)} | ${booking.studentName || ""} | Current: ${bookingStatusLabel(booking.status)}`;
+      $("outcomeInfo").textContent = interactionSource === "teacher_overview"
+        ? `${teacher ? teacher.name : ""} | ${booking.day || recurringSlot?.day || dayFromISO(booking.date)} ${timeLabel(booking.time)} | ${booking.studentName || ""} | choose the effective date when applying an action`
+        : `${teacher ? teacher.name : ""} | ${booking.date} | ${timeLabel(booking.time)} | ${booking.studentName || ""} | Current: ${bookingStatusLabel(booking.status)}`;
+      $("bookAnotherStudentBtn").classList.toggle("hide", !isCancelledStatus(booking.status));
       updateOutcomeReplacementField();
       $("bookingOutcomeModal").classList.remove("hide");
+    }
+
+    function bookAnotherStudentFromCancelled() {
+      const booking = state.bookings.find(item => item.id === $("outcomeBookingId").value);
+      if (!booking || !isCancelledStatus(booking.status)) return alert("Choose a cancelled class first.");
+      const occupied = activeBookings().find(item => item.id !== booking.id && item.teacherId === booking.teacherId && item.date === booking.date && item.time === booking.time);
+      if (occupied) return alert(`This slot has already been rebooked for ${occupied.studentName || "another student"}.`);
+      const teacher = teacherById(booking.teacherId);
+      $("bookingOutcomeModal").classList.add("hide");
+      openBookingModalForSlot({
+        teacherId: booking.teacherId,
+        date: booking.date,
+        day: booking.day || dayFromISO(booking.date),
+        time: booking.time,
+        subject: booking.subject || (teacher?.subjects || [])[0] || "",
+        reuseCancelledBookingId: booking.id,
+        interactionSource: "cancelled_class_rebooking"
+      });
+      $("bookingType").value = "extra class";
+      $("bookingApplyMode").value = "one_date";
+      $("bookingStartDate").value = booking.date;
+      updateBookingPeriodFields();
+      setStatus(`Cancelled slot ready to book for another student: ${teacher?.name || "Teacher"}, ${formatClassDateTime(booking.date, booking.time)}.`);
     }
 
     function updateOutcomeReplacementField() {
@@ -5988,9 +6048,10 @@
       const booking = state.bookings.find(item => item.id === $("outcomeBookingId").value);
       const cancellable = Boolean(replacementReasonForStatus(status));
       const recurring = Boolean(recurringSlotForBooking(booking));
+      const teacherOverview = outcomeInteractionSource === "teacher_overview";
       $("publicHolidayReplacementField").classList.toggle("hide", status !== "public_holiday");
       $("outcomeScopeField").classList.toggle("hide", !cancellable);
-      $("outcomeScopeStartField").classList.toggle("hide", !cancellable || !recurring || $("outcomeScope").value === "one_date");
+      $("outcomeScopeStartField").classList.toggle("hide", !recurring || (!teacherOverview && (!cancellable || $("outcomeScope").value === "one_date")));
       $("outcomeScopeEndField").classList.toggle("hide", !cancellable || !recurring || $("outcomeScope").value !== "temporary");
     }
 
@@ -6077,6 +6138,7 @@
       const replacementNeeded = $("outcomeReplacementNeeded").value;
       const recurringSlot = recurringSlotForBooking(booking);
       const scope = recurringSlot && replacementReasonForStatus(nextStatus) ? $("outcomeScope").value : "one_date";
+      let feedbackBooking = booking;
       if (scope === "permanent") {
         try { endRecurringClass(booking, recurringSlot, dateOnly($("outcomeScopeStart").value || booking.date), remark); }
         catch (err) { return alert(err.message); }
@@ -6091,19 +6153,79 @@
         catch (err) { return alert(`Cannot cancel this period. ${err.message}`); }
         affected.forEach(item => applyOutcomeToBooking(item, nextStatus, remark, replacementNeeded));
       } else {
-        applyOutcomeToBooking(booking, nextStatus, remark, replacementNeeded);
+        let affectedBooking = booking;
+        if (recurringSlot && outcomeInteractionSource === "teacher_overview") {
+          const selectedDate = dateOnly($("outcomeScopeStart").value);
+          if (!selectedDate) return alert("Choose the class date.");
+          if (dayFromISO(selectedDate) !== recurringSlot.day) return alert(`Choose a ${recurringSlot.day} date for this fixed regular class.`);
+          try { affectedBooking = recurringBookingForDate(booking, recurringSlot, selectedDate); }
+          catch (err) { return alert(`Cannot update this class. ${err.message}`); }
+        }
+        if (nextStatus === "booked") {
+          const occupied = activeBookings().find(item => item.id !== affectedBooking.id && item.teacherId === affectedBooking.teacherId && item.date === affectedBooking.date && item.time === affectedBooking.time);
+          if (occupied) return alert(`Cannot restore this class because the slot is now booked for ${occupied.studentName || "another student"}.`);
+        }
+        applyOutcomeToBooking(affectedBooking, nextStatus, remark, replacementNeeded);
+        feedbackBooking = affectedBooking;
       }
-      upsertFeedbackFromOutcome(booking);
+      upsertFeedbackFromOutcome(feedbackBooking);
       $("bookingOutcomeModal").classList.add("hide");
       save(false);
       await autoPushIfConfigured(scope === "permanent" ? "Regular class ended." : `Class marked as ${bookingStatusLabel(nextStatus)}.`);
     }
 
-    async function deleteBookingFromOutcome() {
+    function updateDeleteRecurringEndField() {
+      $("deleteRecurringEndField").classList.toggle("hide", $("deleteRecurringScope").value !== "temporary");
+    }
+
+    function openDeleteBookingModal() {
       const booking = state.bookings.find(b => b.id === $("outcomeBookingId").value);
       if (!booking) return alert("Booking not found.");
-      const label = `${booking.studentName || "this class"} on ${formatClassDateTime(booking.date, booking.time)}`;
-      if (!confirm(`Delete booking for ${label}?`)) return;
+      const recurringSlot = recurringSlotForBooking(booking);
+      if (!recurringSlot) {
+        deleteBookingFromOutcome().catch(err => {
+          setStatus(`Delete booking failed: ${err.message}`, "error");
+          alert(`Delete booking failed: ${err.message}`);
+        });
+        return;
+      }
+      const teacher = teacherById(booking.teacherId);
+      $("deleteRecurringBookingId").value = booking.id;
+      $("deleteRecurringInfo").textContent = `${teacher?.name || "Teacher"} | ${recurringSlot.day} ${timeLabel(recurringSlot.time)} | ${booking.studentName || recurringSlot.studentName || "Regular class"}`;
+      $("deleteRecurringScope").value = "one_date";
+      $("deleteRecurringStart").value = booking.date || todayISO();
+      $("deleteRecurringEnd").value = "";
+      $("deleteRecurringRemark").value = "";
+      updateDeleteRecurringEndField();
+      $("bookingOutcomeModal").classList.add("hide");
+      $("deleteRecurringBookingModal").classList.remove("hide");
+    }
+
+    function bookingForRecurringDeletion(sourceBooking, recurringSlot, date) {
+      const conflict = scheduleBookings().find(item =>
+        item.teacherId === sourceBooking.teacherId && item.date === date && item.time === recurringSlot.time &&
+        studentNameKey(item.studentName) !== studentNameKey(sourceBooking.studentName)
+      );
+      if (conflict) throw new Error(`${teacherById(sourceBooking.teacherId)?.name || "Teacher"} is booked by ${conflict.studentName || "another class"} on ${formatClassDateTime(date, recurringSlot.time)}.`);
+      const existing = state.bookings.find(item =>
+        item.teacherId === sourceBooking.teacherId && item.date === date && item.time === recurringSlot.time &&
+        studentNameKey(item.studentName) === studentNameKey(sourceBooking.studentName)
+      );
+      if (existing) return existing;
+      const created = fixedSlotToBooking({
+        teacherId: sourceBooking.teacherId,
+        date,
+        day: recurringSlot.day,
+        time: recurringSlot.time,
+        subject: sourceBooking.subject || recurringSlot.subject || "",
+        studentName: sourceBooking.studentName || recurringSlot.studentName || "Fixed regular class",
+        slotId: recurringSlot.id
+      });
+      state.bookings.push(created);
+      return created;
+    }
+
+    function markBookingDeleted(booking, remark = "") {
       const before = bookingLogSummary(booking);
       const refundedCredit = refundReplacementCreditForBooking(booking);
       const restoredOff = restoreAutoOpenedSlotIfUnused(booking);
@@ -6111,8 +6233,64 @@
       booking.archived = true;
       booking.deletedAt = new Date().toISOString();
       booking.updatedAt = booking.deletedAt;
+      if (remark) booking.remark = [booking.remark, remark].filter(Boolean).join("\n");
       logAction("Booking Deleted", booking.studentName || booking.id, before, "Deleted", `${refundedCredit ? "Replacement credit refunded. " : ""}${restoredOff ? "Date-specific slot returned to OFF. " : ""}${booking.remark || "Deleted from class outcome."}`);
       withdrawReplacementForBooking(booking);
+    }
+
+    async function confirmDeleteRecurringBooking() {
+      const booking = state.bookings.find(item => item.id === $("deleteRecurringBookingId").value);
+      const recurringSlot = recurringSlotForBooking(booking);
+      if (!booking || !recurringSlot) return alert("Fixed regular class not found.");
+      const scope = $("deleteRecurringScope").value;
+      const startDate = dateOnly($("deleteRecurringStart").value);
+      const endDate = dateOnly($("deleteRecurringEnd").value);
+      const remark = $("deleteRecurringRemark").value.trim();
+      if (!startDate) return alert("Choose the class date / start date.");
+      if (dayFromISO(startDate) !== recurringSlot.day) return alert(`Choose a ${recurringSlot.day} date for this fixed regular class.`);
+      if (scope === "temporary" && (!endDate || endDate < startDate)) return alert("Choose a valid temporary end date.");
+      const scopeText = scope === "one_date" ? formatDateFromAny(startDate) : scope === "temporary" ? `${formatDateFromAny(startDate)} to ${formatDateFromAny(endDate)}` : `from ${formatDateFromAny(startDate)} onward`;
+      if (!confirm(`Delete ${booking.studentName || "this regular class"} ${scopeText}?`)) return;
+
+      if (scope === "permanent") {
+        endRecurringClass(booking, recurringSlot, startDate, remark || "Deleted permanently from Teacher Overview.");
+        addOpenRuleForScope({
+          teacherId: booking.teacherId,
+          day: recurringSlot.day,
+          time: recurringSlot.time,
+          subject: booking.subject || recurringSlot.subject || "",
+          mode: "permanent",
+          startDate,
+          endDate: "",
+          remark: remark || "Regular class ended; teacher slot opened"
+        });
+      } else {
+        const dates = scope === "one_date" ? [startDate] : weeklyDatesInRange(startDate, endDate, recurringSlot.day);
+        const affected = dates.map(date => bookingForRecurringDeletion(booking, recurringSlot, date));
+        affected.forEach(item => markBookingDeleted(item, remark || "Removed from fixed regular timetable."));
+        addOpenRuleForScope({
+          teacherId: booking.teacherId,
+          day: recurringSlot.day,
+          time: recurringSlot.time,
+          subject: booking.subject || recurringSlot.subject || "",
+          mode: scope,
+          startDate,
+          endDate,
+          remark: remark || "Regular class deleted; teacher slot opened"
+        });
+      }
+      $("deleteRecurringBookingModal").classList.add("hide");
+      save(false);
+      renderAll();
+      await autoPushIfConfigured(scope === "permanent" ? "Regular class ended." : "Regular class booking deleted and slot opened.");
+    }
+
+    async function deleteBookingFromOutcome() {
+      const booking = state.bookings.find(b => b.id === $("outcomeBookingId").value);
+      if (!booking) return alert("Booking not found.");
+      const label = `${booking.studentName || "this class"} on ${formatClassDateTime(booking.date, booking.time)}`;
+      if (!confirm(`Delete booking for ${label}?`)) return;
+      markBookingDeleted(booking);
       $("bookingOutcomeModal").classList.add("hide");
       save(false);
       renderAll();
@@ -6148,6 +6326,8 @@
       if (!replacement) return alert("Replacement record not found.");
       const booking = (state.bookings || []).find(item => item.id === replacement.bookingId);
       if (!booking) return alert("Original booking not found. Please pull latest timetable data and try again.");
+      const occupied = activeBookings().find(item => item.id !== booking.id && item.teacherId === booking.teacherId && item.date === booking.date && item.time === booking.time);
+      if (occupied) return alert(`Cannot restore the original class because this slot is now booked for ${occupied.studentName || "another student"}.`);
       const before = bookingLogSummary(booking);
       booking.status = "booked";
       booking.archived = false;
@@ -6380,13 +6560,13 @@
       const bookingBtn = e.target.closest("[data-booking-id]");
       if (bookingBtn) {
         const booking = state.bookings.find(b => b.id === bookingBtn.dataset.bookingId);
-        if (booking) openOutcomeModal(booking);
+        if (booking) openOutcomeModal(booking, bookingBtn.dataset.bookingContext || "weekly_timetable");
       }
       const fixedSlotBtn = e.target.closest("[data-fixed-slot]");
       if (fixedSlotBtn) {
         const data = JSON.parse(fixedSlotBtn.dataset.fixedSlot);
         const booking = ensureBookingFromFixedSlot(data);
-        openOutcomeModal(booking);
+        openOutcomeModal(booking, data.interactionSource || "weekly_timetable");
       }
       const close = e.target.closest("[data-close]");
       if (close) {
@@ -7035,9 +7215,10 @@
       let period;
       try { period = bookingDatesFromForm(slot); } catch (err) { return alert(err.message); }
       if (period.dates.some(date => slotHasPassed(date, slot.time))) return alert("Cannot book a class in a time slot that has already passed.");
+      if (slot.reuseCancelledBookingId && (period.mode !== "one_date" || period.startDate !== slot.date)) return alert("A cancelled slot can only be rebooked for its original date and time.");
       if (period.mode === "permanent" && type !== "regular class") return alert("Ongoing bookings are only available for Regular Class. Choose particular date or temporary period for other class types.");
       if (type === "replacement class" && period.mode !== "one_date") return alert("Each replacement credit books one class. Choose Particular Date Only.");
-      const validation = validateScheduleTargets({ teacherId: slot.teacherId, dates: period.dates, time: slot.time });
+      const validation = validateScheduleTargets({ teacherId: slot.teacherId, dates: period.dates, time: slot.time, reuseCancelledBookingId: slot.reuseCancelledBookingId || "" });
       if (validation.conflicts.length) return alert(conflictListMessage(validation.conflicts, "book this class"));
       if (period.mode === "permanent") {
         const permanentConflict = permanentBookingConflict(slot.teacherId, period.day, slot.time, period.startDate);
@@ -7075,6 +7256,7 @@
           const booking = {
             id: uid("booking"), ...slot, date, day: dayFromISO(date), studentId: student ? student.id : "", studentName,
             subject, type, status: "booked", archived: false, minutes: 25, remark,
+            reusedCancelledBookingId: slot.reuseCancelledBookingId || "",
             recurrenceGroupId,
             recurrenceMode: period.mode, recurrenceStartDate: period.startDate, recurrenceEndDate: period.endDate,
             openedAvailabilityRuleId: openedRule?.id || "", createdAt: new Date().toISOString()
@@ -7085,6 +7267,17 @@
         });
       }
       const booking = createdBookings[0] || null;
+      if (booking && slot.reuseCancelledBookingId) {
+        const cancelledBooking = state.bookings.find(item => item.id === slot.reuseCancelledBookingId);
+        if (cancelledBooking) {
+          cancelledBooking.rebookedByBookingId = booking.id;
+          cancelledBooking.rebookedStudentName = booking.studentName;
+          cancelledBooking.rebookedAt = new Date().toISOString();
+          cancelledBooking.updatedAt = cancelledBooking.rebookedAt;
+          cancelledBooking.remark = [cancelledBooking.remark, `Slot reused by ${booking.studentName}.`].filter(Boolean).join("\n");
+          logAction("Cancelled Slot Rebooked", cancelledBooking.studentName || cancelledBooking.id, bookingLogSummary(cancelledBooking), bookingLogSummary(booking), `New student: ${booking.studentName}`);
+        }
+      }
       if (booking?.type === "replacement class") {
         const deducted = pendingReplacementCreditId
           ? deductSelectedReplacementCredit(pendingReplacementCreditId, booking.id)
@@ -7287,10 +7480,13 @@
     $("exportRevenuePdfBtn").onclick = () => openPrintReport("Class One Revenue", ["No.", "Month", "Revenue", "Remark", "Last Updated"], numbered(revenueExportRows()));
     $("exportTeacherReportPdfBtn").onclick = () => openPrintReport("Teacher Monthly Payout Report", ["No.", "Date", "Time", "Student", "Subject", "Type", "Status", "Pay RM", "Remark"], numbered(currentTeacherReportRows()));
     $("saveOutcomeBtn").onclick = saveOutcome;
+    $("bookAnotherStudentBtn").onclick = bookAnotherStudentFromCancelled;
     $("editBookingTimeBtn").onclick = () => openEditTimeSlotForBooking(state.bookings.find(item => item.id === $("outcomeBookingId").value));
-    $("deleteBookingBtn").onclick = () => deleteBookingFromOutcome().catch(err => {
-      setStatus(`Delete booking failed: ${err.message}`, "error");
-      alert(`Delete booking failed: ${err.message}`);
+    $("deleteBookingBtn").onclick = openDeleteBookingModal;
+    $("deleteRecurringScope").addEventListener("change", updateDeleteRecurringEndField);
+    $("confirmDeleteRecurringBtn").onclick = () => confirmDeleteRecurringBooking().catch(err => {
+      setStatus(`Delete regular class failed: ${err.message}`, "error");
+      alert(`Delete regular class failed: ${err.message}`);
     });
     $("confirmMoveBookingBtn").onclick = () => confirmMoveBooking().catch(err => {
       setStatus(`Move failed: ${err.message}`, "error");
