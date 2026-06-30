@@ -2777,6 +2777,7 @@
       logAction(regenerate ? "Teacher View Link Regenerated" : "Teacher View Link Generated", teacher.name, regenerate ? "Previous link invalidated" : "No link", "New permanent link", "Generated from Teacher Overview.");
       save(false);
       renderTeacherOverviewLink(teacher);
+      renderTeachers();
       setStatus("Teacher view link generated. It will become live after database sync.");
       await autoPushIfConfigured("Teacher view link generated.");
     }
@@ -3277,6 +3278,12 @@
             <div class="row spread"><strong>${escapeHtml(t.name)}</strong><span class="pill">${escapeHtml(t.tier)}</span></div>
             <div>${(t.subjects || []).map(s => `<span class="pill">${escapeHtml(s)}</span>`).join("")}</div>
             <div class="subtle">${t.category === "micro_franchisee" ? `Micro Franchisee | Profit share: ${Number(t.profitShare || 0).toFixed(2)}%` : `Freelance Tutor | Rate: ${Number(t.rate || 0).toFixed(2)}`} | Slots: ${(t.regularSlots || []).length} regular, ${(t.overrideSlots || []).length} date-specific${(t.regularSlots || []).some(s => s.source === "teacher-sheet") ? " | Imported from teacher sheet" : ""}</div>
+            <div class="row" style="margin-top:8px;">
+              <span class="subtle"><strong>Teacher view link:</strong></span>
+              ${t.viewToken
+                ? `<span class="pill available">Ready</span><a class="btn small mint" href="${escapeHtml(teacherTimetableLink(t))}" target="_blank" rel="noopener noreferrer">Open View</a><button class="btn small ghost" data-overview-copy-link="${t.id}">Copy Link</button>`
+                : `<span class="pill cancelled">Not Generated</span><button class="btn small mint" data-overview-generate-link="${t.id}">Generate Link</button>`}
+            </div>
             ${teacherFeedbackSummaryHtml(t)}
             <div class="row" style="margin-top:8px;"><button class="btn small ghost" data-edit-teacher="${t.id}">Edit</button><button class="btn small ghost" data-add-teacher-feedback="${t.id}">Add Feedback</button><button class="btn small ghost" data-view-teacher-feedback="${t.id}">View Feedback</button><button class="btn small ghost" data-archive-teacher="${t.id}">Archive</button><button class="btn small danger" data-delete-teacher="${t.id}">Delete</button></div>
           </div>
