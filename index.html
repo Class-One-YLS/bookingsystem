@@ -1397,6 +1397,7 @@
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
     const AUTO_NEON_REFRESH_MS = 60000;
+    const AUTO_SAVE_DEBOUNCE_MS = 1200;
     const NEON_CHUNK_SIZE = 300000;
     const STORE_KEY = "classOneBookingRevamp.v1";
     const DB_NAME = "ClassOneBookingDB";
@@ -1407,6 +1408,7 @@
       students: [],
       leads: [],
       tutorLeads: [],
+      crmHistoricalMonthlyStats: [],
       bookings: [],
       replacements: [],
       replacementCredits: [],
@@ -1757,8 +1759,8 @@
           neonApiKey: state.settings.neonApiKey || DEFAULT_NEON.apiKey,
           neonStateKey: state.settings.neonStateKey || DEFAULT_NEON.stateKey,
           neonVersion: state.settings.neonVersion || 0,
-          pendingLocalSync: false,
-          lastLocalChangeAt: "",
+          pendingLocalSync: Boolean(state.settings.pendingLocalSync),
+          lastLocalChangeAt: state.settings.lastLocalChangeAt || "",
           lastSyncedAt: state.settings.lastSyncedAt || ""
         }
       };
@@ -1774,8 +1776,8 @@
       if (!saved) return;
       Object.assign(state, saved);
       state.settings ||= {};
-      state.settings.pendingLocalSync = false;
-      state.settings.lastLocalChangeAt = "";
+      state.settings.pendingLocalSync = Boolean(state.settings.pendingLocalSync);
+      state.settings.lastLocalChangeAt ||= "";
       normalizeState();
       applySettingsInputs();
       archivePast(false);
@@ -1793,6 +1795,7 @@
       state.students ||= [];
       state.leads ||= [];
       state.tutorLeads ||= [];
+      state.crmHistoricalMonthlyStats ||= [];
       state.bookings ||= [];
       state.replacements ||= [];
       state.replacementCredits ||= [];
@@ -1858,6 +1861,12 @@
         lead.status ||= "New Applicant";
         lead.rate = Number(lead.rate || 0);
         lead.profitShare = Number(lead.profitShare || 0);
+      });
+      state.crmHistoricalMonthlyStats.forEach(item => {
+        item.id ||= `crm_history_${Number(item.year || 0)}_${Number(item.month || 0)}`;
+        item.year = Number(item.year || 0);
+        item.month = Number(item.month || 0);
+        ["total", "newContact", "followUp", "assessment", "trial", "enrolled", "lost"].forEach(key => item[key] = Number(item[key] || 0));
       });
       state.replacements.forEach(item => {
         item.studentName = cleanStudentName(item.studentName);
@@ -2468,7 +2477,7 @@
             setStatus(`Saved in this browser. Neon auto-sync failed: ${err.message}`, "warn");
           }
         }
-      }, 5000);
+      }, AUTO_SAVE_DEBOUNCE_MS);
     }
 
     function isNeonVersionConflict(error) {
@@ -4253,6 +4262,11 @@
             <div><strong>Old Imported Leads</strong><div class="subtle">Pulled from older CRM sheet tabs. Expand only when you need to search old records.</div></div>
             <span class="pill">${oldLeads.length}</span>
           </summary>
+          <div class="row" style="margin-top:12px;">
+            <button class="btn small ghost" id="exportOldImportedLeadsBtn">Export Old Leads Backup</button>
+            <button class="btn small danger" id="cleanupOldImportedLeadsBtn">Backup & Remove Old Imported Leads</button>
+          </div>
+          <div class="subtle" style="margin-top:8px;">Cleanup preserves monthly dashboard totals and keeps pinned active, enrolled, and student-linked records.</div>
           <div class="list" style="margin-top:12px;">
             ${oldLeads.slice(0, LEADS_PER_PAGE).map(lead => `
               <div class="card lead-card ${escapeHtml(lead.urgency || "warm")}">
@@ -4271,6 +4285,94 @@
           </div>
           ${oldLeads.length > LEADS_PER_PAGE ? `<div class="subtle" style="margin-top:10px;">Showing first ${LEADS_PER_PAGE}. Use the filters/search above to narrow old imported leads.</div>` : ""}
         </details>`;
+    }
+
+    function oldImportedLeadsForBackup() {
+      return (state.leads || []).filter(lead => isOldImportedLead(lead) || Boolean(crmLeadMonthlyTabDate(lead)));
+    }
+
+    function shouldPreserveImportedLead(lead) {
+      if (lead.pinnedActive || lead.status === "Enrolled" || lead.studentId) return true;
+      return state.students.some(student => studentNameKey(student.name) === studentNameKey(lead.childName) && student.status !== "archived");
+    }
+
+    function oldImportedCleanupCandidates() {
+      return oldImportedLeadsForBackup().filter(lead => !shouldPreserveImportedLead(lead));
+    }
+
+    function oldImportedLeadExportRows(leads = oldImportedLeadsForBackup()) {
+      return leads.map(lead => [
+        dateOnly(lead.createdAt),
+        lead.parentName || "",
+        lead.parentPhone || "",
+        lead.childName || "",
+        lead.childAge || "",
+        (lead.subjects || []).join(", "),
+        lead.source || "",
+        lead.salesperson || "",
+        lead.status || "New Contact",
+        lead.nextFollowUp || "",
+        lead.notes || ""
+      ]);
+    }
+
+    function downloadOldImportedLeadsBackup(leads = oldImportedLeadsForBackup()) {
+      downloadCsv(`class-one-old-imported-leads-backup-${todayISO()}.csv`, ["No.", "Created", "Parent", "Phone", "Child", "Age", "Subjects", "Source", "Salesperson", "Status", "Next Follow-up", "Notes"], numbered(oldImportedLeadExportRows(leads)));
+    }
+
+    function preserveHistoricalCrmStats(leads) {
+      const grouped = new Map();
+      leads.forEach(lead => {
+        const date = crmLeadReportingDate(lead);
+        if (!date) return;
+        const month = date.getMonth();
+        const year = date.getFullYear();
+        const id = `crm_history_${year}_${month}`;
+        const row = grouped.get(id) || { id, month, year, total: 0, newContact: 0, followUp: 0, assessment: 0, trial: 0, enrolled: 0, lost: 0 };
+        row.total += 1;
+        const statusKey = {
+          "New Contact": "newContact",
+          "Follow Up": "followUp",
+          "Assessment": "assessment",
+          "Trial Class": "trial",
+          "Enrolled": "enrolled",
+          "Lost": "lost"
+        }[lead.status || "New Contact"];
+        if (statusKey) row[statusKey] += 1;
+        grouped.set(id, row);
+      });
+      state.crmHistoricalMonthlyStats ||= [];
+      grouped.forEach(row => {
+        const existing = state.crmHistoricalMonthlyStats.find(item => item.id === row.id);
+        if (existing) {
+          ["total", "newContact", "followUp", "assessment", "trial", "enrolled", "lost"].forEach(key => existing[key] = Number(existing[key] || 0) + Number(row[key] || 0));
+          existing.updatedAt = new Date().toISOString();
+        } else {
+          state.crmHistoricalMonthlyStats.push({ ...row, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+        }
+      });
+    }
+
+    async function cleanupOldImportedLeads() {
+      const backupLeads = oldImportedLeadsForBackup();
+      const candidates = oldImportedCleanupCandidates();
+      if (!candidates.length) return alert("There are no removable old imported leads. Pinned, enrolled, and student-linked records were preserved.");
+      if (!confirm(`This will back up ${backupLeads.length} old imported leads and remove ${candidates.length} removable records. Monthly dashboard totals will be preserved. Continue?`)) return;
+      const confirmation = prompt(`Type REMOVE to confirm deleting ${candidates.length} old imported lead records from the app database.`);
+      if (confirmation !== "REMOVE") return setStatus("Old imported lead cleanup cancelled.", "warn");
+      downloadOldImportedLeadsBackup(backupLeads);
+      preserveHistoricalCrmStats(candidates);
+      const removeIds = new Set(candidates.map(lead => lead.id));
+      state.leads = state.leads.filter(lead => !removeIds.has(lead.id));
+      state.settings.crmMonthlyImportDisabled = true;
+      state.settings.crmMonthlyImportDisabledAt = new Date().toISOString();
+      logAction("Old CRM Leads Cleaned Up", "CRM Leads", `${backupLeads.length} old imported records`, `${candidates.length} removed`, "CSV backup downloaded. Monthly dashboard totals preserved. Monthly-tab auto-import disabled.");
+      save(false);
+      renderLeads();
+      renderCrmDashboard();
+      setStatus(`${candidates.length} old imported leads removed. Backup downloaded and monthly totals preserved. Syncing the smaller database...`);
+      const synced = await autoPushIfConfigured("Old imported CRM leads removed.");
+      if (synced) setStatus(`${candidates.length} old imported leads removed and synced. Monthly totals remain available.`);
     }
 
     function renderLeadTable(leads) {
@@ -5443,20 +5545,29 @@
           const date = crmLeadReportingDate(lead);
           return date && date.getFullYear() === year && date.getMonth() === month && !lead.archived;
         });
-        const countStatus = (status) => leads.filter(lead => lead.status === status).length;
+        const historical = (state.crmHistoricalMonthlyStats || []).find(item => Number(item.year) === year && Number(item.month) === month) || {};
+        const liveCountStatus = (status) => leads.filter(lead => lead.status === status).length;
+        const statusCount = (status, historicalKey) => liveCountStatus(status) + Number(historical[historicalKey] || 0);
+        const total = leads.length + Number(historical.total || 0);
+        const newContact = statusCount("New Contact", "newContact");
+        const followUp = statusCount("Follow Up", "followUp");
+        const assessment = statusCount("Assessment", "assessment");
+        const trial = statusCount("Trial Class", "trial");
+        const enrolled = statusCount("Enrolled", "enrolled");
+        const lost = statusCount("Lost", "lost");
         return {
           month: new Date(year, month, 1).toLocaleString("en", { month: "long" }),
-          total: leads.length,
-          newContact: countStatus("New Contact"),
-          followUp: countStatus("Follow Up"),
-          assessment: countStatus("Assessment"),
-          trial: countStatus("Trial Class"),
-          enrolled: countStatus("Enrolled"),
-          lost: countStatus("Lost"),
-          assessmentRate: pct(countStatus("Assessment"), leads.length),
-          trialRate: pct(countStatus("Trial Class"), leads.length),
-          enrolledRate: pct(countStatus("Enrolled"), leads.length),
-          lostRate: pct(countStatus("Lost"), leads.length)
+          total,
+          newContact,
+          followUp,
+          assessment,
+          trial,
+          enrolled,
+          lost,
+          assessmentRate: pct(assessment, total),
+          trialRate: pct(trial, total),
+          enrolledRate: pct(enrolled, total),
+          lostRate: pct(lost, total)
         };
       });
     }
@@ -5493,7 +5604,7 @@
       const compareRows = compareYear ? crmMonthlyRows(compareYear) : [];
       const totals = crmTotals(rows);
       const compareTotals = compareYear ? crmTotals(compareRows) : {};
-      const classifiedFromMonthlyTabs = state.leads.filter(lead => !lead.archived && crmLeadMonthlyTabDate(lead)?.getFullYear() === year).length;
+      const classifiedFromMonthlyTabs = state.leads.filter(lead => !lead.archived && crmLeadMonthlyTabDate(lead)?.getFullYear() === year).length + (state.crmHistoricalMonthlyStats || []).filter(item => Number(item.year) === year).reduce((sum, item) => sum + Number(item.total || 0), 0);
       $("crmDashboardSummary").innerHTML = `
         <div class="metric"><span class="subtle">${year} total leads</span><strong>${totals.total || 0}</strong>${compareYear ? `<span class="subtle">vs ${compareYear}: ${compareTotals.total || 0} (${(totals.total || 0) - (compareTotals.total || 0) >= 0 ? "+" : ""}${(totals.total || 0) - (compareTotals.total || 0)})</span>` : ""}<span class="subtle">${classifiedFromMonthlyTabs} classified from monthly sheet tabs</span></div>
         <div class="metric"><span class="subtle">Assessment rate</span><strong>${pct(totals.assessment || 0, totals.total || 0)}</strong><span class="subtle">${totals.assessment || 0} leads</span></div>
@@ -5544,7 +5655,7 @@
       link.href = URL.createObjectURL(blob);
       link.download = filename;
       link.click();
-      URL.revokeObjectURL(link.href);
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
       setStatus(`${filename} downloaded.`);
     }
 
@@ -5877,11 +5988,20 @@
       if (!url) return alert("Paste your CRM Apps Script web app URL first.");
       const data = await fetchJsonWithTimeout(`${url}?action=read&key=${encodeURIComponent($("crmApiKey").value.trim())}`, {}, "CRM sync");
       if (!data.ok) throw new Error(data.error || "CRM pull failed");
-      state.leads = data.leads || [];
+      const pulledLeads = data.leads || [];
+      const skippedMonthly = state.settings.crmMonthlyImportDisabled ? pulledLeads.filter(lead => crmLeadMonthlyTabDate(lead)).length : 0;
+      if (state.settings.crmMonthlyImportDisabled) {
+        const currentLeads = state.leads.filter(lead => !crmLeadMonthlyTabDate(lead) || shouldPreserveImportedLead(lead));
+        const currentIds = new Set(currentLeads.map(lead => lead.id));
+        const incoming = pulledLeads.filter(lead => !crmLeadMonthlyTabDate(lead) && !currentIds.has(lead.id));
+        state.leads = [...currentLeads, ...incoming];
+      } else {
+        state.leads = pulledLeads;
+      }
       suppressAutoPush = true;
       save(false);
       suppressAutoPush = false;
-      setStatus("Pulled CRM leads from Google Sheet.");
+      setStatus(skippedMonthly ? `Pulled current CRM leads. Skipped ${skippedMonthly} archived monthly-tab records.` : "Pulled CRM leads from Google Sheet.");
     }
 
     async function crmPush() {
@@ -5996,6 +6116,7 @@
       [
         "leads",
         "tutorLeads",
+        "crmHistoricalMonthlyStats",
         "bookings",
         "replacements",
         "replacementCredits",
@@ -6014,6 +6135,9 @@
         pendingLocalSync: true
       };
       normalizeState();
+      if (state.settings.crmMonthlyImportDisabled) {
+        state.leads = state.leads.filter(lead => (!crmLeadMonthlyTabDate(lead) && !isOldImportedLead(lead)) || shouldPreserveImportedLead(lead));
+      }
       persistState();
       renderAll();
     }
@@ -6032,6 +6156,7 @@
         state.bookings,
         state.leads,
         state.tutorLeads,
+        state.crmHistoricalMonthlyStats,
         state.replacements,
         state.replacementCredits,
         state.publicHolidays,
@@ -6105,6 +6230,7 @@
 
     async function autoLoadLatestNeonIfNeeded(label = "saving") {
       if (!neonConfigured()) return true;
+      if (state.settings.pendingLocalSync) return true;
       try {
         const manifest = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon version check", SYNC_READ_TIMEOUT_MS);
         if (manifest.empty) return true;
@@ -6186,6 +6312,12 @@
     async function autoPullOnStart() {
       applySettingsInputs();
       if (neonConfigured()) {
+        if (state.settings.pendingLocalSync) {
+          setStatus("Recovered unsynced browser changes. Syncing them before loading Neon...", "warn");
+          await autoPushIfConfigured("Recovered browser changes.");
+          startAutoNeonRefresh();
+          return;
+        }
         startAutoLoadCountdown(Math.ceil(SYNC_READ_TIMEOUT_MS / 1000), "Neon database");
         try {
           const result = await neonPull(false);
@@ -6208,7 +6340,7 @@
       }
       const jobs = [];
       if ($("scriptUrl").value.trim() && $("apiKey").value.trim()) jobs.push({ label: "Timetable", run: () => syncPull(false, { skipLocalWarning: true }) });
-      if ($("crmScriptUrl").value.trim() && $("crmApiKey").value.trim()) jobs.push({ label: "CRM", run: () => crmPull() });
+      if (!state.settings.crmMonthlyImportDisabled && $("crmScriptUrl").value.trim() && $("crmApiKey").value.trim()) jobs.push({ label: "CRM", run: () => crmPull() });
       if (!jobs.length) return;
       startAutoLoadCountdown(Math.ceil(SYNC_READ_TIMEOUT_MS / 1000), "Google Sheet data");
       const results = await Promise.allSettled(jobs.map(job => job.run()));
@@ -7147,6 +7279,13 @@
       if (openLeadAction) {
         showLeadActionModal();
       }
+      const exportOldImported = e.target.closest("#exportOldImportedLeadsBtn");
+      if (exportOldImported) downloadOldImportedLeadsBackup();
+      const cleanupOldImported = e.target.closest("#cleanupOldImportedLeadsBtn");
+      if (cleanupOldImported) cleanupOldImportedLeads().catch(err => {
+        setStatus(`Old imported lead cleanup failed: ${err.message}`, "error");
+        alert(err.message);
+      });
       const templateBtn = e.target.closest("[data-template-id]");
       if (templateBtn) {
         const template = (state.settings.replyTemplates || []).find(item => item.id === templateBtn.dataset.templateId);
@@ -7670,7 +7809,6 @@
       const remark = $("bookingRemark").value.trim();
       let period;
       try { period = bookingDatesFromForm(slot); } catch (err) { return alert(err.message); }
-      if (period.dates.some(date => slotHasPassed(date, slot.time))) return alert("Cannot book a class in a time slot that has already passed.");
       if (slot.reuseCancelledBookingId && (period.mode !== "one_date" || period.startDate !== slot.date)) return alert("A cancelled slot can only be rebooked for its original date and time.");
       if (period.mode === "permanent" && type !== "regular class") return alert("Ongoing bookings are only available for Regular Class. Choose particular date or temporary period for other class types.");
       if (type === "replacement class" && period.mode !== "one_date") return alert("Each replacement credit books one class. Choose Particular Date Only.");
@@ -7709,9 +7847,11 @@
       } else {
         const recurrenceGroupId = period.mode === "temporary" ? uid("series") : "";
         period.dates.forEach(date => {
+          const passed = slotHasPassed(date, slot.time);
           const booking = {
             id: uid("booking"), ...slot, date, day: dayFromISO(date), studentId: student ? student.id : "", studentName,
-            subject, type, status: "booked", archived: false, minutes: 25, remark,
+            subject, type, status: passed ? "completed" : "booked", archived: passed, minutes: 25, remark,
+            ...(passed ? { completedAt: slotDateTime(date, slot.time).toISOString() } : {}),
             reusedCancelledBookingId: slot.reuseCancelledBookingId || "",
             recurrenceGroupId,
             recurrenceMode: period.mode, recurrenceStartDate: period.startDate, recurrenceEndDate: period.endDate,
@@ -8079,6 +8219,11 @@
       if (!document.hidden) autoRefreshFromNeon({ force: true });
     });
     window.addEventListener("focus", () => autoRefreshFromNeon({ force: true }));
+    window.addEventListener("beforeunload", event => {
+      if (!state.settings.pendingLocalSync) return;
+      event.preventDefault();
+      event.returnValue = "";
+    });
 
     async function initApp() {
       try {
