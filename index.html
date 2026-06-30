@@ -1439,6 +1439,8 @@
     let tutorLeadPage = 1;
     let tutorLeadViewMode = safeStorageGet("classOneTutorLeadViewMode") || "cards";
     let replacementViewMode = safeStorageGet("classOneReplacementViewMode") || "board";
+    const teacherLinkSyncing = new Set();
+    const teacherLinkFailed = new Set();
     const ARCHIVE_PAGE_SIZE = 30;
     const TEACHER_DIRECTORY_PAGE_SIZE = 30;
     let teacherDirectoryPage = 1;
@@ -2761,25 +2763,56 @@
       if (!panel) return;
       panel.classList.toggle("hide", !teacher);
       if (!teacher) return;
+      if (teacherLinkSyncing.has(teacher.id)) {
+        $("overviewTeacherLinkStatus").textContent = `Generating and syncing ${teacher.name}'s teacher view link...`;
+        $("overviewTeacherLinkActions").innerHTML = `<button class="btn mint" disabled>Generating...</button>`;
+        return;
+      }
       const link = teacherTimetableLink(teacher);
-      $("overviewTeacherLinkStatus").textContent = link ? `Permanent link ready for ${teacher.name}.` : `${teacher.name} does not have a teacher view link yet.`;
+      const failed = teacherLinkFailed.has(teacher.id);
+      $("overviewTeacherLinkStatus").textContent = link
+        ? `Permanent link ready for ${teacher.name}.`
+        : failed
+          ? `${teacher.name}'s link was not generated because database sync failed. Please retry.`
+          : `${teacher.name} does not have a teacher view link yet.`;
       $("overviewTeacherLinkActions").innerHTML = link
         ? `<a class="btn mint" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">Open Teacher View</a><button class="btn ghost" data-overview-copy-link="${teacher.id}">Copy Link</button><button class="btn ghost" data-overview-regenerate-link="${teacher.id}">Regenerate Link</button>`
-        : `<button class="btn mint" data-overview-generate-link="${teacher.id}">Generate Link</button>`;
+        : `<button class="btn mint" data-overview-generate-link="${teacher.id}">${failed ? "Retry Generate" : "Generate Link"}</button>`;
     }
 
     async function setTeacherOverviewLink(teacherId, regenerate = false) {
       const teacher = teacherById(teacherId);
       if (!teacher) return alert("Teacher not found.");
+      if (teacherLinkSyncing.has(teacherId)) return;
       if (regenerate && !confirm(`Regenerate ${teacher.name}'s link? Their previous link will stop working after the next database sync.`)) return;
+      const previousToken = teacher.viewToken || "";
+      const previousUpdatedAt = teacher.viewTokenUpdatedAt || "";
+      teacherLinkFailed.delete(teacherId);
+      teacherLinkSyncing.add(teacherId);
       teacher.viewToken = randomShareToken();
       teacher.viewTokenUpdatedAt = new Date().toISOString();
-      logAction(regenerate ? "Teacher View Link Regenerated" : "Teacher View Link Generated", teacher.name, regenerate ? "Previous link invalidated" : "No link", "New permanent link", "Generated from Teacher Overview.");
       save(false);
       renderTeacherOverviewLink(teacher);
       renderTeachers();
-      setStatus("Teacher view link generated. It will become live after database sync.");
-      await autoPushIfConfigured("Teacher view link generated.");
+      setStatus(`Generating ${teacher.name}'s teacher view link and syncing it to the database...`);
+      const synced = await autoPushIfConfigured("Teacher view link generated.");
+      teacherLinkSyncing.delete(teacherId);
+      if (!synced) {
+        teacher.viewToken = previousToken;
+        teacher.viewTokenUpdatedAt = previousUpdatedAt;
+        teacherLinkFailed.add(teacherId);
+        save(false);
+        renderTeacherOverviewLink(teacher);
+        renderTeachers();
+        setStatus("Teacher view link was not generated because database sync failed. Click Retry Generate after the connection is available.", "error");
+        return;
+      }
+      teacherLinkFailed.delete(teacherId);
+      logAction(regenerate ? "Teacher View Link Regenerated" : "Teacher View Link Generated", teacher.name, regenerate ? "Previous link invalidated" : "No link", "New permanent link", "Generated and synced from Teacher Overview.");
+      save(false);
+      renderTeacherOverviewLink(teacher);
+      renderTeachers();
+      setStatus(`Teacher view link for ${teacher.name} is ready and synced.`);
     }
 
     async function copyOverviewTeacherLink(teacherId) {
@@ -3271,7 +3304,10 @@
     }
 
     function renderTeachers() {
-      $("teacherList").innerHTML = [...activeTeachers()].sort(byName).map(t => `
+      $("teacherList").innerHTML = [...activeTeachers()].sort(byName).map(t => {
+        const linkSyncing = teacherLinkSyncing.has(t.id);
+        const linkFailed = teacherLinkFailed.has(t.id);
+        return `
         <div class="card teacher-card">
           ${t.photo ? `<img class="avatar" src="${t.photo}" alt="">` : `<div class="avatar">${escapeHtml((t.name || "?").slice(0, 1))}</div>`}
           <div>
@@ -3280,14 +3316,17 @@
             <div class="subtle">${t.category === "micro_franchisee" ? `Micro Franchisee | Profit share: ${Number(t.profitShare || 0).toFixed(2)}%` : `Freelance Tutor | Rate: ${Number(t.rate || 0).toFixed(2)}`} | Slots: ${(t.regularSlots || []).length} regular, ${(t.overrideSlots || []).length} date-specific${(t.regularSlots || []).some(s => s.source === "teacher-sheet") ? " | Imported from teacher sheet" : ""}</div>
             <div class="row" style="margin-top:8px;">
               <span class="subtle"><strong>Teacher view link:</strong></span>
-              ${t.viewToken
+              ${linkSyncing
+                ? `<span class="pill">Generating...</span><button class="btn small mint" disabled>Generating...</button>`
+                : t.viewToken
                 ? `<span class="pill available">Ready</span><a class="btn small mint" href="${escapeHtml(teacherTimetableLink(t))}" target="_blank" rel="noopener noreferrer">Open View</a><button class="btn small ghost" data-overview-copy-link="${t.id}">Copy Link</button>`
-                : `<span class="pill cancelled">Not Generated</span><button class="btn small mint" data-overview-generate-link="${t.id}">Generate Link</button>`}
+                : `<span class="pill cancelled">${linkFailed ? "Sync Failed" : "Not Generated"}</span><button class="btn small mint" data-overview-generate-link="${t.id}">${linkFailed ? "Retry Generate" : "Generate Link"}</button>`}
             </div>
             ${teacherFeedbackSummaryHtml(t)}
             <div class="row" style="margin-top:8px;"><button class="btn small ghost" data-edit-teacher="${t.id}">Edit</button><button class="btn small ghost" data-add-teacher-feedback="${t.id}">Add Feedback</button><button class="btn small ghost" data-view-teacher-feedback="${t.id}">View Feedback</button><button class="btn small ghost" data-archive-teacher="${t.id}">Archive</button><button class="btn small danger" data-delete-teacher="${t.id}">Delete</button></div>
           </div>
-        </div>`).join("") || `<div class="empty">Add your first tutor profile.</div>`;
+        </div>`;
+      }).join("") || `<div class="empty">Add your first tutor profile.</div>`;
       renderTeacherDirectory();
       renderSlotList();
     }
@@ -5985,15 +6024,19 @@
       const localPayload = cloneCurrentStatePayload();
       try {
         await neonPush(false, `${successMessage} Synced to Neon database.`);
+        return true;
       } catch (err) {
         if (isNeonVersionConflict(err)) {
           try {
             await recoverFromNeonConflictAndPush(localPayload, successMessage);
+            return true;
           } catch (retryErr) {
             setStatus(`${successMessage} Saved in this browser only. Auto-sync retry failed: ${retryErr.message}`, "warn");
+            return false;
           }
         } else {
           setStatus(`${successMessage} Neon sync failed: ${err.message}`, "error");
+          return false;
         }
       }
     }
