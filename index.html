@@ -344,7 +344,7 @@
               <div><label>Mother Tongue</label><input id="leadMotherTongue" placeholder="Mandarin / English / BM"></div>
               <div><label>Package Interested</label><input id="leadPackage" list="packageOptions" placeholder="Optional after enrolled"></div>
               <div><label>Preferred Class Day / Time</label><input id="leadPreferredTime" placeholder="Example: Mon 6pm"></div>
-              <div><label>Next Follow-up Date</label><input id="leadNextFollowUp" type="date"></div>
+              <div><label>Next Follow-up Date</label><input id="leadNextFollowUp" type="date"><div class="subtle">Generated from the lead stage. You may choose another date when needed.</div></div>
               <div><label>Assessment Date</label><input id="leadAssessmentDate" type="date"></div>
               <div><label>Trial 1 Date</label><input id="leadTrialDate" type="date"></div>
               <div><label>Trial 2 Date</label><input id="leadTrialDate2" type="date"></div>
@@ -1847,6 +1847,9 @@
         lead.trialDate2 ||= "";
         lead.trialTime2 ||= "";
         lead.subjects = Array.isArray(lead.subjects) ? lead.subjects : [];
+        if (!lead.nextFollowUp && !isOldImportedLead(lead) && !["Enrolled", "Lost", "Not Interested"].includes(lead.status)) {
+          applyCrmAutomaticFollowUp(lead, true);
+        }
       });
       state.tutorLeads.forEach(lead => {
         lead.subjects = normalizeSubjects(Array.isArray(lead.subjects) ? lead.subjects : []);
@@ -3796,6 +3799,7 @@
         lead.status = previousStatus || "Assessment";
         prefillBookingRequest("trial", lead);
       }
+      if (lead.status !== previousStatus) applyCrmAutomaticFollowUp(lead, true);
     }
 
     function completePendingCrmBooking(booking) {
@@ -3819,6 +3823,7 @@
         lead[kind + "Subject"] = booking.subject;
         lead[kind + "BookingId"] = booking.id;
       }
+      applyCrmAutomaticFollowUp(lead, true);
       logAction("CRM Booking Completed", lead.childName || lead.id, "Pending booking", `${status} | ${formatClassDateTime(booking.date, booking.time)}`, teacherById(booking.teacherId)?.name || "");
       pendingCrmLeadId = "";
       pendingCrmBookingKind = "";
@@ -3912,9 +3917,22 @@
       ["leadId", "leadParentName", "leadParentPhone", "leadChildName", "leadChildAge", "leadSource", "leadSalesperson", "leadMotherTongue", "leadPackage", "leadPreferredTime", "leadNextFollowUp", "leadAssessmentDate", "leadTrialDate", "leadTrialDate2", "leadStatusChangedAt", "leadNotes"].forEach(id => $(id).value = "");
       $("leadStatus").value = "New Contact";
       $("leadStatusChangedAt").value = todayISO();
+      $("leadNextFollowUp").value = dateOffsetISO(todayISO(), 7);
       $("leadUrgency").value = "warm";
       setSelectedLeadSubjects([]);
       if ($("leadProfileModalTitle")) $("leadProfileModalTitle").textContent = "Add Lead";
+    }
+
+    function refreshLeadFormAutomaticFollowUp() {
+      const draft = {
+        status: $("leadStatus").value,
+        statusChangedAt: todayISO(),
+        createdAt: todayISO(),
+        assessmentDate: $("leadAssessmentDate").value,
+        trialDate: $("leadTrialDate").value,
+        trialDate2: $("leadTrialDate2").value
+      };
+      $("leadNextFollowUp").value = crmAutomaticFollowUpDate(draft);
     }
 
     function openNewLeadModal() {
@@ -4033,6 +4051,30 @@
         </button>`;
     }
 
+    function crmAutomaticFollowUpDate(lead) {
+      const status = lead?.status || "New Contact";
+      const statusStart = dateOnly(lead?.statusChangedAt || lead?.createdAt || lead?.updatedAt || todayISO());
+      if (status === "New Contact") return dateOffsetISO(statusStart, 7);
+      if (status === "Follow Up") return dateOffsetISO(statusStart, 14);
+      if (status === "No Response") return dateOffsetISO(statusStart, 7);
+      if (status === "Assessment") return lead.assessmentDate ? dateOffsetISO(lead.assessmentDate, 1) : todayISO();
+      if (status === "Trial Class") {
+        const latestTrialDate = [lead.trialDate, lead.trialDate2].filter(Boolean).sort().pop();
+        return latestTrialDate ? dateOffsetISO(latestTrialDate, 1) : todayISO();
+      }
+      return "";
+    }
+
+    function applyCrmAutomaticFollowUp(lead, force = false) {
+      if (!lead) return "";
+      const generated = crmAutomaticFollowUpDate(lead);
+      if (force || !lead.nextFollowUp || lead.followUpAuto === true) {
+        lead.nextFollowUp = generated;
+        lead.followUpAuto = true;
+      }
+      return lead.nextFollowUp || "";
+    }
+
     function crmLeadActionReason(lead) {
       const today = todayISO();
       const status = lead.status || "New Contact";
@@ -4044,6 +4086,7 @@
       if (status === "Trial Class" && (!lead.trialDate || !lead.trialDate2)) return "Trial Class missing Trial 1 or Trial 2 date.";
       if (status === "Trial Class" && lead.trialDate < today && lead.trialDate2 < today) return "Both trial classes ended.";
       if (status === "Enrolled" && !state.students.some(s => cleanStudentName(s.name || "").toLowerCase() === cleanStudentName(lead.childName || "").toLowerCase())) return "Enrolled lead not yet created in Students.";
+      if (lead.nextFollowUp && lead.nextFollowUp <= today) return "Follow-up date reached.";
       return "";
     }
 
@@ -4052,6 +4095,7 @@
       const reason = crmLeadActionReason(lead);
       if (status === "New Contact") return "Update to Follow Up, No Response, or Assessment.";
       if (status === "Follow Up") return "Update to No Response or Assessment.";
+      if (status === "No Response") return "Try contacting the parent again, then update the status or next follow-up date.";
       if (status === "Assessment") return reason.includes("missing") ? "Fill assessment date or update status." : "Update to Trial Class, Enrolled, Lost, or Not Interested.";
       if (status === "Trial Class") return reason.includes("missing") ? "Fill Trial 1 and Trial 2 dates." : "Update to Enrolled, Lost, or Not Interested.";
       if (status === "Enrolled") return "Create or update the student profile.";
@@ -4060,6 +4104,7 @@
 
     function crmLeadActionPriorityDate(lead) {
       const status = lead.status || "New Contact";
+      if (lead.nextFollowUp) return lead.nextFollowUp;
       if (status === "Assessment") return lead.assessmentDate || todayISO();
       if (status === "Trial Class") return lead.trialDate2 || lead.trialDate || todayISO();
       return dateOnly(lead.statusChangedAt || lead.updatedAt || lead.createdAt || todayISO());
@@ -4217,7 +4262,7 @@
           <td>${escapeHtml(lead.salesperson || "-")}</td>
           <td><select data-lead-quick="${lead.id}|status">${statusOptions}</select></td>
           <td><select data-lead-quick="${lead.id}|urgency">${urgencyOptions}</select></td>
-          <td><input type="date" value="${escapeHtml(lead.nextFollowUp || "")}" data-lead-quick="${lead.id}|nextFollowUp"></td>
+          <td><input type="date" value="${escapeHtml(lead.nextFollowUp || "")}" data-lead-quick="${lead.id}|nextFollowUp">${lead.followUpAuto ? `<span class="subtle">Auto-generated</span>` : ""}</td>
           <td>${escapeHtml(lead.assessmentDate || "-")} ${escapeHtml(lead.assessmentTime || "")}</td>
           <td>${escapeHtml(lead.trialDate || "-")} ${escapeHtml(lead.trialTime || "")}<br><span class="subtle">${escapeHtml(lead.trialDate2 || "-")} ${escapeHtml(lead.trialTime2 || "")}</span></td>
           <td>${escapeHtml(lead.packageInterested || "-")}</td>
@@ -6676,9 +6721,10 @@
           lead[kind + "Subject"] = subject;
           lead[kind + "BookingId"] = booking.id;
         }
+        applyCrmAutomaticFollowUp(lead, true);
       }
       if (!lead && confirm("No matching CRM lead found for this child name. Create a basic CRM lead record now?")) {
-        state.leads.push({
+        const newLead = {
           id: uid("lead"),
           parentName: "",
           parentPhone: "",
@@ -6691,6 +6737,7 @@
           statusChangedAt: todayISO(),
           urgency: "warm",
           nextFollowUp: "",
+          followUpAuto: true,
           notes: `${kind === "assessment" ? "Assessment" : "Trial class"} booked from booking request.`,
           [kind + "Date"]: date,
           [kind + "Time"]: time,
@@ -6700,7 +6747,9 @@
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           archived: false
-        });
+        };
+        applyCrmAutomaticFollowUp(newLead, true);
+        state.leads.push(newLead);
       }
       save(false);
       renderAll();
@@ -7033,7 +7082,7 @@
           lead.pinnedActive = true;
           lead.statusChangedAt = todayISO();
           lead.updatedAt = new Date().toISOString();
-          if (!lead.nextFollowUp) lead.nextFollowUp = todayISO();
+          applyCrmAutomaticFollowUp(lead, true);
           logAction("CRM Lead Moved Active", lead.childName || lead.parentPhone, before, leadLogSummary(lead), "Old imported lead moved into active CRM list.");
           save();
           setStatus("Lead moved to active CRM list.");
@@ -7230,6 +7279,7 @@
         const before = leadLogSummary(lead);
         const previousStatus = lead.status || "";
         lead[field] = quick.value;
+        if (field === "nextFollowUp") lead.followUpAuto = false;
         if (field === "status" && lead.status !== previousStatus) lead.statusChangedAt = todayISO();
         lead.updatedAt = new Date().toISOString();
         logAction("CRM Lead Quick Updated", lead.childName || lead.parentName, before, leadLogSummary(lead), `Changed ${field}.`);
@@ -7366,6 +7416,8 @@
           lead.enrolledAt = todayISO();
           lead.statusChangedAt = todayISO();
           lead.updatedAt = new Date().toISOString();
+          lead.nextFollowUp = "";
+          lead.followUpAuto = true;
           lead.studentId = existing.id;
           lead.packageInterested = existing.package;
           lead.subjects = [...existing.subjects];
@@ -7429,6 +7481,7 @@
       if (subjects.length && !subjects.includes($("studentRegularSubject").value)) $("studentRegularSubject").value = subjects[0];
       updateStudentTeacherOptions();
     });
+    ["leadStatus", "leadAssessmentDate", "leadTrialDate", "leadTrialDate2"].forEach(id => $(id).addEventListener("change", refreshLeadFormAutomaticFollowUp));
     $("saveLeadBtn").onclick = () => {
       const parentName = $("leadParentName").value.trim();
       const parentPhone = $("leadParentPhone").value.trim();
@@ -7438,6 +7491,12 @@
       const id = $("leadId").value || uid("lead");
       const existing = state.leads.find(lead => lead.id === id) || { id, createdAt: now };
       const previousStatus = existing.status || "";
+      const previousAssessmentDate = existing.assessmentDate || "";
+      const previousTrialDate = existing.trialDate || "";
+      const previousTrialDate2 = existing.trialDate2 || "";
+      const previousFollowUp = existing.nextFollowUp || "";
+      const enteredFollowUp = $("leadNextFollowUp").value;
+      const followUpWasEdited = enteredFollowUp !== previousFollowUp;
       const nextStatus = $("leadStatus").value;
       const before = leadLogSummary(existing);
       Object.assign(existing, {
@@ -7453,7 +7512,7 @@
         motherTongue: $("leadMotherTongue").value.trim(),
         packageInterested: $("leadPackage").value.trim(),
         preferredTime: $("leadPreferredTime").value.trim(),
-        nextFollowUp: $("leadNextFollowUp").value,
+        nextFollowUp: enteredFollowUp,
         assessmentDate: $("leadAssessmentDate").value,
         trialDate: $("leadTrialDate").value,
         trialDate2: $("leadTrialDate2").value,
@@ -7462,9 +7521,13 @@
         updatedAt: now,
         archived: false
       });
+      if (followUpWasEdited) existing.followUpAuto = false;
       if (!state.leads.some(lead => lead.id === id)) state.leads.push(existing);
       logAction(before ? "CRM Lead Updated" : "CRM Lead Added", existing.childName, before, leadLogSummary(existing), existing.parentPhone || "");
       handleLeadStatusChange(existing, previousStatus);
+      const bookingDatesChanged = previousAssessmentDate !== existing.assessmentDate || previousTrialDate !== existing.trialDate || previousTrialDate2 !== existing.trialDate2;
+      if (existing.status === previousStatus && bookingDatesChanged && existing.followUpAuto !== false) applyCrmAutomaticFollowUp(existing, true);
+      if (!previousStatus && !followUpWasEdited) applyCrmAutomaticFollowUp(existing, true);
       const bookingPrepared = pendingCrmLeadId === existing.id;
       save();
       $("leadProfileModal").classList.add("hide");
