@@ -28,7 +28,13 @@
     button { cursor: pointer; border: 0; }
     .app-shell { min-height: 100vh; display: grid; grid-template-columns: 260px minmax(0, 1fr); transition: grid-template-columns .2s ease; }
     .app-shell.sidebar-collapsed { grid-template-columns: 76px minmax(0, 1fr); }
-    .app-shell.layout-stacked .grid.two { grid-template-columns: 1fr; }
+    .tab.layout-stacked .grid.two,
+    .tab.layout-stacked .grid.three,
+    .tab.layout-stacked .grid.four,
+    .tab.layout-stacked .flow-grid,
+    .tab.layout-stacked .priority-board,
+    .tab.layout-stacked .replacement-board,
+    .tab.layout-stacked .template-grid { grid-template-columns: 1fr; }
     aside { background: var(--ink); color: #fff; padding: 24px 18px; position: sticky; top: 0; height: 100vh; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
     .brand { display: flex; gap: 12px; align-items: center; margin-bottom: 26px; }
     .logo { width: 96px; height: 48px; border-radius: 8px; background: #fff; object-fit: contain; padding: 4px; }
@@ -72,7 +78,8 @@
     textarea { min-height: 88px; resize: vertical; }
     .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     .row.spread { justify-content: space-between; }
-    .btn { background: var(--ink); color: #fff; border-radius: 8px; min-height: 40px; padding: 0 14px; font-weight: 900; font-size: 12px; transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease; }
+    .btn { background: var(--ink); color: #fff; border-radius: 8px; min-height: 40px; padding: 0 14px; font-weight: 900; font-size: 12px; transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; white-space: nowrap; }
+    .btn:focus-visible { outline: 2px solid var(--mint-dark); outline-offset: 2px; }
     .btn:active { transform: scale(.97); }
     .btn.syncing { animation: clickPulse .55s ease; opacity: .78; }
     .btn:disabled { opacity: .45; cursor: not-allowed; }
@@ -85,6 +92,9 @@
     .btn.ghost { background: #edf4f0; color: var(--ink); }
     .btn.danger { background: #e5484d; color: #fff; }
     .btn.small { min-height: 32px; padding: 0 10px; font-size: 11px; }
+    #overviewTeacherLinkActions { justify-content: flex-end; }
+    #overviewTeacherLinkActions .btn { min-height: 36px; padding: 0 12px; flex: 0 0 auto; width: auto; }
+    #overviewTeacherLinkActions a.btn, #overviewTeacherLinkActions a.btn:visited { color: var(--ink); text-decoration: none; }
     .pill { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 900; background: #edf4f0; color: var(--ink); margin: 2px; }
     .pill.booked { background: var(--warn); }
     .pill.completed { background: var(--ok); }
@@ -272,7 +282,7 @@
           <div class="subtle" id="statusText">Neon database sync built in. Preparing auto-load...</div>
         </div>
         <div class="row">
-          <button class="btn ghost" id="layoutToggleBtn">Layout: Side by Side</button>
+          <button class="btn ghost" id="layoutToggleBtn" title="Change the layout for this tab only">This Tab: Up and Down</button>
           <button class="btn ghost" id="archivePastBtn">Finalize Passed Classes</button>
           <button class="btn mint" id="saveBtn">Save</button>
         </div>
@@ -317,9 +327,9 @@
       </section>
 
       <section id="crm" class="tab hide">
-        <div class="grid two">
-          <div class="panel">
-            <h2>Lead Profile</h2>
+        <div id="leadProfileModal" class="modal hide">
+          <div class="modal-card" style="width:min(920px,100%);">
+            <div class="row spread"><h2 id="leadProfileModalTitle">Add Lead</h2><button class="btn ghost small" data-close>Close</button></div>
             <input id="leadId" type="hidden">
             <div class="grid two">
               <div><label>Parent Name</label><input id="leadParentName" placeholder="Optional"></div>
@@ -344,16 +354,20 @@
             <datalist id="leadSourceOptions"><option value="Facebook Ads"></option><option value="Instagram"></option><option value="Referral"></option><option value="Walk-in"></option><option value="WhatsApp"></option></datalist>
             <div class="row" style="margin-top:14px;">
               <button class="btn mint" id="saveLeadBtn">Save Lead</button>
-              <button class="btn ghost" id="newLeadBtn">New Lead</button>
+              <button class="btn ghost hide" id="newLeadBtn">Clear Form</button>
               <button class="btn ghost" id="createStudentFromLeadBtn">Create Student From Lead</button>
             </div>
           </div>
-          <div class="panel">
+        </div>
+        <div class="panel">
             <div class="row spread">
-              <h2>Lead List</h2>
-              <div class="row view-toggle">
+              <div><h2>CRM Lead List</h2><div class="subtle">Track active leads, follow-ups and progression.</div></div>
+              <div class="row">
+                <button class="btn mint" id="openLeadModalBtn">Add Lead</button>
+                <div class="row view-toggle hide">
                 <button class="btn small active" id="leadCardViewBtn">Card View</button>
                 <button class="btn small ghost" id="leadTableViewBtn">Table View</button>
+                </div>
               </div>
             </div>
             <div class="grid three">
@@ -384,7 +398,6 @@
             <div id="oldImportedLeadBox" style="margin-top:14px;"></div>
             <div id="leadList" class="list" style="margin-top:14px;"></div>
             <div class="row spread" id="leadPagination" style="margin-top:12px;"></div>
-          </div>
         </div>
 
       </section>
@@ -558,7 +571,7 @@
           <div class="flow-grid">
             <div class="flow-card">
               <div class="flow-title"><strong>First Contact</strong><span class="flow-tag">Same day</span></div>
-              <div class="flow-path">New lead received &gt; Add CRM profile &gt; Send WhatsApp &gt; Record notes</div>
+              <div class="flow-path">New lead received &gt; Click Add Lead &gt; Complete popup profile &gt; Send WhatsApp &gt; Record notes</div>
               <div class="flow-steps">
                 <div><span>&gt;</span><p>Check Needs Action every working day.</p></div>
                 <div><span>&gt;</span><p>Create or update the CRM lead with parent phone, child name, subject, source, and salesperson.</p></div>
@@ -610,9 +623,9 @@
             <div>
               <h3>Salesperson Actions</h3>
               <div class="flow-steps">
-                <div><span>&gt;</span><p><strong>New lead:</strong> Open CRM Leads &gt; Create profile &gt; Set New Contact &gt; Set urgency/source &gt; Set next follow-up.</p></div>
+                <div><span>&gt;</span><p><strong>New lead:</strong> Open CRM Leads &gt; Click Add Lead &gt; Complete the popup &gt; Set New Contact &gt; Set urgency/source &gt; Set next follow-up.</p></div>
                 <div><span>&gt;</span><p><strong>Old imported lead replies:</strong> Open Old Imported Leads &gt; Search lead &gt; Move to Active &gt; Update notes &gt; Set next follow-up.</p></div>
-                <div><span>&gt;</span><p><strong>Parent replies:</strong> Edit lead &gt; Update notes &gt; Confirm child details &gt; Update urgency &gt; Set next follow-up.</p></div>
+                <div><span>&gt;</span><p><strong>Parent replies:</strong> Find the lead in the table &gt; Click Edit &gt; Update the popup profile and notes &gt; Set next follow-up.</p></div>
                 <div><span>&gt;</span><p><strong>Parent asks time:</strong> Open Weekly Timetable/Teacher Overview &gt; Filter slots &gt; Propose open slots only &gt; Record options in notes.</p></div>
                 <div><span>&gt;</span><p><strong>Assessment:</strong> Set Assessment &gt; Weekly Timetable opens &gt; Choose teacher slot &gt; Confirm assessment.</p></div>
                 <div><span>&gt;</span><p><strong>Trial:</strong> Set Trial Class &gt; Weekly Timetable opens &gt; Choose teacher slot &gt; Confirm trial &gt; Follow up after both trial dates pass.</p></div>
@@ -1421,7 +1434,7 @@
     let studentRegularSlotsDraft = [];
     const LEADS_PER_PAGE = 30;
     let leadPage = 1;
-    let leadViewMode = safeStorageGet("classOneLeadViewMode") || "cards";
+    let leadViewMode = "table";
     let tutorLeadPage = 1;
     let tutorLeadViewMode = safeStorageGet("classOneTutorLeadViewMode") || "cards";
     let replacementViewMode = safeStorageGet("classOneReplacementViewMode") || "board";
@@ -3575,8 +3588,9 @@
       $("leadStatusChangedAt").value = dateOnly(lead.statusChangedAt || lead.updatedAt || lead.createdAt || "");
       $("leadNotes").value = lead.notes || "";
       setSelectedLeadSubjects(lead.subjects || []);
+      $("leadProfileModalTitle").textContent = `Edit Lead: ${lead.childName || lead.parentName || "Lead"}`;
+      $("leadProfileModal").classList.remove("hide");
       $("leadParentName").focus({ preventScroll: true });
-      $("leadParentName").scrollIntoView({ behavior: "smooth", block: "center" });
       setStatus(`Editing lead: ${lead.childName || lead.parentName || "Lead"}`);
       return true;
     }
@@ -3742,6 +3756,13 @@
       $("leadStatusChangedAt").value = todayISO();
       $("leadUrgency").value = "warm";
       setSelectedLeadSubjects([]);
+      if ($("leadProfileModalTitle")) $("leadProfileModalTitle").textContent = "Add Lead";
+    }
+
+    function openNewLeadModal() {
+      clearLeadForm();
+      $("leadProfileModal").classList.remove("hide");
+      $("leadParentPhone").focus();
     }
 
     function clearTutorLeadForm() {
@@ -5253,7 +5274,7 @@
     }
 
     function activeTabId() {
-      return document.querySelector(".nav-btn.active")?.dataset.tab || "guidance";
+      return document.querySelector(".nav-btn.active")?.dataset.tab || "schedule";
     }
 
     function renderSectionNav(tabId = activeTabId()) {
@@ -6511,10 +6532,29 @@
       safeStorageSet("classOneSidebarCollapsed", collapsed ? "1" : "0");
     }
 
+    function updateLayoutToggle() {
+      const tab = document.getElementById(activeTabId());
+      const stacked = !tab || tab.classList.contains("layout-stacked");
+      $("layoutToggleBtn").textContent = stacked ? "This Tab: Up and Down" : "This Tab: Side by Side";
+    }
+
+    function applyTabLayout(tabId, stacked, persist = false) {
+      const tab = document.getElementById(tabId);
+      if (!tab) return;
+      tab.classList.toggle("layout-stacked", stacked);
+      if (persist) safeStorageSet(`classOneTabLayout.${tabId}`, stacked ? "stacked" : "side");
+      if (tabId === activeTabId()) updateLayoutToggle();
+    }
+
+    function initializeTabLayouts() {
+      document.querySelectorAll(".tab").forEach(tab => {
+        applyTabLayout(tab.id, safeStorageGet(`classOneTabLayout.${tab.id}`) !== "side");
+      });
+      updateLayoutToggle();
+    }
+
     function setStackedLayout(stacked) {
-      document.querySelector(".app-shell").classList.toggle("layout-stacked", stacked);
-      $("layoutToggleBtn").textContent = stacked ? "Layout: Up and Down" : "Layout: Side by Side";
-      safeStorageSet("classOneLayoutStacked", stacked ? "1" : "0");
+      applyTabLayout(activeTabId(), stacked, true);
     }
 
     document.addEventListener("click", (e) => {
@@ -6524,6 +6564,7 @@
         document.querySelectorAll(".tab").forEach(t => t.classList.toggle("hide", t.id !== nav.dataset.tab));
         $("pageTitle").textContent = nav.textContent;
         renderSectionNav(nav.dataset.tab);
+        updateLayoutToggle();
       }
       const sectionJump = e.target.closest("[data-section-jump]");
       if (sectionJump) {
@@ -7159,11 +7200,13 @@
       handleLeadStatusChange(existing, previousStatus);
       const bookingPrepared = pendingCrmLeadId === existing.id;
       save();
+      $("leadProfileModal").classList.add("hide");
       clearLeadForm();
       if (bookingPrepared) setStatus(`${pendingCrmBookingKind === "assessment" ? "Assessment" : "Trial"} is pending. Choose a teacher slot in Weekly Timetable to complete the CRM status update.`);
       autoPushCrmIfConfigured();
     };
     $("newLeadBtn").onclick = clearLeadForm;
+    $("openLeadModalBtn").onclick = openNewLeadModal;
     $("saveTutorLeadBtn").onclick = () => {
       const name = $("tutorLeadName").value.trim();
       const phone = $("tutorLeadPhone").value.trim();
@@ -7618,7 +7661,7 @@
       }
     });
     $("sidebarToggle").onclick = () => setSidebarCollapsed(!document.querySelector(".app-shell").classList.contains("sidebar-collapsed"));
-    $("layoutToggleBtn").onclick = () => setStackedLayout(!document.querySelector(".app-shell").classList.contains("layout-stacked"));
+    $("layoutToggleBtn").onclick = () => setStackedLayout(!document.getElementById(activeTabId())?.classList.contains("layout-stacked"));
     $("dismissActionPopupBtn").onclick = () => {
       safeStorageSet(`classOneActionPopupDismissed.${todayISO()}`, "1");
       $("actionPopup").classList.add("hide");
@@ -7640,7 +7683,7 @@
       try {
         load();
         setSidebarCollapsed(safeStorageGet("classOneSidebarCollapsed") === "1");
-        setStackedLayout(safeStorageGet("classOneLayoutStacked") === "1");
+        initializeTabLayouts();
         hydrateSelects();
         setupMonths();
         renderAll();
