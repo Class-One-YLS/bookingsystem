@@ -5411,11 +5411,37 @@
       ]);
     }
 
+    function crmLeadMonthlyTabDate(lead) {
+      const monthNumbers = {
+        jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2,
+        apr: 3, april: 3, may: 4, jun: 5, june: 5, jul: 6, july: 6,
+        aug: 7, august: 7, sep: 8, sept: 8, september: 8, oct: 9, october: 9,
+        nov: 10, november: 10, dec: 11, december: 11
+      };
+      const candidates = [lead?.importSheet, lead?.sheetName, lead?.sourceSheet, lead?.source, lead?.id]
+        .filter(Boolean)
+        .map(value => String(value).replace(/_/g, " "));
+      for (const candidate of candidates) {
+        const match = candidate.match(/(?:^|\s)(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*(20\d{2})(?:\s|$)/i);
+        if (!match) continue;
+        const month = monthNumbers[match[1].toLowerCase()];
+        if (month !== undefined) return new Date(Number(match[2]), month, 1);
+      }
+      return null;
+    }
+
+    function crmLeadReportingDate(lead) {
+      const monthlyTabDate = crmLeadMonthlyTabDate(lead);
+      if (monthlyTabDate) return monthlyTabDate;
+      const recordedDate = new Date((lead?.createdAt || lead?.updatedAt || "") + "");
+      return Number.isNaN(recordedDate.getTime()) ? null : recordedDate;
+    }
+
     function crmMonthlyRows(year = Number($("crmReportYear").value || new Date().getFullYear())) {
       return Array.from({ length: 12 }, (_, month) => {
         const leads = state.leads.filter(lead => {
-          const date = new Date((lead.createdAt || lead.updatedAt || "") + "");
-          return !Number.isNaN(date.getTime()) && date.getFullYear() === year && date.getMonth() === month && !lead.archived;
+          const date = crmLeadReportingDate(lead);
+          return date && date.getFullYear() === year && date.getMonth() === month && !lead.archived;
         });
         const countStatus = (status) => leads.filter(lead => lead.status === status).length;
         return {
@@ -5467,8 +5493,9 @@
       const compareRows = compareYear ? crmMonthlyRows(compareYear) : [];
       const totals = crmTotals(rows);
       const compareTotals = compareYear ? crmTotals(compareRows) : {};
+      const classifiedFromMonthlyTabs = state.leads.filter(lead => !lead.archived && crmLeadMonthlyTabDate(lead)?.getFullYear() === year).length;
       $("crmDashboardSummary").innerHTML = `
-        <div class="metric"><span class="subtle">${year} total leads</span><strong>${totals.total || 0}</strong>${compareYear ? `<span class="subtle">vs ${compareYear}: ${compareTotals.total || 0} (${(totals.total || 0) - (compareTotals.total || 0) >= 0 ? "+" : ""}${(totals.total || 0) - (compareTotals.total || 0)})</span>` : ""}</div>
+        <div class="metric"><span class="subtle">${year} total leads</span><strong>${totals.total || 0}</strong>${compareYear ? `<span class="subtle">vs ${compareYear}: ${compareTotals.total || 0} (${(totals.total || 0) - (compareTotals.total || 0) >= 0 ? "+" : ""}${(totals.total || 0) - (compareTotals.total || 0)})</span>` : ""}<span class="subtle">${classifiedFromMonthlyTabs} classified from monthly sheet tabs</span></div>
         <div class="metric"><span class="subtle">Assessment rate</span><strong>${pct(totals.assessment || 0, totals.total || 0)}</strong><span class="subtle">${totals.assessment || 0} leads</span></div>
         <div class="metric"><span class="subtle">Trial rate</span><strong>${pct(totals.trial || 0, totals.total || 0)}</strong><span class="subtle">${totals.trial || 0} leads</span></div>
         <div class="metric"><span class="subtle">Enrolled rate</span><strong>${pct(totals.enrolled || 0, totals.total || 0)}</strong><span class="subtle">${totals.enrolled || 0} leads</span></div>
@@ -7968,7 +7995,18 @@
       alert(`Time slot update failed: ${err.message}`);
     });
     ["crmReportYear", "crmCompareYear"].forEach(id => $(id).addEventListener("change", renderCrmDashboard));
-    $("generateCrmDashboardBtn").onclick = renderCrmDashboard;
+    $("generateCrmDashboardBtn").onclick = () => animateClick($("generateCrmDashboardBtn"), async () => {
+      const year = Number($("crmReportYear").value);
+      const compareYear = Number($("crmCompareYear").value || 0);
+      if (!Number.isInteger(year) || year < 2024 || year > 2035) throw new Error("Enter a valid dashboard year from 2024 to 2035.");
+      if (compareYear && (!Number.isInteger(compareYear) || compareYear < 2024 || compareYear > 2035)) throw new Error("Enter a valid comparison year from 2024 to 2035.");
+      renderCrmDashboard();
+      const classified = state.leads.filter(lead => !lead.archived && crmLeadMonthlyTabDate(lead)?.getFullYear() === year).length;
+      setStatus(`CRM dashboard generated for ${year}. ${classified} leads classified from monthly sheet tabs.`);
+    }).catch(err => {
+      setStatus(`CRM dashboard could not be generated: ${err.message}`, "error");
+      alert(err.message);
+    });
     $("exportStudentsCsvBtn").onclick = () => downloadCsv("class-one-students.csv", ["No.", "Name", "Subjects", "Package", "Amount", "Total Classes", "Package Notes", "Status", "Regular Slots"], numbered(studentExportRows()));
     $("exportStudentsPdfBtn").onclick = () => openPrintReport("Class One Students", ["No.", "Name", "Subjects", "Package", "Amount", "Total Classes", "Package Notes", "Status", "Regular Slots"], numbered(studentExportRows()));
     $("exportTeachersCsvBtn").onclick = () => downloadCsv("class-one-teachers.csv", ["No.", "Name", "Subjects", "Category", "Tier", "Rate", "Profit Share", "Regular Slots", "Date Slots", "Feedback Count", "Latest Feedback"], numbered(teacherExportRows()));
