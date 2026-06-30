@@ -2336,6 +2336,31 @@
       return (state.revenueEntries || []).find(item => Number(item.month) === Number(month) && Number(item.year) === Number(year));
     }
 
+    function loadRevenueEntryForm() {
+      const month = Number($("revenueEntryMonth").value);
+      const year = Number($("revenueEntryYear").value || new Date().getFullYear());
+      const entry = revenueEntryFor(month, year);
+      $("revenueEntryAmount").value = entry ? Number(entry.amount || 0).toFixed(2) : "";
+      $("revenueEntryRemark").value = entry?.remark || "";
+      $("saveRevenueEntryBtn").textContent = entry ? "Update Revenue" : "Save Revenue";
+    }
+
+    function includeRevenueEntryInRange(month, year) {
+      const entryDate = new Date(year, month, 1);
+      const fromDate = new Date(Number($("revenueFromYear").value), Number($("revenueFromMonth").value), 1);
+      const toDate = new Date(Number($("revenueToYear").value), Number($("revenueToMonth").value), 1);
+      const rangeStart = fromDate <= toDate ? fromDate : toDate;
+      const rangeEnd = fromDate <= toDate ? toDate : fromDate;
+      if (entryDate < rangeStart) {
+        $("revenueFromMonth").value = String(month);
+        $("revenueFromYear").value = String(year);
+      }
+      if (entryDate > rangeEnd) {
+        $("revenueToMonth").value = String(month);
+        $("revenueToYear").value = String(year);
+      }
+    }
+
     function revenueRows() {
       return revenueRangeMonths().map(({ month, year }) => {
         const entry = revenueEntryFor(month, year);
@@ -2530,6 +2555,7 @@
       monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
       const currentWeekValue = localISO(monday);
       if ([...$("weekSelect").options].some(o => o.value === currentWeekValue)) $("weekSelect").value = currentWeekValue;
+      loadRevenueEntryForm();
     }
 
     function updateStudentTeacherOptions(preferredTeacherId = "") {
@@ -5802,6 +5828,7 @@
       suppressAutoPush = true;
       save(false);
       suppressAutoPush = false;
+      loadRevenueEntryForm();
       setStatus("Pulled latest data from Google Sheet.");
     }
 
@@ -6043,6 +6070,7 @@
       suppressAutoPush = true;
       save(false);
       suppressAutoPush = false;
+      loadRevenueEntryForm();
       if (logManual) logAction("Neon Loaded", "Neon Database", "", "Loaded latest app data", "Manual Neon load completed.");
       setStatus("Loaded latest data from Neon database.");
       return { empty: false, version: state.settings.neonVersion };
@@ -7787,6 +7815,7 @@
     ["weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "typeFilter"].forEach(id => $(id).addEventListener("change", renderSchedule));
     ["weekSelect", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear"].forEach(id => $(id).addEventListener("change", renderTeacherOverview));
     ["revenueFromMonth", "revenueFromYear", "revenueToMonth", "revenueToYear"].forEach(id => $(id).addEventListener("change", renderRevenueDashboard));
+    ["revenueEntryMonth", "revenueEntryYear"].forEach(id => $(id).addEventListener("change", loadRevenueEntryForm));
     $("clearOverviewFiltersBtn").onclick = () => {
       $("overviewTeacherFilter").value = "all";
       $("overviewViewMode").value = "table";
@@ -7814,8 +7843,12 @@
     $("saveRevenueEntryBtn").onclick = () => {
       const month = Number($("revenueEntryMonth").value);
       const year = Number($("revenueEntryYear").value || new Date().getFullYear());
-      const amount = Number($("revenueEntryAmount").value || 0);
+      const rawAmount = $("revenueEntryAmount").value.trim();
+      const amount = Number(rawAmount);
       const remark = $("revenueEntryRemark").value.trim();
+      if (!Number.isInteger(month) || month < 0 || month > 11) return alert("Choose a valid entry month.");
+      if (!Number.isInteger(year) || year < 2024 || year > 2035) return alert("Enter a valid entry year from 2024 to 2035.");
+      if (!rawAmount || !Number.isFinite(amount) || amount < 0) return alert("Enter the monthly revenue amount first.");
       let entry = revenueEntryFor(month, year);
       const before = entry ? `${revenueMonthLabel(month, year)} | ${money(entry.amount)} | ${entry.remark || ""}` : "";
       if (!entry) {
@@ -7826,10 +7859,10 @@
       entry.remark = remark;
       entry.updatedAt = new Date().toISOString();
       logAction(before ? "Revenue Updated" : "Revenue Added", revenueMonthLabel(month, year), before, `${money(amount)} | ${remark}`, "");
-      $("revenueEntryAmount").value = "";
-      $("revenueEntryRemark").value = "";
+      includeRevenueEntryInRange(month, year);
       save();
-      setStatus("Revenue entry saved.");
+      loadRevenueEntryForm();
+      setStatus(`${revenueMonthLabel(month, year)} revenue saved: ${money(amount)}.`);
     };
     $("studentSearch").addEventListener("input", renderStudents);
     $("teacherDirectorySearch").addEventListener("input", () => { teacherDirectoryPage = 1; renderTeacherDirectory(); });
@@ -8021,6 +8054,7 @@
           .then(() => {
             hydrateSelects();
             renderAll();
+            loadRevenueEntryForm();
             setTimeout(() => autoPullOnStart(), 250);
           })
           .catch(err => {
