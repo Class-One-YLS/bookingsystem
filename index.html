@@ -1071,7 +1071,7 @@
       <input id="studentId" type="hidden">
       <div class="grid two" style="margin-top:14px;">
         <div><label>Student Name</label><input id="studentName" placeholder="Student name"></div>
-        <div><label>Subject Taken</label><select id="studentSubject"></select></div>
+        <div><label>Subjects Taken</label><div id="studentSubjectChecks" class="row"></div></div>
         <div><label>Package</label><input id="studentPackage" list="packageOptions" placeholder="Choose or type package"></div>
         <div><label>Package Amount (RM)</label><input id="studentPackageAmount" type="number" min="0" step="0.01" placeholder="0.00"></div>
         <div><label>Package Total Classes</label><input id="studentPackageClasses" type="number" min="0" step="1" placeholder="0"></div>
@@ -1083,8 +1083,10 @@
         <div><label>Regular Days</label><div id="studentDayChecks" class="row"></div></div>
         <div><label>Regular Time</label><input id="studentTime" type="time" step="1800"></div>
         <div><label>Regular Subject</label><select id="studentRegularSubject"></select></div>
+        <div><label>Effective Start Date</label><input id="studentRegularStartDate" type="date"></div>
+        <div><label>Effective End Date</label><input id="studentRegularEndDate" type="date"><div class="subtle">Leave empty for an ongoing schedule.</div></div>
       </div>
-      <div class="row" style="margin-top:10px;"><button class="btn ghost" id="addStudentRegularSlotBtn">Add Regular Slot</button></div>
+      <div class="row" style="margin-top:10px;"><button class="btn ghost" id="addStudentRegularSlotBtn">Add Regular Slot</button><button class="btn ghost hide" id="cancelStudentRegularEditBtn">Cancel Edit</button></div>
       <div id="studentRegularSlotList" class="list" style="margin-top:12px;max-height:220px;"></div>
       <div class="row" style="margin-top:14px;">
         <button class="btn mint" id="saveStudentBtn">Save Student</button>
@@ -1433,6 +1435,8 @@
     }
 
     let studentRegularSlotsDraft = [];
+    let studentRegularSlotEditId = "";
+    let pendingEnrollmentLeadId = "";
     const LEADS_PER_PAGE = 30;
     let leadPage = 1;
     let leadViewMode = "table";
@@ -1824,6 +1828,8 @@
       state.teachers = mergeDuplicateTeachers(state.teachers).filter(teacher => !isImportedOnlyTeacher(teacher));
       state.students.forEach(student => {
         student.name = cleanStudentName(student.name);
+        student.subjects = normalizeSubjects(Array.isArray(student.subjects) ? student.subjects : [student.subject].filter(Boolean));
+        student.subject = student.subjects[0] || normalizeSubject(student.subject || "");
         student.packageAmount = Number(student.packageAmount || 0);
         student.packageClasses = Number(student.packageClasses || 0);
         student.packageNotes ||= "";
@@ -1994,7 +2000,8 @@
           result.push(student);
           return;
         }
-        existing.subject ||= student.subject || "";
+        existing.subjects = normalizeSubjects([...(existing.subjects || [existing.subject].filter(Boolean)), ...(student.subjects || [student.subject].filter(Boolean))]);
+        existing.subject = existing.subjects[0] || existing.subject || student.subject || "";
         existing.package ||= student.package || "";
         existing.packageAmount ||= student.packageAmount || 0;
         existing.packageClasses ||= student.packageClasses || 0;
@@ -2043,7 +2050,7 @@
     function studentLogSummary(s) {
       if (!s) return "";
       const slots = getStudentRegularSlots(s).map(slot => `${slot.day} ${timeLabel(slot.time)} ${slot.subject}`).join("; ");
-      return `Package: ${s.package || "-"} | Amount: RM${Number(s.packageAmount || 0).toFixed(2)} | Classes: ${Number(s.packageClasses || 0)} | Status: ${s.status || "registered"} | Registered: ${s.registeredStatus || "active"} | Subject: ${s.subject || "-"} | Slots: ${slots || "-"}`;
+      return `Package: ${s.package || "-"} | Amount: RM${Number(s.packageAmount || 0).toFixed(2)} | Classes: ${Number(s.packageClasses || 0)} | Status: ${s.status || "registered"} | Registered: ${s.registeredStatus || "active"} | Subjects: ${normalizeSubjects(s.subjects || [s.subject].filter(Boolean)).join(", ") || "-"} | Slots: ${slots || "-"}`;
     }
 
     function teacherFeedbackRows(teacherId, includeArchived = false) {
@@ -2462,13 +2469,13 @@
       ["monthSelect", "reportMonth", "businessDashboardMonth", "revenueFromMonth", "revenueToMonth", "revenueEntryMonth"].forEach(id => fillSelect($(id), Array.from({ length: 12 }, (_, i) => ({ value: i, label: new Date(2026, i, 1).toLocaleString("en", { month: "long" }) }))));
       ["teacherFilter", "teacherStudentRecordTeacher"].forEach(id => fillSelect($(id), teacherOptions, "All Teachers"));
       ["overviewTeacherFilter"].forEach(id => fillSelect($(id), teacherOptions, "Choose Teacher"));
-      ["slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher", "editTimeSlotTeacher"].forEach(id => fillSelect($(id), teacherOptions));
+      ["slotTeacher", "bulkTeacher", "overrideTeacher", "editTimeSlotTeacher"].forEach(id => fillSelect($(id), teacherOptions));
       fillSelect($("reportTeacher"), reportTeacherOptions);
       ["assessmentTeacher", "trialTeacher"].forEach(id => fillSelect($(id), teacherOptions, "Choose teacher"));
       ["subjectFilter", "teacherDirectorySubject"].forEach(id => fillSelect($(id), SUBJECTS, "All Subjects"));
       ["timeFromFilter", "timeToFilter"].forEach(id => fillSelect($(id), halfHourOptions()));
       fillSelect($("typeFilter"), BOOKING_TYPES.map(type => ({ value: type, label: type.replace(/\b\w/g, char => char.toUpperCase()) })), "All Types");
-      ["slotSubject", "bulkSubject", "overrideSubject", "studentSubject", "studentRegularSubject", "bookingSubject", "assessmentSubject", "trialSubject", "openSlotSubject"].forEach(id => fillSelect($(id), SUBJECTS));
+      ["slotSubject", "bulkSubject", "overrideSubject", "studentRegularSubject", "bookingSubject", "assessmentSubject", "trialSubject", "openSlotSubject"].forEach(id => fillSelect($(id), SUBJECTS));
       fillSelect($("leadStatus"), LEAD_STATUSES);
       fillSelect($("leadUrgency"), URGENCIES);
       fillSelect($("leadFilterStatus"), LEAD_STATUSES, "All Status");
@@ -2491,6 +2498,8 @@
       $("studentDayChecks").innerHTML = DAYS.map(day => `<label class="pill"><input type="checkbox" value="${day}" style="width:auto;min-height:0;margin-right:6px;"> ${day.slice(0, 3)}</label>`).join("");
       $("leadSubjectChecks").innerHTML = LEAD_SUBJECTS.map(s => `<label class="pill"><input type="checkbox" value="${s}" style="width:auto;min-height:0;margin-right:6px;"> ${s}</label>`).join("");
       $("teacherSubjects").innerHTML = SUBJECTS.map(s => `<label class="pill"><input type="checkbox" value="${s}" style="width:auto;min-height:0;margin-right:6px;"> ${s}</label>`).join("");
+      $("studentSubjectChecks").innerHTML = SUBJECTS.map(s => `<label class="pill"><input type="checkbox" value="${s}" style="width:auto;min-height:0;margin-right:6px;"> ${s}</label>`).join("");
+      updateStudentTeacherOptions();
       $("tutorLeadSubjects").innerHTML = SUBJECTS.map(s => `<label class="pill"><input type="checkbox" value="${s}" style="width:auto;min-height:0;margin-right:6px;"> ${s}</label>`).join("");
       $("tutorOnboardingChecks").innerHTML = TUTOR_ONBOARDING_STEPS.map(step => `<label class="pill"><input type="checkbox" value="${escapeHtml(step)}" style="width:auto;min-height:0;margin-right:6px;"> ${escapeHtml(step)}</label>`).join("");
     }
@@ -2518,6 +2527,15 @@
       monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
       const currentWeekValue = localISO(monday);
       if ([...$("weekSelect").options].some(o => o.value === currentWeekValue)) $("weekSelect").value = currentWeekValue;
+    }
+
+    function updateStudentTeacherOptions(preferredTeacherId = "") {
+      const subject = $("studentRegularSubject")?.value || selectedStudentSubjects()[0] || "";
+      const eligible = [...activeTeachers()].sort(byName).filter(teacher => !subject || (teacher.subjects || []).includes(subject));
+      const current = preferredTeacherId || $("studentTeacher")?.value || "";
+      const options = eligible.map(teacher => ({ value: teacher.id, label: `${teacher.name} (${(teacher.subjects || []).join(", ") || "No subject"})` }));
+      $("studentTeacher").innerHTML = `<option value="">${eligible.length ? "Choose teacher" : "No eligible teacher"}</option>` + options.map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("");
+      if (eligible.some(teacher => teacher.id === current)) $("studentTeacher").value = current;
     }
 
     function refreshWeeks() {
@@ -3446,7 +3464,8 @@
         const studentStatus = statusOf(s);
         const archived = studentStatus === "archived";
         const statusLabel = studentStatus === "trial" ? "trial / not enrolled" : studentStatus;
-        return `<div class="card"><div class="row spread"><strong>${escapeHtml(s.name)}</strong><span>${s.package ? `<span class="pill">${escapeHtml(s.package)}</span>` : ""}<span class="pill ${archived ? "archived" : ""}">${escapeHtml(statusLabel)}</span></span></div><div class="subtle">${s.subject ? "Subject: " + escapeHtml(s.subject) + "<br>" : ""}Package: ${money(s.packageAmount)} / ${Number(s.packageClasses || 0)} classes${s.packageNotes ? " | " + escapeHtml(s.packageNotes) : ""}<br>${lines.map(escapeHtml).join("<br>") || "No regular slots"}</div><div class="row" style="margin-top:8px;"><button class="btn small ghost" data-edit-student="${s.id}">Edit</button><button class="btn small ghost" data-archive-student="${s.id}">${archived ? "Restore" : "Archive"}</button><button class="btn small danger" data-delete-student="${s.id}">Delete</button></div></div>`;
+        const subjects = normalizeSubjects(s.subjects || [s.subject].filter(Boolean));
+        return `<div class="card"><div class="row spread"><strong>${escapeHtml(s.name)}</strong><span>${s.package ? `<span class="pill">${escapeHtml(s.package)}</span>` : ""}<span class="pill ${archived ? "archived" : ""}">${escapeHtml(statusLabel)}</span></span></div><div class="subtle">${subjects.length ? "Subjects: " + subjects.map(escapeHtml).join(", ") + "<br>" : ""}Package: ${money(s.packageAmount)} / ${Number(s.packageClasses || 0)} classes${s.packageNotes ? " | " + escapeHtml(s.packageNotes) : ""}<br>${lines.map(escapeHtml).join("<br>") || "No regular slots"}</div><div class="row" style="margin-top:8px;"><button class="btn small ghost" data-edit-student="${s.id}">Edit</button><button class="btn small ghost" data-archive-student="${s.id}">${archived ? "Restore" : "Archive"}</button><button class="btn small danger" data-delete-student="${s.id}">Delete</button></div></div>`;
       }).join("") || `<div class="empty">Add student names, subjects, and regular weekly slots.</div>`;
       renderRegisteredStudents();
     }
@@ -3589,8 +3608,100 @@
     function renderStudentRegularSlotDraft() {
       $("studentRegularSlotList").innerHTML = studentRegularSlotsDraft.map(slot => {
         const teacher = teacherById(slot.teacherId);
-        return `<div class="card"><strong>${escapeHtml(slot.day)} ${timeLabel(slot.time)}</strong><div class="subtle">${escapeHtml(slot.subject)} | ${escapeHtml(teacher ? teacher.name : "No teacher")}</div><button class="btn small danger" data-remove-student-regular="${slot.id}">Remove</button></div>`;
+        const period = slot.startDate
+          ? `From ${formatDateFromAny(slot.startDate)}${slot.endDate ? ` to ${formatDateFromAny(slot.endDate)}` : " onward"}`
+          : "Existing regular schedule";
+        return `<div class="card"><strong>${escapeHtml(slot.day)} ${timeLabel(slot.time)}</strong><div class="subtle">${escapeHtml(slot.subject)} | ${escapeHtml(teacher ? teacher.name : "No teacher")}<br>${escapeHtml(period)}</div><div class="row" style="margin-top:8px;"><button class="btn small ghost" data-edit-student-regular="${slot.id}">Edit</button><button class="btn small danger" data-remove-student-regular="${slot.id}">Remove</button></div></div>`;
       }).join("") || `<div class="empty">No regular slots added yet.</div>`;
+    }
+
+    function selectedStudentSubjects() {
+      return [...document.querySelectorAll("#studentSubjectChecks input:checked")].map(input => input.value);
+    }
+
+    function setSelectedStudentSubjects(subjects) {
+      const selected = normalizeSubjects(subjects || []);
+      document.querySelectorAll("#studentSubjectChecks input").forEach(input => {
+        input.checked = selected.includes(input.value);
+      });
+    }
+
+    function resetStudentRegularSlotEditor() {
+      studentRegularSlotEditId = "";
+      $("addStudentRegularSlotBtn").textContent = "Add Regular Slot";
+      $("cancelStudentRegularEditBtn").classList.add("hide");
+      $("studentTeacher").value = "";
+      $("studentTime").value = "";
+      $("studentRegularStartDate").value = todayISO();
+      $("studentRegularEndDate").value = "";
+      setSelectedStudentRegularDays([]);
+    }
+
+    function studentRegularSlotKey(slot) {
+      return [slot.teacherId || "", slot.day || "", slot.time || "", normalizeSubject(slot.subject || ""), slot.startDate || "", slot.endDate || ""].join("|");
+    }
+
+    function regularSlotRangesOverlap(a, b) {
+      const aStart = a.startDate || "0000-01-01";
+      const bStart = b.startDate || "0000-01-01";
+      const aEnd = a.endDate || "9999-12-31";
+      const bEnd = b.endDate || "9999-12-31";
+      return aStart <= bEnd && bStart <= aEnd;
+    }
+
+    function studentRegularSlotConflict(studentName, candidate, ignoredStudentSlotId = "") {
+      const teacher = teacherById(candidate.teacherId);
+      if (!teacher) return "Choose a valid teacher.";
+      const conflict = (teacher.regularSlots || []).find(slot =>
+        slot.locked &&
+        slot.day === candidate.day &&
+        slot.time === candidate.time &&
+        slot.studentSlotId !== ignoredStudentSlotId &&
+        studentNameKey(slot.studentName || "") !== studentNameKey(studentName) &&
+        regularSlotRangesOverlap(slot, candidate)
+      );
+      return conflict ? `${teacher.name} is already teaching ${conflict.studentName || "another student"} on ${candidate.day} at ${timeLabel(candidate.time)}.` : "";
+    }
+
+    function syncStudentProfileSlotsToTeachers(student, previousSlots = []) {
+      const nextSlots = getStudentRegularSlots(student);
+      nextSlots.forEach(studentSlot => {
+        const teacher = teacherById(studentSlot.teacherId);
+        if (!teacher) return;
+        teacher.regularSlots ||= [];
+        let teacherSlot = teacher.regularSlots.find(slot => slot.studentSlotId === studentSlot.id);
+        if (!teacherSlot) {
+          teacherSlot = teacher.regularSlots.find(slot =>
+            slot.locked &&
+            studentNameKey(slot.studentName || "") === studentNameKey(student.name) &&
+            slot.day === studentSlot.day &&
+            slot.time === studentSlot.time &&
+            normalizeSubject(slot.subject || "") === normalizeSubject(studentSlot.subject || "") &&
+            regularSlotRangesOverlap(slot, studentSlot)
+          );
+        }
+        if (!teacherSlot) {
+          teacherSlot = { id: uid("slot"), locked: true, source: "student-profile" };
+          teacher.regularSlots.push(teacherSlot);
+        }
+        Object.assign(teacherSlot, {
+          studentId: student.id,
+          studentSlotId: studentSlot.id,
+          studentName: student.name,
+          day: studentSlot.day,
+          time: studentSlot.time,
+          subject: studentSlot.subject,
+          startDate: studentSlot.startDate || "",
+          endDate: studentSlot.endDate || "",
+          locked: true
+        });
+      });
+      const nextIds = new Set(nextSlots.map(slot => slot.id));
+      previousSlots.filter(slot => slot.id && !nextIds.has(slot.id)).forEach(previousSlot => {
+        const teacher = teacherById(previousSlot.teacherId);
+        const teacherSlot = (teacher?.regularSlots || []).find(slot => slot.studentSlotId === previousSlot.id && slot.source === "student-profile");
+        if (teacherSlot && !teacherSlot.endDate) teacherSlot.endDate = dateOffsetISO(todayISO(), -1);
+      });
     }
 
     function selectedStudentRegularDays() {
@@ -4249,7 +4360,7 @@
     function syncLeadToStudent(lead, status = "registered") {
       if (!lead || !lead.childName) return null;
       const childName = cleanStudentName(lead.childName);
-      const subject = normalizeSubject((lead.subjects || [])[0] || "");
+      const subjects = normalizeSubjects(lead.subjects || []);
       let student = state.students.find(s => studentNameKey(s.name) === studentNameKey(childName));
       const before = studentLogSummary(student);
       if (!student) {
@@ -4257,7 +4368,8 @@
         state.students.push(student);
       }
       student.name = childName;
-      student.subject = subject || student.subject || "";
+      student.subjects = normalizeSubjects(subjects.length ? subjects : (student.subjects || [student.subject].filter(Boolean)));
+      student.subject = student.subjects[0] || student.subject || "";
       student.package = lead.packageInterested || student.package || "";
       student.status = status;
       if (status === "registered") student.registeredStatus ||= "new";
@@ -4271,13 +4383,44 @@
       if (!lead || lead.status !== "Enrolled") return false;
       const matchedStudent = state.students.find(s => studentNameKey(s.name) === studentNameKey(lead.childName));
       if (previousStatus === "Enrolled" && matchedStudent && matchedStudent.status === "registered") return false;
-      if (!confirm("This lead is marked Enrolled. Create or update this child in Students as Registered?")) {
-        setStatus("Lead marked Enrolled. Student profile not updated yet.", "warn");
-        return false;
-      }
-      syncLeadToStudent(lead, "registered");
-      setStatus("Enrolled lead synced to Students.");
+      lead.status = previousStatus || "Trial Class";
+      lead.pendingEnrollment = true;
+      pendingEnrollmentLeadId = lead.id;
+      setTimeout(() => openEnrollmentStudentProfile(lead.id), 0);
       return true;
+    }
+
+    function openEnrollmentStudentProfile(leadId) {
+      const lead = state.leads.find(item => item.id === leadId);
+      if (!lead) return;
+      const matchedStudent = state.students.find(s => studentNameKey(s.name) === studentNameKey(lead.childName));
+      const student = matchedStudent || {
+        id: uid("student"),
+        name: cleanStudentName(lead.childName),
+        subjects: normalizeSubjects(lead.subjects || []),
+        subject: normalizeSubject((lead.subjects || [])[0] || ""),
+        package: lead.packageInterested || "",
+        regularSlots: [],
+        status: "registered",
+        registeredStatus: "new"
+      };
+      studentRegularSlotsDraft = getStudentRegularSlots(student).map(slot => ({ ...slot, id: slot.id || uid("student_slot") }));
+      $("studentId").value = student.id;
+      $("studentName").value = student.name;
+      setSelectedStudentSubjects(student.subjects || lead.subjects || []);
+      $("studentPackage").value = lead.packageInterested || student.package || "";
+      $("studentPackageAmount").value = student.packageAmount || "";
+      $("studentPackageClasses").value = student.packageClasses || "";
+      $("studentPackageNotes").value = student.packageNotes || "";
+      $("studentStatus").value = "registered";
+      $("studentRegisteredStatus").value = student.registeredStatus || "new";
+      $("studentRegisteredRemark").value = student.registeredRemark || "";
+      resetStudentRegularSlotEditor();
+      $("studentRegularSubject").value = student.subjects?.[0] || "CN";
+      updateStudentTeacherOptions();
+      renderStudentRegularSlotDraft();
+      $("studentProfileModal").classList.remove("hide");
+      setStatus("Complete the package, subjects, teachers and regular schedule to finish enrollment.", "warn");
     }
 
     function syncTutorLeadToTeacher(id) {
@@ -4384,7 +4527,7 @@
       $("archivedStudentList").innerHTML = pageItems(archivedStudents, archivedStudentPage).map(s => `
         <div class="card">
           <div class="row spread"><strong>${escapeHtml(s.name)}</strong><span class="pill archived">archived</span></div>
-          <div class="subtle">${s.subject ? `Subject: ${escapeHtml(s.subject)}<br>` : ""}Package: ${escapeHtml(s.package || "-")} | ${money(s.packageAmount)} / ${Number(s.packageClasses || 0)} classes</div>
+          <div class="subtle">${normalizeSubjects(s.subjects || [s.subject].filter(Boolean)).length ? `Subjects: ${normalizeSubjects(s.subjects || [s.subject].filter(Boolean)).map(escapeHtml).join(", ")}<br>` : ""}Package: ${escapeHtml(s.package || "-")} | ${money(s.packageAmount)} / ${Number(s.packageClasses || 0)} classes</div>
           <div class="row" style="margin-top:8px;"><button class="btn small ghost" data-restore-student="${s.id}">Restore</button></div>
         </div>
       `).join("") || `<div class="empty">No archived students.</div>`;
@@ -5270,7 +5413,7 @@
           return `${slot.day} ${timeLabel(slot.time)} ${slot.subject} ${teacher ? teacher.name : ""}`.trim();
         }).join("; ");
         const status = student.status === "trial" ? "Trial / Not Enrolled" : (student.status === "archived" ? "Archived" : "Registered");
-        return [student.name || "", student.subject || "", student.package || "", Number(student.packageAmount || 0).toFixed(2), Number(student.packageClasses || 0), student.packageNotes || "", status, slots];
+        return [student.name || "", normalizeSubjects(student.subjects || [student.subject].filter(Boolean)).join(", "), student.package || "", Number(student.packageAmount || 0).toFixed(2), Number(student.packageClasses || 0), student.packageNotes || "", status, slots];
       });
     }
 
@@ -6664,6 +6807,12 @@
       if (close) {
         const modal = close.closest(".modal");
         if (modal && modal.id === "moveBookingModal") cleanupPendingMoveDraft();
+        if (modal && modal.id === "studentProfileModal" && pendingEnrollmentLeadId) {
+          const lead = state.leads.find(item => item.id === pendingEnrollmentLeadId);
+          if (lead) lead.pendingEnrollment = false;
+          pendingEnrollmentLeadId = "";
+          setStatus("Enrollment completion cancelled. The CRM lead status was not changed.", "warn");
+        }
         if (modal) modal.classList.add("hide");
       }
       const editTeacher = e.target.closest("[data-edit-teacher]");
@@ -6771,9 +6920,11 @@
       if (editStudent) {
         const s = studentById(editStudent.dataset.editStudent);
         studentRegularSlotsDraft = getStudentRegularSlots(s).map(slot => ({ ...slot, id: slot.id || uid("student_slot") }));
-        $("studentId").value = s.id; $("studentName").value = s.name; $("studentSubject").value = s.subject; $("studentPackage").value = s.package || ""; $("studentPackageAmount").value = s.packageAmount || ""; $("studentPackageClasses").value = s.packageClasses || ""; $("studentPackageNotes").value = s.packageNotes || ""; $("studentRegisteredStatus").value = s.registeredStatus || "active"; $("studentRegisteredRemark").value = s.registeredRemark || ""; $("studentStatus").value = s.status === "trial" ? "trial" : (s.status === "archived" ? "archived" : "registered"); $("studentTeacher").value = s.teacherId || studentRegularSlotsDraft[0]?.teacherId || ""; $("studentTime").value = s.time || studentRegularSlotsDraft[0]?.time || "";
+        $("studentId").value = s.id; $("studentName").value = s.name; $("studentPackage").value = s.package || ""; $("studentPackageAmount").value = s.packageAmount || ""; $("studentPackageClasses").value = s.packageClasses || ""; $("studentPackageNotes").value = s.packageNotes || ""; $("studentRegisteredStatus").value = s.registeredStatus || "active"; $("studentRegisteredRemark").value = s.registeredRemark || ""; $("studentStatus").value = s.status === "trial" ? "trial" : (s.status === "archived" ? "archived" : "registered");
+        setSelectedStudentSubjects(s.subjects || [s.subject].filter(Boolean));
+        resetStudentRegularSlotEditor();
         $("studentRegularSubject").value = studentRegularSlotsDraft[0]?.subject || s.subject || "CN";
-        setSelectedStudentRegularDays([...new Set(studentRegularSlotsDraft.map(slot => slot.day).filter(Boolean))]);
+        updateStudentTeacherOptions();
         renderStudentRegularSlotDraft();
         $("studentProfileModal").classList.remove("hide");
       }
@@ -6824,7 +6975,23 @@
       const removeStudentRegular = e.target.closest("[data-remove-student-regular]");
       if (removeStudentRegular) {
         studentRegularSlotsDraft = studentRegularSlotsDraft.filter(slot => slot.id !== removeStudentRegular.dataset.removeStudentRegular);
+        if (studentRegularSlotEditId === removeStudentRegular.dataset.removeStudentRegular) resetStudentRegularSlotEditor();
         renderStudentRegularSlotDraft();
+      }
+      const editStudentRegular = e.target.closest("[data-edit-student-regular]");
+      if (editStudentRegular) {
+        const slot = studentRegularSlotsDraft.find(item => item.id === editStudentRegular.dataset.editStudentRegular);
+        if (!slot) return;
+        studentRegularSlotEditId = slot.id;
+        $("studentTeacher").value = slot.teacherId || "";
+        $("studentTime").value = slot.time || "";
+        $("studentRegularSubject").value = slot.subject || selectedStudentSubjects()[0] || "CN";
+        updateStudentTeacherOptions(slot.teacherId);
+        $("studentRegularStartDate").value = slot.startDate || todayISO();
+        $("studentRegularEndDate").value = slot.endDate || "";
+        setSelectedStudentRegularDays([slot.day].filter(Boolean));
+        $("addStudentRegularSlotBtn").textContent = "Update Regular Slot";
+        $("cancelStudentRegularEditBtn").classList.remove("hide");
       }
       const editLead = e.target.closest("[data-edit-lead]");
       if (editLead) {
@@ -7175,23 +7342,44 @@
     $("saveStudentBtn").onclick = () => {
       const name = cleanStudentName($("studentName").value);
       if (!name) return alert("Student name is required.");
+      const subjects = selectedStudentSubjects();
+      if (!subjects.length) return alert("Choose at least one subject taken.");
       const packageName = $("studentPackage").value.trim();
       if (!packageName) return alert("Choose or type the student's package first.");
+      if (pendingEnrollmentLeadId && !studentRegularSlotsDraft.length) return alert("Add at least one regular class teacher, day and time to complete enrollment.");
       const id = $("studentId").value || uid("student");
       const existing = studentById(id) || { id };
       const before = studentLogSummary(existing);
-      Object.assign(existing, { name, subject: $("studentSubject").value, package: packageName, packageAmount: Number($("studentPackageAmount").value || 0), packageClasses: Number($("studentPackageClasses").value || 0), packageNotes: $("studentPackageNotes").value.trim(), registeredStatus: $("studentRegisteredStatus").value || "active", registeredRemark: $("studentRegisteredRemark").value.trim(), status: $("studentStatus").value || "registered", regularSlots: studentRegularSlotsDraft.map(slot => ({ ...slot })) });
+      const previousRegularSlots = getStudentRegularSlots(existing).map(slot => ({ ...slot }));
+      Object.assign(existing, { name, subjects, subject: subjects[0] || "", package: packageName, packageAmount: Number($("studentPackageAmount").value || 0), packageClasses: Number($("studentPackageClasses").value || 0), packageNotes: $("studentPackageNotes").value.trim(), registeredStatus: $("studentRegisteredStatus").value || "active", registeredRemark: $("studentRegisteredRemark").value.trim(), status: $("studentStatus").value || "registered", regularSlots: studentRegularSlotsDraft.map(slot => ({ ...slot })) });
       delete existing.teacherId;
       delete existing.day;
       delete existing.time;
       if (!state.students.some(s => s.id === id)) state.students.push(existing);
+      syncStudentProfileSlotsToTeachers(existing, previousRegularSlots);
       logAction(before ? "Student Updated" : "Student Added", existing.name, before, studentLogSummary(existing), "Student profile saved.");
+      if (pendingEnrollmentLeadId) {
+        const lead = state.leads.find(item => item.id === pendingEnrollmentLeadId);
+        if (lead) {
+          lead.status = "Enrolled";
+          lead.pendingEnrollment = false;
+          lead.enrolledAt = todayISO();
+          lead.statusChangedAt = todayISO();
+          lead.updatedAt = new Date().toISOString();
+          lead.studentId = existing.id;
+          lead.packageInterested = existing.package;
+          lead.subjects = [...existing.subjects];
+          logAction("CRM Lead Enrolled", lead.childName || lead.id, "Enrollment pending", "Enrolled", `Linked student: ${existing.name}`);
+        }
+        pendingEnrollmentLeadId = "";
+      }
       $("studentId").value = ""; $("studentName").value = ""; $("studentPackage").value = ""; $("studentPackageAmount").value = ""; $("studentPackageClasses").value = ""; $("studentPackageNotes").value = ""; $("studentRegisteredStatus").value = "active"; $("studentRegisteredRemark").value = ""; $("studentStatus").value = "registered"; $("studentTime").value = "";
+      setSelectedStudentSubjects([]);
       studentRegularSlotsDraft = [];
       save();
       $("studentProfileModal").classList.add("hide");
     };
-    $("newStudentBtn").onclick = () => { $("studentId").value = ""; $("studentName").value = ""; $("studentPackage").value = ""; $("studentPackageAmount").value = ""; $("studentPackageClasses").value = ""; $("studentPackageNotes").value = ""; $("studentRegisteredStatus").value = "active"; $("studentRegisteredRemark").value = ""; $("studentStatus").value = "registered"; $("studentTime").value = ""; setSelectedStudentRegularDays([]); studentRegularSlotsDraft = []; renderStudentRegularSlotDraft(); };
+    $("newStudentBtn").onclick = () => { $("studentId").value = ""; $("studentName").value = ""; $("studentPackage").value = ""; $("studentPackageAmount").value = ""; $("studentPackageClasses").value = ""; $("studentPackageNotes").value = ""; $("studentRegisteredStatus").value = "active"; $("studentRegisteredRemark").value = ""; $("studentStatus").value = "registered"; setSelectedStudentSubjects([]); studentRegularSlotsDraft = []; resetStudentRegularSlotEditor(); renderStudentRegularSlotDraft(); };
     $("openStudentModalBtn").onclick = () => {
       $("newStudentBtn").click();
       $("studentProfileModal").classList.remove("hide");
@@ -7200,19 +7388,47 @@
     $("addStudentRegularSlotBtn").onclick = () => {
       const days = selectedStudentRegularDays();
       if (!$("studentTeacher").value || !days.length || !$("studentTime").value) return alert("Choose teacher, at least one day, and time first.");
-      days.forEach(day => {
+      const subject = $("studentRegularSubject").value;
+      if (!selectedStudentSubjects().includes(subject)) return alert("Add this regular subject under Subjects Taken first.");
+      const startDate = dateOnly($("studentRegularStartDate").value);
+      const endDate = dateOnly($("studentRegularEndDate").value);
+      if (endDate && !startDate) return alert("Choose an effective start date when using an end date.");
+      if (startDate && endDate && endDate < startDate) return alert("Effective end date cannot be before the start date.");
+      const editing = studentRegularSlotsDraft.find(slot => slot.id === studentRegularSlotEditId);
+      const candidates = days.map(day => ({
+        teacherId: $("studentTeacher").value,
+        day,
+        time: $("studentTime").value,
+        subject,
+        startDate: startDate || "",
+        endDate: endDate || ""
+      }));
+      const conflict = candidates.map(candidate => studentRegularSlotConflict($("studentName").value, candidate, editing?.id || "")).find(Boolean);
+      if (conflict) return alert(conflict);
+      if (editing) {
+        if (!startDate) return alert("Choose when this schedule change should start.");
+        const historicalEnd = dateOffsetISO(startDate, -1);
+        if (!editing.startDate || editing.startDate < startDate) editing.endDate = historicalEnd;
+        else studentRegularSlotsDraft = studentRegularSlotsDraft.filter(slot => slot.id !== editing.id);
+      }
+      candidates.forEach(candidate => {
         const item = {
           id: uid("student_slot"),
-          teacherId: $("studentTeacher").value,
-          day,
-          time: $("studentTime").value,
-          subject: $("studentRegularSubject").value || $("studentSubject").value
+          ...candidate
         };
-        const exists = studentRegularSlotsDraft.some(slot => slot.teacherId === item.teacherId && slot.day === item.day && slot.time === item.time && slot.subject === item.subject);
+        const exists = studentRegularSlotsDraft.some(slot => slot.teacherId === item.teacherId && slot.day === item.day && slot.time === item.time && slot.subject === item.subject && (slot.startDate || "") === item.startDate && (slot.endDate || "") === item.endDate);
         if (!exists) studentRegularSlotsDraft.push(item);
       });
+      resetStudentRegularSlotEditor();
       renderStudentRegularSlotDraft();
     };
+    $("cancelStudentRegularEditBtn").onclick = resetStudentRegularSlotEditor;
+    $("studentRegularSubject").addEventListener("change", () => updateStudentTeacherOptions());
+    $("studentSubjectChecks").addEventListener("change", () => {
+      const subjects = selectedStudentSubjects();
+      if (subjects.length && !subjects.includes($("studentRegularSubject").value)) $("studentRegularSubject").value = subjects[0];
+      updateStudentTeacherOptions();
+    });
     $("saveLeadBtn").onclick = () => {
       const parentName = $("leadParentName").value.trim();
       const parentPhone = $("leadParentPhone").value.trim();
@@ -7657,8 +7873,8 @@
     });
     ["crmReportYear", "crmCompareYear"].forEach(id => $(id).addEventListener("change", renderCrmDashboard));
     $("generateCrmDashboardBtn").onclick = renderCrmDashboard;
-    $("exportStudentsCsvBtn").onclick = () => downloadCsv("class-one-students.csv", ["No.", "Name", "Subject", "Package", "Amount", "Total Classes", "Package Notes", "Status", "Regular Slots"], numbered(studentExportRows()));
-    $("exportStudentsPdfBtn").onclick = () => openPrintReport("Class One Students", ["No.", "Name", "Subject", "Package", "Amount", "Total Classes", "Package Notes", "Status", "Regular Slots"], numbered(studentExportRows()));
+    $("exportStudentsCsvBtn").onclick = () => downloadCsv("class-one-students.csv", ["No.", "Name", "Subjects", "Package", "Amount", "Total Classes", "Package Notes", "Status", "Regular Slots"], numbered(studentExportRows()));
+    $("exportStudentsPdfBtn").onclick = () => openPrintReport("Class One Students", ["No.", "Name", "Subjects", "Package", "Amount", "Total Classes", "Package Notes", "Status", "Regular Slots"], numbered(studentExportRows()));
     $("exportTeachersCsvBtn").onclick = () => downloadCsv("class-one-teachers.csv", ["No.", "Name", "Subjects", "Category", "Tier", "Rate", "Profit Share", "Regular Slots", "Date Slots", "Feedback Count", "Latest Feedback"], numbered(teacherExportRows()));
     $("exportTeachersPdfBtn").onclick = () => openPrintReport("Class One Teachers", ["No.", "Name", "Subjects", "Category", "Tier", "Rate", "Profit Share", "Regular Slots", "Date Slots", "Feedback Count", "Latest Feedback"], numbered(teacherExportRows()));
     $("exportTeacherDirectoryCsvBtn").onclick = () => downloadCsv("class-one-teacher-directory.csv", ["No.", "Teacher Name", "Subjects Covered", "Internal Remark", "Email", "Contact Number", "Zoom ID", "Zoom Link"], numbered(teacherDirectoryExportRows()));
