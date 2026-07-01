@@ -314,8 +314,31 @@
             <div><label>Teacher</label><select id="overviewTeacherFilter"></select></div>
             <div><label>View</label><select id="overviewViewMode"><option value="table">Table View</option><option value="list">List View</option></select></div>
             <div><label>Leave Year</label><input id="overviewLeaveYear" type="number" min="2024" max="2035"></div>
+            <div><label>&nbsp;</label><button class="btn mint" id="toggleTeacherSlotEditBtn">Edit Slots</button></div>
             <div><label>&nbsp;</label><button class="btn ghost" id="clearOverviewFiltersBtn">Clear Overview</button></div>
           </div>
+        </div>
+        <div class="panel hide" id="teacherSlotEditPanel">
+          <div class="row spread">
+            <div><h2>Edit Teacher Slots</h2><div class="subtle" id="teacherSlotEditTeacherLabel"></div></div>
+            <button class="btn ghost" id="exitTeacherSlotEditBtn">Exit Slot Editing</button>
+          </div>
+          <div style="margin-top:14px;"><label>Weekdays</label><div class="row" id="teacherSlotEditDays"></div></div>
+          <div class="toolbar" style="margin-top:14px;">
+            <div><label>From Time</label><select id="teacherSlotEditFrom"></select></div>
+            <div><label>To Time</label><select id="teacherSlotEditTo"></select></div>
+            <div>
+              <label>Action</label>
+              <div class="row view-toggle">
+                <button type="button" class="btn active" data-teacher-slot-edit-action="open">Open Slots</button>
+                <button type="button" class="btn ghost" data-teacher-slot-edit-action="off">Set To OFF</button>
+              </div>
+              <input id="teacherSlotEditAction" type="hidden" value="open">
+            </div>
+            <div><label>&nbsp;</label><button class="btn mint" id="applyTeacherSlotEditBtn">Apply Slot Changes</button></div>
+          </div>
+          <div class="subtle" id="teacherSlotEditPreview" style="margin-top:10px;"></div>
+          <div class="subtle" style="margin-top:6px;">The ending time is included. Booked regular classes are protected and will be skipped.</div>
         </div>
         <div class="panel hide" id="overviewTeacherLinkPanel">
           <div class="row spread">
@@ -489,12 +512,13 @@
               </div>
             </div>
             <div class="flow-card">
-              <div class="flow-title"><strong>Teacher Overview</strong><span class="flow-tag">Sales</span></div>
-              <div class="flow-path">Select teacher &gt; Check weekly view &gt; Propose suitable slot</div>
+              <div class="flow-title"><strong>Teacher Overview</strong><span class="flow-tag">Sales / Admin</span></div>
+              <div class="flow-path">Select teacher &gt; Check fixed weekly view &gt; Book regular class / Edit Slots</div>
               <div class="flow-steps">
                 <div><span>&gt;</span><p>Use this tab when parents request a specific teacher.</p></div>
-                <div><span>&gt;</span><p>Filter by subject and open/booked status.</p></div>
-                <div><span>&gt;</span><p>Only propose slots shown as open.</p></div>
+                <div><span>&gt;</span><p>Click an open slot to book a regular class. Click a booked slot to cancel or change that student's regular time.</p></div>
+                <div><span>&gt;</span><p>OFF slots are protected. Admin must click Edit Slots before opening individual slots or applying a bulk weekday/time range.</p></div>
+                <div><span>&gt;</span><p>Bulk slot changes skip booked regular classes automatically.</p></div>
               </div>
             </div>
             <div class="flow-card">
@@ -1281,6 +1305,7 @@
       </div>
       <div class="row" style="margin-top:14px;">
         <button class="btn danger" id="confirmCancelFixedRegularBtn">Confirm Cancellation</button>
+        <button class="btn mint" id="changeFixedRegularSlotBtn">Change Regular Time Slot</button>
         <button class="btn ghost" data-close>Keep Regular Class</button>
       </div>
     </div>
@@ -1330,7 +1355,16 @@
       <div class="subtle" id="regularChangeTargetInfo"></div>
       <div class="grid two" style="margin-top:14px;">
         <div><label>Existing Regular Class</label><select id="regularChangeSource"></select></div>
-        <div><label>Change Type</label><select id="regularChangeType"><option value="long_term">Long Term</option><option value="temporary">Temporary</option></select></div>
+        <div>
+          <label>Change Type</label>
+          <div class="row view-toggle">
+            <button type="button" class="btn active" data-regular-change-type="long_term">Permanent</button>
+            <button type="button" class="btn ghost" data-regular-change-type="temporary">Temporary</button>
+          </div>
+          <input id="regularChangeType" type="hidden" value="long_term">
+        </div>
+        <div id="regularChangeTargetDayField" class="hide"><label>New Weekday</label><select id="regularChangeTargetDay"></select></div>
+        <div id="regularChangeTargetTimeField" class="hide"><label>New Time</label><select id="regularChangeTargetTime"></select></div>
         <div><label>Start Date</label><input id="regularChangeStartDate" type="date"></div>
         <div id="regularChangeEndField" class="hide"><label>End Date</label><input id="regularChangeEndDate" type="date"></div>
       </div>
@@ -1518,6 +1552,8 @@
     let pendingMoveDraftBookingId = "";
     let outcomeInteractionSource = "weekly_timetable";
     let currentDragPayloadKind = "";
+    let teacherSlotEditMode = false;
+    let teacherSlotEditTeacherId = "";
     const $ = (id) => document.getElementById(id);
     const uid = (prefix) => prefix + "_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
     const localISO = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -2726,6 +2762,14 @@
         .filter(date => dayFromISO(date) === day);
     }
 
+    function firstWeeklyDateOnOrAfter(startDate, day) {
+      for (let offset = 0; offset < 7; offset += 1) {
+        const candidate = dateOffsetISO(startDate, offset);
+        if (dayFromISO(candidate) === day) return candidate;
+      }
+      return startDate;
+    }
+
     function slotAvailabilityCheck(teacherId, date, time, options = {}) {
       const teacher = teacherById(teacherId);
       if (!teacher) return { kind: "conflict", reason: "Teacher not found." };
@@ -2859,8 +2903,149 @@
       renderSalesSummary(summary);
     }
 
+    function teacherOverviewActiveSlot(teacher, day, time, date = todayISO()) {
+      const matches = [...(teacher?.regularSlots || [])].reverse().filter(slot =>
+        slot.day === day && slot.time === time &&
+        (!slot.startDate || slot.startDate <= date) &&
+        (!slot.endDate || slot.endDate >= date)
+      );
+      return matches.find(slot => slot.locked) || matches[0] || null;
+    }
+
+    function openSlotEndBeforeNextRule(teacher, day, time, startDate = todayISO()) {
+      const nextStart = (teacher?.regularSlots || [])
+        .filter(slot => slot.day === day && slot.time === time && slot.startDate && slot.startDate > startDate)
+        .map(slot => slot.startDate)
+        .sort()[0];
+      return nextStart ? dateOffsetISO(nextStart, -1) : "";
+    }
+
+    function teacherSlotEditSelection() {
+      const days = [...document.querySelectorAll("#teacherSlotEditDays input:checked")].map(input => input.value);
+      const from = $("teacherSlotEditFrom").value;
+      const to = $("teacherSlotEditTo").value;
+      const times = [];
+      if (from && to && minutes(to) >= minutes(from)) {
+        for (let value = minutes(from); value <= minutes(to); value += 30) {
+          times.push(`${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`);
+        }
+      }
+      return { days, from, to, times };
+    }
+
+    function setTeacherSlotEditAction(action) {
+      $("teacherSlotEditAction").value = action === "off" ? "off" : "open";
+      document.querySelectorAll("[data-teacher-slot-edit-action]").forEach(button => {
+        const active = button.dataset.teacherSlotEditAction === $("teacherSlotEditAction").value;
+        button.classList.toggle("active", active);
+        button.classList.toggle("ghost", !active);
+      });
+      updateTeacherSlotEditPreview();
+    }
+
+    function updateTeacherSlotEditPreview() {
+      if (!teacherSlotEditMode) return;
+      const teacher = teacherById($("overviewTeacherFilter").value);
+      const { days, times, from, to } = teacherSlotEditSelection();
+      if (!teacher) return;
+      if (!days.length) {
+        $("teacherSlotEditPreview").textContent = "Choose at least one weekday.";
+        return;
+      }
+      if (!from || !to || minutes(to) < minutes(from)) {
+        $("teacherSlotEditPreview").textContent = "Choose a valid time range.";
+        return;
+      }
+      const selected = days.length * times.length;
+      const booked = days.reduce((count, day) => count + times.filter(time => teacherOverviewActiveSlot(teacher, day, time)?.locked).length, 0);
+      const action = $("teacherSlotEditAction").value === "off" ? "set to OFF" : "open";
+      $("teacherSlotEditPreview").textContent = `${selected} slot${selected === 1 ? "" : "s"} selected to ${action}. ${booked ? `${booked} booked slot${booked === 1 ? "" : "s"} will be skipped.` : "No booked conflicts."}`;
+    }
+
+    function configureTeacherSlotEditPanel(teacher) {
+      $("teacherSlotEditTeacherLabel").textContent = `${teacher.name} | fixed weekly availability`;
+      $("teacherSlotEditDays").innerHTML = DAYS.map(day => `<label class="pill"><input type="checkbox" value="${escapeHtml(day)}" style="width:auto;min-height:0;margin-right:6px;" ${!["Saturday", "Sunday"].includes(day) ? "checked" : ""}> ${escapeHtml(day.slice(0, 3))}</label>`).join("");
+      const options = halfHourOptions(8 * 60, 21 * 60 + 30).filter(option => option.value !== "all");
+      const html = options.map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("");
+      $("teacherSlotEditFrom").innerHTML = html;
+      $("teacherSlotEditTo").innerHTML = html;
+      $("teacherSlotEditFrom").value = "18:00";
+      $("teacherSlotEditTo").value = "21:00";
+      setTeacherSlotEditAction("open");
+    }
+
+    function setTeacherSlotEditMode(enabled) {
+      const teacher = teacherById($("overviewTeacherFilter").value);
+      if (enabled && !teacher) return alert("Choose a teacher before editing slots.");
+      teacherSlotEditMode = Boolean(enabled && teacher);
+      teacherSlotEditTeacherId = teacherSlotEditMode ? teacher.id : "";
+      if (teacherSlotEditMode) {
+        $("overviewViewMode").value = "table";
+        configureTeacherSlotEditPanel(teacher);
+      }
+      $("teacherSlotEditPanel").classList.toggle("hide", !teacherSlotEditMode);
+      $("toggleTeacherSlotEditBtn").textContent = teacherSlotEditMode ? "Exit Slot Editing" : "Edit Slots";
+      $("toggleTeacherSlotEditBtn").classList.toggle("danger", teacherSlotEditMode);
+      $("toggleTeacherSlotEditBtn").classList.toggle("mint", !teacherSlotEditMode);
+      renderTeacherOverview();
+    }
+
+    function applyTeacherSlotEdits() {
+      const teacher = teacherById($("overviewTeacherFilter").value);
+      if (!teacherSlotEditMode || !teacher || teacher.id !== teacherSlotEditTeacherId) return alert("Open Edit Slots for the selected teacher first.");
+      const { days, times, from, to } = teacherSlotEditSelection();
+      if (!days.length) return alert("Choose at least one weekday.");
+      if (!from || !to || minutes(to) < minutes(from)) return alert("Choose a valid From and To time.");
+      const action = $("teacherSlotEditAction").value;
+      const total = days.length * times.length;
+      const actionLabel = action === "off" ? "set to OFF" : "open";
+      if (!confirm(`${actionLabel === "open" ? "Open" : "Set to OFF"} ${total} selected weekly slot${total === 1 ? "" : "s"} for ${teacher.name}? Booked slots will be skipped.`)) return;
+
+      let changed = 0;
+      let skipped = 0;
+      let unchanged = 0;
+      teacher.regularSlots ||= [];
+      days.forEach(day => times.forEach(time => {
+        const slot = teacherOverviewActiveSlot(teacher, day, time);
+        if (slot?.locked) {
+          skipped += 1;
+          return;
+        }
+        if (action === "open") {
+          if (slot && !slot.unavailable) {
+            unchanged += 1;
+            return;
+          }
+          if (slot) teacher.regularSlots = endSlotFromToday(teacher.regularSlots, slot);
+          const now = new Date().toISOString();
+          teacher.regularSlots.push({ id: uid("slot"), day, time, subject: (teacher.subjects || [])[0] || "", startDate: todayISO(), endDate: openSlotEndBeforeNextRule(teacher, day, time), locked: false, unavailable: false, source: "teacher-overview-bulk-edit", createdAt: now, updatedAt: now });
+          changed += 1;
+          return;
+        }
+        if (!slot || slot.unavailable) {
+          unchanged += 1;
+          return;
+        }
+        teacher.regularSlots = endSlotFromToday(teacher.regularSlots, slot);
+        changed += 1;
+      }));
+      teacher.updatedAt = new Date().toISOString();
+      logAction("Teacher Slots Bulk Edited", teacher.name, `${days.join(", ")} | ${timeLabel(from)} to ${timeLabel(to)}`, `${changed} ${actionLabel}; ${skipped} booked skipped; ${unchanged} unchanged`, "Updated from Teacher Overview Edit Slots.");
+      save(false);
+      setTeacherSlotEditMode(false);
+      setStatus(`${teacher.name}: ${changed} slot${changed === 1 ? "" : "s"} updated, ${skipped} booked skipped, ${unchanged} unchanged.`);
+    }
+
     function renderTeacherOverview() {
       const teacherId = $("overviewTeacherFilter").value;
+      if (teacherSlotEditMode && teacherSlotEditTeacherId && teacherId !== teacherSlotEditTeacherId) {
+        teacherSlotEditMode = false;
+        teacherSlotEditTeacherId = "";
+        $("teacherSlotEditPanel").classList.add("hide");
+        $("toggleTeacherSlotEditBtn").textContent = "Edit Slots";
+        $("toggleTeacherSlotEditBtn").classList.remove("danger");
+        $("toggleTeacherSlotEditBtn").classList.add("mint");
+      }
       if (!teacherId || teacherId === "all") {
         renderTeacherOverviewLink(null);
         $("teacherLeaveSummary").innerHTML = "";
@@ -2990,20 +3175,14 @@
     function teacherOverviewCellHtml(teacher, date, time) {
       const dateStr = localISO(date);
       const day = DAYS[(date.getDay() + 6) % 7];
-      const today = todayISO();
-      const slot = [...(teacher.regularSlots || [])].reverse().find(item =>
-        item.day === day &&
-        item.time === time &&
-        (!item.startDate || item.startDate <= today) &&
-        (!item.endDate || item.endDate >= today)
-      );
+      const slot = teacherOverviewActiveSlot(teacher, day, time);
       if (slot?.locked) {
         const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentName: slot.studentName || "Fixed regular class", slotId: slot.id, interactionSource: "teacher_overview" }));
         return `<td class="teacher-cell-booked"><button class="teacher-cell-button" data-fixed-slot="${fixedData}">${escapeHtml(slot.studentName || "Fixed regular class")} ${slot.subject ? `(${escapeHtml(slot.subject)})` : ""}</button></td>`;
       }
-      if (slot) {
+      if (slot && !slot.unavailable) {
         const data = escapeHtml(JSON.stringify({ teacherId: teacher.id, day, time: slot.time, subject: slot.subject || (teacher.subjects || [])[0] || "", slotId: slot.id || "", source: slot.source || "", interactionSource: "teacher_overview" }));
-        return `<td class="teacher-cell-open"><button class="teacher-cell-button" data-open-slot-action="${data}" title="Click to book or set this open slot to OFF"></button></td>`;
+        return `<td class="teacher-cell-open"><button class="teacher-cell-button" data-open-slot-action="${data}" title="${teacherSlotEditMode ? "Click to set this open slot to OFF" : "Click to book a regular class"}"></button></td>`;
       }
       return teacherOffCellHtml(teacher, date, time);
     }
@@ -3011,15 +3190,16 @@
     function teacherOffCellHtml(teacher, date, time) {
       const day = DAYS[(date.getDay() + 6) % 7];
       const data = escapeHtml(JSON.stringify({ teacherId: teacher.id, day, time, interactionSource: "teacher_overview" }));
-      return `<td class="teacher-cell-off"><button class="teacher-cell-button" data-open-off-slot="${data}" title="Click to set this OFF cell as an open slot">OFF</button></td>`;
+      return `<td class="teacher-cell-off"><button class="teacher-cell-button" data-open-off-slot="${data}" title="${teacherSlotEditMode ? "Click to open this slot" : "Use Edit Slots to change availability"}">OFF</button></td>`;
     }
 
     function openTeacherOverviewRecurringSlot(data) {
       const teacher = teacherById(data.teacherId);
       if (!teacher) return alert("Teacher not found.");
       teacher.regularSlots ||= [];
-      const existing = teacher.regularSlots.find(slot => slot.day === data.day && slot.time === data.time && !slot.endDate);
+      const existing = teacherOverviewActiveSlot(teacher, data.day, data.time);
       if (existing) {
+        if (existing.locked) return alert("This slot already has a booked regular class.");
         existing.locked = false;
         existing.unavailable = false;
         existing.updatedAt = new Date().toISOString();
@@ -3029,6 +3209,8 @@
           day: data.day,
           time: data.time,
           subject: (teacher.subjects || [])[0] || "",
+          startDate: todayISO(),
+          endDate: openSlotEndBeforeNextRule(teacher, data.day, data.time),
           locked: false,
           unavailable: false,
           source: "teacher-overview",
@@ -3039,8 +3221,22 @@
       teacher.updatedAt = new Date().toISOString();
       logAction("Teacher Regular Slot Opened", teacher.name, "OFF", `${data.day} ${timeLabel(data.time)} open`, "Opened directly from Teacher Overview.");
       save(false);
-      renderTeacherOverview();
+      if (teacherSlotEditMode) setTeacherSlotEditMode(false);
+      else renderTeacherOverview();
       setStatus(`${teacher.name}: ${data.day} ${timeLabel(data.time)} is now an open weekly slot.`);
+    }
+
+    function setTeacherOverviewSlotOffFromEditMode(data) {
+      const teacher = teacherById(data.teacherId);
+      const slot = teacher?.regularSlots?.find(item => item.id === data.slotId && !item.locked);
+      if (!teacher || !slot) return alert("This open slot is no longer available. Refresh the Teacher Overview and try again.");
+      if (!confirm(`Set ${teacher.name}'s ${data.day} ${timeLabel(data.time)} slot to OFF?`)) return;
+      teacher.regularSlots = endSlotFromToday(teacher.regularSlots, slot);
+      teacher.updatedAt = new Date().toISOString();
+      logAction("Teacher Slot Set To OFF", teacher.name, `${data.day} ${timeLabel(data.time)} open`, "OFF", "Changed in Teacher Overview Edit Slots mode.");
+      save(false);
+      setTeacherSlotEditMode(false);
+      setStatus(`${teacher.name}: ${data.day} ${timeLabel(data.time)} is now OFF.`);
     }
 
     function setFixedRegularMode(mode) {
@@ -3419,6 +3615,40 @@
       $("regularChangeTargetSlot").value = JSON.stringify(target);
       $("regularChangeTargetInfo").textContent = `New slot: ${targetTeacher ? targetTeacher.name : "-"} | ${target.day} ${timeLabel(target.time)} | ${target.subject || "-"}`;
       $("regularChangeSource").innerHTML = options.map(row => `<option value="${escapeHtml(row.value)}">${escapeHtml(row.label)}</option>`).join("");
+      $("regularChangeSource").disabled = false;
+      $("regularChangeTargetDayField").classList.add("hide");
+      $("regularChangeTargetTimeField").classList.add("hide");
+      $("regularChangeType").value = "long_term";
+      $("regularChangeStartDate").value = todayISO();
+      $("regularChangeEndDate").value = "";
+      updateRegularChangeEndField();
+      $("regularChangeModal").classList.remove("hide");
+    }
+
+    function openRegularChangeFromBookedSlot() {
+      const data = JSON.parse($("cancelFixedRegularData").value || "null");
+      const teacher = data ? teacherById(data.teacherId) : null;
+      const sourceSlot = teacher?.regularSlots?.find(slot => slot.id === data.slotId && slot.locked);
+      if (!data || !teacher || !sourceSlot) return alert("This regular slot is no longer available. Refresh the Teacher Overview and try again.");
+      const studentName = sourceSlot.studentName || data.studentName || "Student";
+      const target = {
+        teacherId: teacher.id,
+        day: sourceSlot.day,
+        time: sourceSlot.time,
+        subject: sourceSlot.subject || (teacher.subjects || [])[0] || "",
+        interactionSource: "teacher_overview_booked_change"
+      };
+      $("cancelFixedRegularModal").classList.add("hide");
+      $("regularChangeTargetSlot").value = JSON.stringify(target);
+      $("regularChangeTargetInfo").textContent = `Choose ${studentName}'s new weekly slot with ${teacher.name}.`;
+      $("regularChangeSource").innerHTML = `<option value="${escapeHtml(`${teacher.id}|${sourceSlot.id}`)}">${escapeHtml(`${studentName} | ${sourceSlot.day} ${timeLabel(sourceSlot.time)} | ${sourceSlot.subject || "-"}`)}</option>`;
+      $("regularChangeSource").disabled = true;
+      $("regularChangeTargetDay").innerHTML = DAYS.map(day => `<option value="${escapeHtml(day)}">${escapeHtml(day)}</option>`).join("");
+      $("regularChangeTargetDay").value = sourceSlot.day;
+      $("regularChangeTargetTime").innerHTML = halfHourOptions(8 * 60, 21 * 60 + 30).filter(option => option.value !== "all").map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("");
+      $("regularChangeTargetTime").value = sourceSlot.time;
+      $("regularChangeTargetDayField").classList.remove("hide");
+      $("regularChangeTargetTimeField").classList.remove("hide");
       $("regularChangeType").value = "long_term";
       $("regularChangeStartDate").value = todayISO();
       $("regularChangeEndDate").value = "";
@@ -3428,6 +3658,11 @@
 
     function updateRegularChangeEndField() {
       $("regularChangeEndField").classList.toggle("hide", $("regularChangeType").value !== "temporary");
+      document.querySelectorAll("[data-regular-change-type]").forEach(button => {
+        const active = button.dataset.regularChangeType === $("regularChangeType").value;
+        button.classList.toggle("active", active);
+        button.classList.toggle("ghost", !active);
+      });
     }
 
     function updateAvailabilityEndFields() {
@@ -3459,18 +3694,21 @@
       const student = state.students.find(item => studentNameKey(item.name) === studentNameKey(studentName));
       if (!student) return;
       student.regularSlots = Array.isArray(student.regularSlots) ? student.regularSlots : [];
-      const source = student.regularSlots.find(slot =>
+      const source = student.regularSlots.find(slot => slot.id === sourceSlot.studentSlotId) || student.regularSlots.find(slot =>
         slot.teacherId === sourceTeacher.id &&
         slot.day === sourceSlot.day &&
         slot.time === sourceSlot.time &&
-        normalizeSubject(slot.subject) === normalizeSubject(sourceSlot.subject)
+        normalizeSubject(slot.subject) === normalizeSubject(sourceSlot.subject) &&
+        regularSlotRangesOverlap(slot, { startDate, endDate: startDate })
       );
       const originalStudentEndDate = source?.endDate || "";
+      const sourceSnapshot = source ? { ...source } : { ...sourceSlot };
       if (source) {
-        source.endDate = dateOffsetISO(startDate, -1);
+        if (source.startDate && source.startDate >= startDate) student.regularSlots = student.regularSlots.filter(slot => slot.id !== source.id);
+        else source.endDate = dateOffsetISO(startDate, -1);
       }
       if (changeType === "temporary") {
-        const restore = { ...(source || sourceSlot), id: uid("student_slot"), teacherId: sourceTeacher.id, day: sourceSlot.day, time: sourceSlot.time, subject: sourceSlot.subject || targetSlot.subject || "", startDate: dateOffsetISO(endDate, 1), endDate: originalStudentEndDate };
+        const restore = { ...sourceSnapshot, id: uid("student_slot"), teacherId: sourceTeacher.id, day: sourceSlot.day, time: sourceSlot.time, subject: sourceSlot.subject || targetSlot.subject || "", startDate: dateOffsetISO(endDate, 1), endDate: originalStudentEndDate };
         if (originalStudentEndDate && originalStudentEndDate < restore.startDate) delete restore.endDate;
         student.regularSlots.push(restore);
       }
@@ -3483,6 +3721,7 @@
         startDate,
         endDate: changeType === "temporary" ? endDate : ""
       });
+      student.updatedAt = new Date().toISOString();
     }
 
     async function confirmRegularChange() {
@@ -3491,13 +3730,20 @@
       if (!target || !sourceTeacher || !sourceSlot) return alert("Choose an existing regular class first.");
       const targetTeacher = teacherById(target.teacherId);
       if (!targetTeacher) return alert("Target teacher not found.");
+      if (target.interactionSource === "teacher_overview_booked_change") {
+        target.day = $("regularChangeTargetDay").value;
+        target.time = $("regularChangeTargetTime").value;
+        if (!target.day || !target.time) return alert("Choose the new weekday and time.");
+        if (sourceTeacher.id === targetTeacher.id && sourceSlot.day === target.day && sourceSlot.time === target.time) return alert("Choose a different weekday or time for the new regular slot.");
+      }
       const startDate = dateOnly($("regularChangeStartDate").value);
       const changeType = $("regularChangeType").value;
       const endDate = dateOnly($("regularChangeEndDate").value);
       if (!startDate) return alert("Choose a start date.");
       if (changeType === "temporary" && !endDate) return alert("Choose an end date for temporary change.");
       if (changeType === "temporary" && endDate < startDate) return alert("End date cannot be before start date.");
-      const targetDates = changeType === "temporary" ? weeklyDatesInRange(startDate, endDate, target.day) : [startDate];
+      const targetDates = changeType === "temporary" ? weeklyDatesInRange(startDate, endDate, target.day) : [firstWeeklyDateOnOrAfter(startDate, target.day)];
+      if (changeType === "temporary" && !targetDates.length) return alert(`The selected period does not contain a ${target.day}. Choose a longer period or another weekday.`);
       const validation = validateScheduleTargets({ teacherId: target.teacherId, dates: targetDates, time: target.time, excludeSlotId: sourceSlot.id });
       if (validation.conflicts.length) return alert(conflictListMessage(validation.conflicts, "change this regular class"));
       if (changeType !== "temporary") {
@@ -3508,13 +3754,39 @@
 
       const sourceBefore = teacherLogSummary(sourceTeacher);
       const originalEndDate = sourceSlot.endDate || "";
-      sourceSlot.endDate = dateOffsetISO(startDate, -1);
+      const sourceSlotSnapshot = { ...sourceSlot };
+      if (sourceSlot.startDate && sourceSlot.startDate >= startDate) {
+        sourceTeacher.regularSlots = sourceTeacher.regularSlots.filter(slot => slot.id !== sourceSlot.id);
+      } else {
+        sourceSlot.endDate = dateOffsetISO(startDate, -1);
+        sourceSlot.updatedAt = new Date().toISOString();
+      }
       if (changeType === "temporary") {
         sourceTeacher.regularSlots.push({
-          ...sourceSlot,
+          ...sourceSlotSnapshot,
           id: uid("slot"),
           startDate: dateOffsetISO(endDate, 1),
           endDate: originalEndDate
+        });
+      }
+      if (target.interactionSource === "teacher_overview_booked_change") {
+        const targetOpenSlot = [...(targetTeacher.regularSlots || [])].reverse().find(slot =>
+          !slot.locked && !slot.unavailable && slot.day === target.day && slot.time === target.time &&
+          regularSlotRangesOverlap(slot, { startDate, endDate: changeType === "temporary" ? endDate : "" })
+        );
+        if (targetOpenSlot) splitOpenSlotForFixedBooking(targetTeacher, targetOpenSlot, startDate, changeType === "temporary" ? endDate : "");
+        sourceTeacher.regularSlots.push({
+          id: uid("slot"),
+          day: sourceSlot.day,
+          time: sourceSlot.time,
+          subject: sourceSlot.subject || target.subject || "",
+          startDate,
+          endDate: changeType === "temporary" ? endDate : "",
+          locked: false,
+          unavailable: false,
+          source: "teacher-overview-regular-change",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
         });
       }
       targetTeacher.regularSlots ||= [];
@@ -3523,13 +3795,31 @@
         day: target.day,
         time: target.time,
         subject: sourceSlot.subject || target.subject || "",
+        studentId: sourceSlot.studentId || "",
         studentName: sourceSlot.studentName || "",
         locked: true,
         source: "manual_regular_change",
         startDate,
         endDate: changeType === "temporary" ? endDate : ""
       });
+      sourceTeacher.updatedAt = new Date().toISOString();
+      targetTeacher.updatedAt = sourceTeacher.updatedAt;
       syncStudentRegularSlotRange(sourceSlot.studentName, sourceTeacher, sourceSlot, targetTeacher, target, startDate, endDate, changeType);
+      if (target.interactionSource === "teacher_overview_booked_change") {
+        const now = new Date().toISOString();
+        scheduleBookings().filter(booking =>
+          booking.teacherId === sourceTeacher.id && booking.time === sourceSlot.time &&
+          dayFromISO(booking.date) === sourceSlot.day && booking.date >= startDate &&
+          (changeType !== "temporary" || booking.date <= endDate) &&
+          studentNameKey(booking.studentName) === studentNameKey(sourceSlot.studentName) &&
+          (booking.type || "regular class") === "regular class" && !slotHasPassed(booking.date, booking.time)
+        ).forEach(booking => {
+          booking.status = "deleted";
+          booking.archived = true;
+          booking.deletedAt = now;
+          booking.updatedAt = now;
+        });
+      }
       logAction(
         changeType === "temporary" ? "Temporary Regular Slot Change" : "Long Term Regular Slot Change",
         sourceSlot.studentName || "Regular class",
@@ -7331,6 +7621,14 @@
     document.addEventListener("click", (e) => {
       const nav = e.target.closest(".nav-btn");
       if (nav) {
+        if (teacherSlotEditMode && nav.dataset.tab !== "teacherOverview") {
+          teacherSlotEditMode = false;
+          teacherSlotEditTeacherId = "";
+          $("teacherSlotEditPanel").classList.add("hide");
+          $("toggleTeacherSlotEditBtn").textContent = "Edit Slots";
+          $("toggleTeacherSlotEditBtn").classList.remove("danger");
+          $("toggleTeacherSlotEditBtn").classList.add("mint");
+        }
         document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b === nav));
         document.querySelectorAll(".tab").forEach(t => t.classList.toggle("hide", t.id !== nav.dataset.tab));
         $("pageTitle").textContent = nav.textContent;
@@ -7345,18 +7643,30 @@
       const openOffSlot = e.target.closest("[data-open-off-slot]");
       if (openOffSlot) {
         const data = JSON.parse(openOffSlot.dataset.openOffSlot);
-        if (data.interactionSource === "teacher_overview") openTeacherOverviewRecurringSlot(data);
+        if (data.interactionSource === "teacher_overview" && !teacherSlotEditMode) {
+          alert("This slot is OFF. To change it to an open slot, click Edit Slots at the top of Teacher Overview.");
+        } else if (data.interactionSource === "teacher_overview") {
+          if (confirm(`Open ${teacherById(data.teacherId)?.name || "this teacher"}'s ${data.day} ${timeLabel(data.time)} weekly slot?`)) openTeacherOverviewRecurringSlot(data);
+        }
         else openOffSlotModal(data);
       }
       const openSlotAction = e.target.closest("[data-open-slot-action]");
       if (openSlotAction) {
         const data = JSON.parse(openSlotAction.dataset.openSlotAction);
-        if (data.interactionSource === "teacher_overview") openFixedRegularBookingModal(data);
+        if (data.interactionSource === "teacher_overview" && teacherSlotEditMode) setTeacherOverviewSlotOffFromEditMode(data);
+        else if (data.interactionSource === "teacher_overview") openFixedRegularBookingModal(data);
         else openSlotActionModal(data);
       }
+      const teacherSlotEditAction = e.target.closest("[data-teacher-slot-edit-action]");
+      if (teacherSlotEditAction) setTeacherSlotEditAction(teacherSlotEditAction.dataset.teacherSlotEditAction);
       const fixedRegularMode = e.target.closest("[data-fixed-regular-mode]");
       if (fixedRegularMode) {
         setFixedRegularMode(fixedRegularMode.dataset.fixedRegularMode);
+      }
+      const regularChangeType = e.target.closest("[data-regular-change-type]");
+      if (regularChangeType) {
+        $("regularChangeType").value = regularChangeType.dataset.regularChangeType;
+        updateRegularChangeEndField();
       }
       const slot = e.target.closest("[data-slot]");
       if (slot) {
@@ -7385,7 +7695,9 @@
       const fixedSlotBtn = e.target.closest("[data-fixed-slot]");
       if (fixedSlotBtn) {
         const data = JSON.parse(fixedSlotBtn.dataset.fixedSlot);
-        if (data.interactionSource === "teacher_overview") {
+        if (data.interactionSource === "teacher_overview" && teacherSlotEditMode) {
+          alert("This slot has a booked regular class and is protected. Exit Slot Editing to manage the student's regular class.");
+        } else if (data.interactionSource === "teacher_overview") {
           openCancelFixedRegularModal(data);
         } else {
           const booking = ensureBookingFromFixedSlot(data);
@@ -8334,6 +8646,11 @@
     ["monthSelect", "yearInput"].forEach(id => $(id).addEventListener("change", () => { refreshWeeks(); renderSchedule(); }));
     ["weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "typeFilter"].forEach(id => $(id).addEventListener("change", renderSchedule));
     ["weekSelect", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear"].forEach(id => $(id).addEventListener("change", renderTeacherOverview));
+    ["teacherSlotEditFrom", "teacherSlotEditTo"].forEach(id => $(id).addEventListener("change", updateTeacherSlotEditPreview));
+    $("teacherSlotEditDays").addEventListener("change", updateTeacherSlotEditPreview);
+    $("toggleTeacherSlotEditBtn").onclick = () => setTeacherSlotEditMode(!teacherSlotEditMode);
+    $("exitTeacherSlotEditBtn").onclick = () => setTeacherSlotEditMode(false);
+    $("applyTeacherSlotEditBtn").onclick = applyTeacherSlotEdits;
     ["revenueFromMonth", "revenueFromYear", "revenueToMonth", "revenueToYear"].forEach(id => $(id).addEventListener("change", renderRevenueDashboard));
     ["revenueEntryMonth", "revenueEntryYear"].forEach(id => $(id).addEventListener("change", loadRevenueEntryForm));
     $("clearOverviewFiltersBtn").onclick = () => {
@@ -8477,6 +8794,7 @@
         alert(`Regular slot cancellation failed: ${err.message}`);
       }
     };
+    $("changeFixedRegularSlotBtn").onclick = openRegularChangeFromBookedSlot;
     $("editOpenSlotTimeBtn").onclick = () => openEditTimeSlotForAvailability(JSON.parse($("openSlotActionData").value || "null"));
     $("changeRegularSlotBtn").onclick = openRegularChangeModalFromOpenSlot;
     $("openSlotApplyMode").addEventListener("change", updateAvailabilityEndFields);
