@@ -2926,12 +2926,7 @@
       for (let total = 8 * 60; total <= 21 * 60 + 30; total += 30) {
         values.add(`${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`);
       }
-      dates.forEach(date => {
-        collectSlotsForDate(date).filter(slot => slot.teacherId === teacher.id).forEach(slot => values.add(slot.time));
-        scheduleBookings()
-          .filter(booking => booking.teacherId === teacher.id && booking.date === localISO(date))
-          .forEach(booking => values.add(booking.time));
-      });
+      (teacher.regularSlots || []).forEach(slot => values.add(slot.time));
       return [...values].sort((a, b) => minutes(a) - minutes(b));
     }
 
@@ -2948,29 +2943,58 @@
 
     function teacherOverviewCellHtml(teacher, date, time) {
       const dateStr = localISO(date);
-      const slot = collectSlotsForDate(date).find(item => item.teacherId === teacher.id && item.time === time);
-      const booking = findBooking({ teacherId: teacher.id, date: dateStr, time });
-      if (booking) {
-        const typeClass = ` type-${String(booking.type || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
-        return `<td class="teacher-cell-booked${typeClass} ${statusClass(booking.status)}"><button class="teacher-cell-button" data-booking-id="${booking.id}" data-booking-context="teacher_overview">${escapeHtml(booking.studentName || "Class")} ${booking.subject ? `(${escapeHtml(booking.subject)})` : ""}</button></td>`;
-      }
+      const day = DAYS[(date.getDay() + 6) % 7];
+      const today = todayISO();
+      const slot = [...(teacher.regularSlots || [])].reverse().find(item =>
+        item.day === day &&
+        item.time === time &&
+        (!item.startDate || item.startDate <= today) &&
+        (!item.endDate || item.endDate >= today)
+      );
       if (slot?.locked) {
-        const fixedData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject: slot.subject || "", studentName: slot.studentName || "Fixed regular class", slotId: slot.id, interactionSource: "teacher_overview" }));
+        const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentName: slot.studentName || "Fixed regular class", slotId: slot.id, interactionSource: "teacher_overview" }));
         return `<td class="teacher-cell-booked"><button class="teacher-cell-button" data-fixed-slot="${fixedData}">${escapeHtml(slot.studentName || "Fixed regular class")} ${slot.subject ? `(${escapeHtml(slot.subject)})` : ""}</button></td>`;
       }
       if (slot) {
-        const day = slot.day || DAYS[(date.getDay() + 6) % 7];
-        const data = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day, time: slot.time, subject: slot.subject || (teacher.subjects || [])[0] || "", slotId: slot.id || "", source: slot.source || "", interactionSource: "teacher_overview" }));
+        const data = escapeHtml(JSON.stringify({ teacherId: teacher.id, day, time: slot.time, subject: slot.subject || (teacher.subjects || [])[0] || "", slotId: slot.id || "", source: slot.source || "", interactionSource: "teacher_overview" }));
         return `<td class="teacher-cell-open"><button class="teacher-cell-button" data-open-slot-action="${data}" title="Click to book or set this open slot to OFF"></button></td>`;
       }
       return teacherOffCellHtml(teacher, date, time);
     }
 
     function teacherOffCellHtml(teacher, date, time) {
-      const dateStr = localISO(date);
       const day = DAYS[(date.getDay() + 6) % 7];
-      const data = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day, time, interactionSource: "teacher_overview" }));
+      const data = escapeHtml(JSON.stringify({ teacherId: teacher.id, day, time, interactionSource: "teacher_overview" }));
       return `<td class="teacher-cell-off"><button class="teacher-cell-button" data-open-off-slot="${data}" title="Click to set this OFF cell as an open slot">OFF</button></td>`;
+    }
+
+    function openTeacherOverviewRecurringSlot(data) {
+      const teacher = teacherById(data.teacherId);
+      if (!teacher) return alert("Teacher not found.");
+      teacher.regularSlots ||= [];
+      const existing = teacher.regularSlots.find(slot => slot.day === data.day && slot.time === data.time && !slot.endDate);
+      if (existing) {
+        existing.locked = false;
+        existing.unavailable = false;
+        existing.updatedAt = new Date().toISOString();
+      } else {
+        teacher.regularSlots.push({
+          id: uid("slot"),
+          day: data.day,
+          time: data.time,
+          subject: (teacher.subjects || [])[0] || "",
+          locked: false,
+          unavailable: false,
+          source: "teacher-overview",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+      teacher.updatedAt = new Date().toISOString();
+      logAction("Teacher Regular Slot Opened", teacher.name, "OFF", `${data.day} ${timeLabel(data.time)} open`, "Opened directly from Teacher Overview.");
+      save(false);
+      renderTeacherOverview();
+      setStatus(`${teacher.name}: ${data.day} ${timeLabel(data.time)} is now an open weekly slot.`);
     }
 
     function openOffSlotModal(data) {
@@ -7034,7 +7058,9 @@
       }
       const openOffSlot = e.target.closest("[data-open-off-slot]");
       if (openOffSlot) {
-        openOffSlotModal(JSON.parse(openOffSlot.dataset.openOffSlot));
+        const data = JSON.parse(openOffSlot.dataset.openOffSlot);
+        if (data.interactionSource === "teacher_overview") openTeacherOverviewRecurringSlot(data);
+        else openOffSlotModal(data);
       }
       const openSlotAction = e.target.closest("[data-open-slot-action]");
       if (openSlotAction) {
