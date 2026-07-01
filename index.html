@@ -1265,6 +1265,7 @@
       <div class="subtle" style="margin-top:10px;">The subject follows the selected teacher's open slot automatically. A temporary booking returns this slot to open after its end date.</div>
       <div class="row" style="margin-top:14px;">
         <button class="btn mint" id="confirmFixedRegularBookingBtn">Confirm Regular Class</button>
+        <button class="btn danger" id="setFixedRegularSlotOffBtn">Set Slot To OFF</button>
         <button class="btn ghost" data-close>Cancel</button>
       </div>
     </div>
@@ -3156,6 +3157,30 @@
       renderTeacherOverview();
       renderStudents();
       setStatus(`Regular class booked for ${student.name}: ${data.day} ${timeLabel(data.time)}, ${period}.`);
+    }
+
+    function setFixedRegularSlotOff() {
+      const data = JSON.parse($("fixedRegularSlotData").value || "null");
+      const teacher = data ? teacherById(data.teacherId) : null;
+      if (!data || !teacher) return alert("Open slot data is missing.");
+      const openSlot = (teacher.regularSlots || []).find(slot => slot.id === data.slotId && !slot.locked);
+      if (!openSlot) return alert("This slot is no longer open. Refresh the Teacher Overview and try again.");
+      if (!confirm(`Set ${teacher.name}'s ${data.day} ${timeLabel(data.time)} slot to OFF?`)) return;
+
+      const today = todayISO();
+      const historicalEnd = dateOffsetISO(today, -1);
+      if (openSlot.startDate && openSlot.startDate > historicalEnd) {
+        teacher.regularSlots = teacher.regularSlots.filter(slot => slot.id !== openSlot.id);
+      } else {
+        openSlot.endDate = historicalEnd;
+        openSlot.updatedAt = new Date().toISOString();
+      }
+      teacher.updatedAt = new Date().toISOString();
+      logAction("Teacher Regular Slot Set To OFF", teacher.name, `${data.day} ${timeLabel(data.time)} open`, "OFF from today", "Changed from Teacher Overview.");
+      $("fixedRegularBookingModal").classList.add("hide");
+      save(false);
+      renderTeacherOverview();
+      setStatus(`${teacher.name}: ${data.day} ${timeLabel(data.time)} is now OFF.`);
     }
 
     function openOffSlotModal(data) {
@@ -8340,6 +8365,7 @@
         alert(`Regular class booking failed: ${err.message}`);
       }
     };
+    $("setFixedRegularSlotOffBtn").onclick = setFixedRegularSlotOff;
     $("editOpenSlotTimeBtn").onclick = () => openEditTimeSlotForAvailability(JSON.parse($("openSlotActionData").value || "null"));
     $("changeRegularSlotBtn").onclick = openRegularChangeModalFromOpenSlot;
     $("openSlotApplyMode").addEventListener("change", updateAvailabilityEndFields);
