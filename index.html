@@ -957,7 +957,7 @@
       <section id="settings" class="tab hide">
         <div class="panel">
           <h2>Neon Database Sync</h2>
-          <div class="subtle">This is the new main database. The app auto-loads on open, auto-refreshes every 60 seconds when safe, and auto-saves edits so different devices can share the same latest records.</div>
+          <div class="subtle">The app loads Neon only when the page opens or refreshes. Every edit saves locally first, then pushes to Neon through one ordered sync queue.</div>
           <div class="grid three" style="margin-top:14px;">
             <div><label>API URL</label><input id="neonApiUrl" placeholder="https://classone-booking-api.vercel.app"></div>
             <div><label>API Key</label><input id="neonApiKey" placeholder="Private API key"></div>
@@ -967,6 +967,10 @@
             <button class="btn mint" id="neonPullBtn">Load From Neon</button>
             <button class="btn ghost" id="neonPushBtn">Save To Neon</button>
           </div>
+          <hr style="border:0;border-top:1px solid var(--line);margin:18px 0;">
+          <h2>Start From Zero</h2>
+          <div class="subtle">Clears all operational records. Revenue, public holidays, activity logs, reply templates, and sync settings are preserved. Google Sheet importing will be disabled.</div>
+          <div class="row" style="margin-top:14px;"><button class="btn danger" id="resetOperationalDataBtn">Start From Zero</button></div>
           <hr style="border:0;border-top:1px solid var(--line);margin:18px 0;">
           <h2>Google Apps Script Import / Backup</h2>
           <div class="subtle">Use this only for old Google Sheet import or emergency backup. Daily edits should save to Neon.</div>
@@ -1455,6 +1459,7 @@
     let archivedStudentPage = 1;
     let completedClassPage = 1;
     let autoPushTimer = null;
+    let neonPushQueue = Promise.resolve(true);
     let autoLoadCountdownTimer = null;
     let autoNeonRefreshTimer = null;
     let autoNeonRefreshInProgress = false;
@@ -1709,6 +1714,38 @@
       $("apiKey").value = state.settings.apiKey;
       $("crmScriptUrl").value = state.settings.crmScriptUrl;
       $("crmApiKey").value = state.settings.crmApiKey;
+      const legacyDisabled = Boolean(state.settings.googleSheetImportDisabled);
+      ["pullBtn", "pushBtn", "crmPullBtn", "crmPushBtn"].forEach(id => {
+        if ($(id)) $(id).disabled = legacyDisabled;
+      });
+    }
+
+    async function resetOperationalDataFromZero() {
+      if (!confirm("Start from zero? All records except revenue, public holidays, activity logs, reply templates, and sync settings will be permanently removed.")) return;
+      const confirmation = prompt("Type START ZERO to confirm the operational data reset.");
+      if (confirmation !== "START ZERO") return setStatus("Start From Zero cancelled.", "warn");
+      const before = `Teachers ${state.teachers.length}, Students ${state.students.length}, Leads ${state.leads.length}, Bookings ${state.bookings.length}`;
+      state.teachers = [];
+      state.students = [];
+      state.leads = [];
+      state.tutorLeads = [];
+      state.crmHistoricalMonthlyStats = [];
+      state.bookings = [];
+      state.replacements = [];
+      state.replacementCredits = [];
+      state.teacherStudentNotes = [];
+      state.teacherFeedback = [];
+      state.settings.googleSheetImportDisabled = true;
+      state.settings.googleSheetImportDisabledAt = new Date().toISOString();
+      state.settings.crmMonthlyImportDisabled = true;
+      state.settings.operationalResetAt = new Date().toISOString();
+      logAction("Operational Data Reset", "Class One App", before, "Started from zero", "Preserved revenue, public holidays, activity logs, reply templates, and sync settings.");
+      save(false);
+      applySettingsInputs();
+      renderAll();
+      setStatus("Operational records cleared locally. Syncing the clean state to Neon...", "warn");
+      const synced = await autoPushIfConfigured("Start From Zero completed.");
+      if (synced) setStatus("Start From Zero completed and synced to Neon. Admin may begin entering records.");
     }
 
     function openAppDb() {
@@ -1759,6 +1796,8 @@
           neonApiKey: state.settings.neonApiKey || DEFAULT_NEON.apiKey,
           neonStateKey: state.settings.neonStateKey || DEFAULT_NEON.stateKey,
           neonVersion: state.settings.neonVersion || 0,
+          localRevision: Number(state.settings.localRevision || 0),
+          lastSyncedRevision: Number(state.settings.lastSyncedRevision || 0),
           pendingLocalSync: Boolean(state.settings.pendingLocalSync),
           lastLocalChangeAt: state.settings.lastLocalChangeAt || "",
           lastSyncedAt: state.settings.lastSyncedAt || ""
@@ -1813,6 +1852,8 @@
       state.settings.neonApiKey = state.settings.neonApiKey || DEFAULT_NEON.apiKey;
       state.settings.neonStateKey = state.settings.neonStateKey || DEFAULT_NEON.stateKey;
       state.settings.neonVersion = Number(state.settings.neonVersion || 0);
+      state.settings.localRevision = Number(state.settings.localRevision || 0);
+      state.settings.lastSyncedRevision = Number(state.settings.lastSyncedRevision || 0);
       state.settings.crmActiveLeadStartAt ||= new Date().toISOString();
       if (!Array.isArray(state.settings.replyTemplates) || !state.settings.replyTemplates.length) {
         state.settings.replyTemplates = DEFAULT_REPLY_TEMPLATES.map(template => ({ ...template }));
@@ -2442,6 +2483,7 @@
       if (!suppressAutoPush) {
         state.settings.pendingLocalSync = true;
         state.settings.lastLocalChangeAt = new Date().toISOString();
+        state.settings.localRevision = Number(state.settings.localRevision || 0) + 1;
       }
       normalizeState();
       persistState();
@@ -2460,24 +2502,8 @@
       if (suppressAutoPush) return;
       if (!neonConfigured()) return;
       clearTimeout(autoPushTimer);
-      autoPushTimer = setTimeout(async () => {
-        const localPayload = cloneCurrentStatePayload();
-        try {
-          await neonPush(false, "Saved and synced to Neon database.");
-          state.settings.pendingLocalSync = false;
-          state.settings.lastSyncedAt = new Date().toISOString();
-        } catch (err) {
-          if (isNeonVersionConflict(err)) {
-            try {
-              await recoverFromNeonConflictAndPush(localPayload, "Saved.");
-            } catch (retryErr) {
-              setStatus(`Saved in this browser only. Auto-sync retry failed: ${retryErr.message}`, "warn");
-            }
-          } else {
-            setStatus(`Saved in this browser. Neon auto-sync failed: ${err.message}`, "warn");
-          }
-        }
-      }, AUTO_SAVE_DEBOUNCE_MS);
+      setStatus("Saved locally. Waiting to sync to Neon...", "warn");
+      autoPushTimer = setTimeout(() => enqueueNeonPush("Saved."), AUTO_SAVE_DEBOUNCE_MS);
     }
 
     function isNeonVersionConflict(error) {
@@ -5774,19 +5800,9 @@
     }
 
     async function pushTeacherViewTokenWithRetry(teacherId, teacherName, token) {
-      try {
-        await neonPush(false, "Teacher timetable view link generated. Synced to Neon database. You can copy the link now.");
-        return teacherById(teacherId) || state.teachers.find(item => teacherNameKey(item.name) === teacherNameKey(teacherName));
-      } catch (err) {
-        if (!/version conflict/i.test(err.message || "")) throw err;
-        setStatus("Neon has newer data. Loading latest data and retrying teacher link sync... please wait.", "warn");
-        await neonPull(false);
-        const latestTeacher = teacherById(teacherId) || state.teachers.find(item => teacherNameKey(item.name) === teacherNameKey(teacherName));
-        if (!latestTeacher) throw new Error("Latest Neon data loaded, but this teacher could not be found. Please reopen the teacher profile and try again.");
-        applyTeacherViewToken(latestTeacher, token);
-        await neonPush(false, "Teacher timetable view link generated after loading latest Neon data. You can copy the link now.");
-        return latestTeacher;
-      }
+      const synced = await autoPushIfConfigured("Teacher timetable view link generated.");
+      if (!synced) throw new Error("Teacher link is saved locally but Neon has newer data. Refresh the page to merge, then generate the link again.");
+      return teacherById(teacherId) || state.teachers.find(item => teacherNameKey(item.name) === teacherNameKey(teacherName));
     }
 
     async function generateTeacherViewLink() {
@@ -5860,7 +5876,10 @@
       const listName = date ? "overrideSlots" : "regularSlots";
       teacher[listName] ||= [];
       const duplicate = teacher[listName].some(s => (date ? s.date === date : s.day === day) && s.time === time && s.subject === subject);
-      if (!duplicate) teacher[listName].push({ id: uid("slot"), day, date, time, subject, ...(date ? { source: "manual" } : {}) });
+      if (!duplicate) {
+        teacher[listName].push({ id: uid("slot"), day, date, time, subject, ...(date ? { source: "manual" } : {}) });
+        teacher.updatedAt = new Date().toISOString();
+      }
     }
 
     function datesBetween(start, end) {
@@ -5956,6 +5975,7 @@
     }
 
     async function syncPull(logManual = false, options = {}) {
+      if (state.settings.googleSheetImportDisabled) return alert("Google Sheet importing is disabled. Enter records manually in the app.");
       const url = $("scriptUrl").value.trim();
       if (!url) return alert("Paste your Apps Script web app URL first.");
       if (!options.skipLocalWarning && state.settings.pendingLocalSync && !confirm("There are local changes not synced to Google Sheet yet. Pulling now may overwrite them. Continue?")) return;
@@ -5971,6 +5991,7 @@
     }
 
     async function syncPush(logManual = false) {
+      if (state.settings.googleSheetImportDisabled) return alert("Google Sheet syncing is disabled. Neon is now the main database.");
       const url = $("scriptUrl").value.trim();
       if (!url) return alert("Paste your Apps Script web app URL first.");
       if (logManual) logAction("Sync Pushed", "Timetable Google Sheet", "", "Pushed latest data", "Manual push completed.");
@@ -5984,6 +6005,7 @@
     }
 
     async function crmPull() {
+      if (state.settings.googleSheetImportDisabled) return alert("CRM Google Sheet importing is disabled. Enter new leads in the app.");
       const url = $("crmScriptUrl").value.trim();
       if (!url) return alert("Paste your CRM Apps Script web app URL first.");
       const data = await fetchJsonWithTimeout(`${url}?action=read&key=${encodeURIComponent($("crmApiKey").value.trim())}`, {}, "CRM sync");
@@ -6005,6 +6027,7 @@
     }
 
     async function crmPush() {
+      if (state.settings.googleSheetImportDisabled) return alert("CRM Google Sheet syncing is disabled. Neon is now the main database.");
       const url = $("crmScriptUrl").value.trim();
       if (!url) return alert("Paste your CRM Apps Script web app URL first.");
       await postToAppsScript(url, { action: "write", key: $("crmApiKey").value.trim(), leads: state.leads || [] });
@@ -6111,6 +6134,9 @@
 
     function mergeLocalPayloadIntoCurrent(localPayload) {
       const remoteVersion = Number(state.settings?.neonVersion || 0);
+      const remoteResetAt = String(state.settings?.operationalResetAt || "");
+      const localResetAt = String(localPayload.settings?.operationalResetAt || "");
+      const localResetIsNewer = Boolean(localResetAt && localResetAt > remoteResetAt);
       state.teachers = mergeRecordList(state.teachers, localPayload.teachers, mergeTeacherRecord);
       state.students = mergeRecordList(state.students, localPayload.students, mergeStudentRecord);
       [
@@ -6135,6 +6161,18 @@
         pendingLocalSync: true
       };
       normalizeState();
+      if (localResetIsNewer) {
+        state.teachers = [];
+        state.students = [];
+        state.leads = [];
+        state.tutorLeads = [];
+        state.crmHistoricalMonthlyStats = [];
+        state.bookings = [];
+        state.replacements = [];
+        state.replacementCredits = [];
+        state.teacherStudentNotes = [];
+        state.teacherFeedback = [];
+      }
       if (state.settings.crmMonthlyImportDisabled) {
         state.leads = state.leads.filter(lead => (!crmLeadMonthlyTabDate(lead) && !isOldImportedLead(lead)) || shouldPreserveImportedLead(lead));
       }
@@ -6229,22 +6267,7 @@
     }
 
     async function autoLoadLatestNeonIfNeeded(label = "saving") {
-      if (!neonConfigured()) return true;
-      if (state.settings.pendingLocalSync) return true;
-      try {
-        const manifest = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon version check", SYNC_READ_TIMEOUT_MS);
-        if (manifest.empty) return true;
-        const remoteVersion = Number(manifest.version || 0);
-        const localVersion = Number(state.settings.neonVersion || 0);
-        if (remoteVersion > localVersion) {
-          setStatus(`Auto-loading latest Neon data before ${label}...`, "success", false);
-          await neonPull(false);
-        }
-        return true;
-      } catch (err) {
-        setStatus(`Could not auto-load latest Neon data before ${label}: ${err.message}`, "error");
-        return false;
-      }
+      return true;
     }
 
     async function neonPush(logManual = false, successMessage = "Saved to Neon database.") {
@@ -6253,6 +6276,7 @@
         return;
       }
       const currentVersion = Number(state.settings.neonVersion || 0);
+      const pushedRevision = Number(state.settings.localRevision || 0);
       const serialized = JSON.stringify(remoteStatePayload());
       const chunks = splitIntoChunks(serialized);
       const init = await fetchNeonJson("/api/state-chunk", {
@@ -6284,12 +6308,15 @@
         })
       }, "Neon save complete", SYNC_SAVE_TIMEOUT_MS);
       state.settings.neonVersion = Number(data.version || currentVersion || 0);
-      state.settings.pendingLocalSync = false;
-      state.settings.lastLocalChangeAt = "";
+      state.settings.lastSyncedRevision = Math.max(Number(state.settings.lastSyncedRevision || 0), pushedRevision);
+      const newerEditExists = Number(state.settings.localRevision || 0) > pushedRevision;
+      state.settings.pendingLocalSync = newerEditExists;
+      if (!newerEditExists) state.settings.lastLocalChangeAt = "";
       state.settings.lastSyncedAt = new Date().toISOString();
       persistState();
       if (logManual) logAction("Neon Saved", "Neon Database", "", "Saved latest app data", "Manual Neon save completed.");
-      setStatus(successMessage);
+      setStatus(newerEditExists ? "Earlier changes synced. A newer edit is waiting to sync..." : successMessage, newerEditExists ? "warn" : "success");
+      return !newerEditExists;
     }
 
     function startAutoLoadCountdown(totalSeconds = Math.ceil(SYNC_READ_TIMEOUT_MS / 1000), label = "Neon database") {
@@ -6314,7 +6341,7 @@
       if (neonConfigured()) {
         if (state.settings.pendingLocalSync) {
           setStatus("Recovered unsynced browser changes. Syncing them before loading Neon...", "warn");
-          await autoPushIfConfigured("Recovered browser changes.");
+          await autoPushIfConfigured("Recovered browser changes.", true);
           startAutoNeonRefresh();
           return;
         }
@@ -6339,8 +6366,8 @@
         return;
       }
       const jobs = [];
-      if ($("scriptUrl").value.trim() && $("apiKey").value.trim()) jobs.push({ label: "Timetable", run: () => syncPull(false, { skipLocalWarning: true }) });
-      if (!state.settings.crmMonthlyImportDisabled && $("crmScriptUrl").value.trim() && $("crmApiKey").value.trim()) jobs.push({ label: "CRM", run: () => crmPull() });
+      if (!state.settings.googleSheetImportDisabled && $("scriptUrl").value.trim() && $("apiKey").value.trim()) jobs.push({ label: "Timetable", run: () => syncPull(false, { skipLocalWarning: true }) });
+      if (!state.settings.googleSheetImportDisabled && !state.settings.crmMonthlyImportDisabled && $("crmScriptUrl").value.trim() && $("crmApiKey").value.trim()) jobs.push({ label: "CRM", run: () => crmPull() });
       if (!jobs.length) return;
       startAutoLoadCountdown(Math.ceil(SYNC_READ_TIMEOUT_MS / 1000), "Google Sheet data");
       const results = await Promise.allSettled(jobs.map(job => job.run()));
@@ -6366,42 +6393,27 @@
     }
 
     async function autoRefreshFromNeon({ force = false } = {}) {
-      if (!neonConfigured()) return;
-      if (!force && document.hidden) return;
-      if (autoNeonRefreshInProgress) return;
-      if (state.settings.pendingLocalSync) return;
-      if (modalIsOpen()) return;
-      autoNeonRefreshInProgress = true;
-      try {
-        const versionInfo = await fetchNeonJson(`/api/state-version?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon version check", SYNC_READ_TIMEOUT_MS);
-        if (versionInfo.empty) return;
-        const remoteVersion = Number(versionInfo.version || 0);
-        const localVersion = Number(state.settings.neonVersion || 0);
-        if (remoteVersion > localVersion) {
-          await neonPull(false);
-          setStatus(`Auto-refreshed latest data from Neon. Version ${remoteVersion}.`);
-        }
-      } catch (err) {
-        if (force) setStatus(`Auto-refresh from Neon failed: ${err.message}`, "warn");
-      } finally {
-        autoNeonRefreshInProgress = false;
-      }
+      return false;
     }
 
     function startAutoNeonRefresh() {
       clearInterval(autoNeonRefreshTimer);
-      if (!neonConfigured()) return;
-      autoNeonRefreshTimer = setInterval(() => autoRefreshFromNeon(), AUTO_NEON_REFRESH_MS);
+      autoNeonRefreshTimer = null;
     }
 
-    async function autoPushIfConfigured(successMessage) {
-      clearTimeout(autoPushTimer);
+    async function performQueuedNeonPush(successMessage, allowConflictPull = false) {
       const localPayload = cloneCurrentStatePayload();
       try {
         await neonPush(false, `${successMessage} Synced to Neon database.`);
         return true;
       } catch (err) {
         if (isNeonVersionConflict(err)) {
+          if (!allowConflictPull) {
+            state.settings.pendingLocalSync = true;
+            persistState();
+            setStatus("Neon has newer data. Your edit is saved locally. Refresh this page to merge and sync it safely.", "warn");
+            return false;
+          }
           try {
             await recoverFromNeonConflictAndPush(localPayload, successMessage);
             return true;
@@ -6416,22 +6428,25 @@
       }
     }
 
+    function enqueueNeonPush(successMessage = "Saved.", allowConflictPull = false) {
+      neonPushQueue = neonPushQueue.catch(() => false).then(async () => {
+        if (!state.settings.pendingLocalSync) return true;
+        setStatus("Syncing latest changes to Neon...", "success", false);
+        const run = () => performQueuedNeonPush(successMessage, allowConflictPull);
+        if (navigator.locks?.request) return navigator.locks.request("class-one-neon-sync", run);
+        return run();
+      });
+      return neonPushQueue;
+    }
+
+    async function autoPushIfConfigured(successMessage, allowConflictPull = false) {
+      clearTimeout(autoPushTimer);
+      return enqueueNeonPush(successMessage, allowConflictPull);
+    }
+
     async function autoPushCrmIfConfigured() {
       clearTimeout(autoPushTimer);
-      const localPayload = cloneCurrentStatePayload();
-      try {
-        await neonPush(false, "CRM saved to Neon database.");
-      } catch (err) {
-        if (isNeonVersionConflict(err)) {
-          try {
-            await recoverFromNeonConflictAndPush(localPayload, "CRM saved.");
-          } catch (retryErr) {
-            setStatus(`CRM saved in this browser only. Auto-sync retry failed: ${retryErr.message}`, "warn");
-          }
-        } else {
-          setStatus(`CRM Neon sync failed: ${err.message}`, "error");
-        }
-      }
+      return enqueueNeonPush("CRM saved.");
     }
 
     function ensureBookingFromFixedSlot(data) {
@@ -7595,7 +7610,7 @@
       const existing = studentById(id) || { id };
       const before = studentLogSummary(existing);
       const previousRegularSlots = getStudentRegularSlots(existing).map(slot => ({ ...slot }));
-      Object.assign(existing, { name, subjects, subject: subjects[0] || "", package: packageName, packageAmount: Number($("studentPackageAmount").value || 0), packageClasses: Number($("studentPackageClasses").value || 0), packageNotes: $("studentPackageNotes").value.trim(), registeredStatus: $("studentRegisteredStatus").value || "active", registeredRemark: $("studentRegisteredRemark").value.trim(), status: $("studentStatus").value || "registered", regularSlots: studentRegularSlotsDraft.map(slot => ({ ...slot })) });
+      Object.assign(existing, { name, subjects, subject: subjects[0] || "", package: packageName, packageAmount: Number($("studentPackageAmount").value || 0), packageClasses: Number($("studentPackageClasses").value || 0), packageNotes: $("studentPackageNotes").value.trim(), registeredStatus: $("studentRegisteredStatus").value || "active", registeredRemark: $("studentRegisteredRemark").value.trim(), status: $("studentStatus").value || "registered", regularSlots: studentRegularSlotsDraft.map(slot => ({ ...slot })), updatedAt: new Date().toISOString() });
       delete existing.teacherId;
       delete existing.day;
       delete existing.time;
@@ -8181,13 +8196,21 @@
     $("exportActivityCsvBtn").onclick = () => downloadCsv("class-one-activity-log.csv", ["No.", "Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], numbered(activityExportRows()));
     $("exportActivityPdfBtn").onclick = () => openPrintReport("Activity Log", ["No.", "Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], numbered(activityExportRows()));
     $("neonPullBtn").onclick = () => animateClick($("neonPullBtn"), async () => {
+      if (state.settings.pendingLocalSync) return alert("Local edits are still waiting to sync. Wait for Synced, or use Save To Neon before loading remote data.");
       await neonPull(true);
-      startAutoNeonRefresh();
     }).catch(err => alert(err.message));
     $("neonPushBtn").onclick = () => animateClick($("neonPushBtn"), async () => {
-      await neonPush(true, "Saved to Neon database.");
-      startAutoNeonRefresh();
+      if (!state.settings.pendingLocalSync) {
+        state.settings.pendingLocalSync = true;
+        state.settings.localRevision = Number(state.settings.localRevision || 0) + 1;
+        persistState();
+      }
+      await autoPushIfConfigured("Manual Neon save completed.");
     }).catch(err => alert(err.message));
+    $("resetOperationalDataBtn").onclick = () => animateClick($("resetOperationalDataBtn"), resetOperationalDataFromZero).catch(err => {
+      setStatus(`Start From Zero failed: ${err.message}`, "error");
+      alert(err.message);
+    });
     $("pullBtn").onclick = () => animateClick($("pullBtn"), () => syncPull(true).catch(err => alert(err.message)));
     $("pushBtn").onclick = () => animateClick($("pushBtn"), () => syncPush(true).catch(err => alert(err.message)));
     $("crmPullBtn").onclick = () => animateClick($("crmPullBtn"), () => crmPull().catch(err => alert(err.message)));
@@ -8215,10 +8238,6 @@
       $("actionPopup").classList.add("hide");
       document.querySelector('[data-tab="replacements"]').click();
     };
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) autoRefreshFromNeon({ force: true });
-    });
-    window.addEventListener("focus", () => autoRefreshFromNeon({ force: true }));
     window.addEventListener("beforeunload", event => {
       if (!state.settings.pendingLocalSync) return;
       event.preventDefault();
