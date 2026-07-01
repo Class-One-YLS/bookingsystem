@@ -1240,6 +1240,36 @@
     </div>
   </div>
 
+  <div id="fixedRegularBookingModal" class="modal hide">
+    <div class="modal-card">
+      <div class="row spread"><h2>Book Fixed Regular Class</h2><button class="btn ghost small" data-close>Close</button></div>
+      <input id="fixedRegularSlotData" type="hidden">
+      <div class="subtle" id="fixedRegularSlotInfo"></div>
+      <div class="grid two" style="margin-top:14px;">
+        <div><label>Student</label><select id="fixedRegularStudent"></select></div>
+        <div><label>Remark</label><input id="fixedRegularRemark" placeholder="Optional note"></div>
+      </div>
+      <div style="margin-top:14px;">
+        <label>Schedule</label>
+        <div class="row view-toggle" id="fixedRegularModeButtons">
+          <button type="button" class="btn active" data-fixed-regular-mode="start_now">Start Now</button>
+          <button type="button" class="btn ghost" data-fixed-regular-mode="start_date">Start From Date</button>
+          <button type="button" class="btn ghost" data-fixed-regular-mode="temporary">Temporary Period</button>
+        </div>
+        <input id="fixedRegularMode" type="hidden" value="start_now">
+      </div>
+      <div class="grid two" style="margin-top:14px;">
+        <div id="fixedRegularStartField" class="hide"><label>Start Date</label><input id="fixedRegularStartDate" type="date"></div>
+        <div id="fixedRegularEndField" class="hide"><label>End Date</label><input id="fixedRegularEndDate" type="date"></div>
+      </div>
+      <div class="subtle" style="margin-top:10px;">The subject follows the selected teacher's open slot automatically. A temporary booking returns this slot to open after its end date.</div>
+      <div class="row" style="margin-top:14px;">
+        <button class="btn mint" id="confirmFixedRegularBookingBtn">Confirm Regular Class</button>
+        <button class="btn ghost" data-close>Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div id="editTimeSlotModal" class="modal hide">
     <div class="modal-card">
       <div class="row spread"><h2>Edit Time Slot</h2><button class="btn ghost small" data-close>Close</button></div>
@@ -2995,6 +3025,137 @@
       save(false);
       renderTeacherOverview();
       setStatus(`${teacher.name}: ${data.day} ${timeLabel(data.time)} is now an open weekly slot.`);
+    }
+
+    function setFixedRegularMode(mode) {
+      const validMode = ["start_now", "start_date", "temporary"].includes(mode) ? mode : "start_now";
+      $("fixedRegularMode").value = validMode;
+      document.querySelectorAll("[data-fixed-regular-mode]").forEach(button => {
+        const active = button.dataset.fixedRegularMode === validMode;
+        button.classList.toggle("active", active);
+        button.classList.toggle("ghost", !active);
+      });
+      $("fixedRegularStartField").classList.toggle("hide", validMode === "start_now");
+      $("fixedRegularEndField").classList.toggle("hide", validMode !== "temporary");
+    }
+
+    function fixedRegularStudentOptions() {
+      return [...(state.students || [])]
+        .filter(student => student.status !== "archived" && (student.status || "registered") === "registered" && (student.registeredStatus || "active") !== "drop")
+        .sort(byName);
+    }
+
+    function openFixedRegularBookingModal(data) {
+      const teacher = teacherById(data.teacherId);
+      if (!teacher) return alert("Teacher not found.");
+      const students = fixedRegularStudentOptions();
+      if (!students.length) return alert("Add a registered student before booking a fixed regular class.");
+      const subject = data.subject || (teacher.subjects || [])[0] || "";
+      const options = students.map(student => `<option value="${escapeHtml(student.id)}">${escapeHtml(student.name)}${student.package ? ` - ${escapeHtml(student.package)}` : ""}</option>`).join("");
+      $("fixedRegularStudent").innerHTML = options;
+      $("fixedRegularSlotData").value = JSON.stringify({ ...data, subject });
+      $("fixedRegularSlotInfo").textContent = `${teacher.name} | ${data.day} ${timeLabel(data.time)} | ${subject || "Teacher's subject"}`;
+      $("fixedRegularStartDate").value = todayISO();
+      $("fixedRegularEndDate").value = "";
+      $("fixedRegularRemark").value = "";
+      setFixedRegularMode("start_now");
+      $("fixedRegularBookingModal").classList.remove("hide");
+    }
+
+    function splitOpenSlotForFixedBooking(teacher, openSlot, startDate, endDate) {
+      const original = { ...openSlot };
+      const originalIndex = teacher.regularSlots.findIndex(slot => slot.id === openSlot.id);
+      const beforeEnd = dateOffsetISO(startDate, -1);
+      if (openSlot.startDate && openSlot.startDate > beforeEnd) {
+        teacher.regularSlots.splice(originalIndex, 1);
+      } else {
+        openSlot.endDate = beforeEnd;
+        openSlot.updatedAt = new Date().toISOString();
+      }
+      if (endDate) {
+        const restoreStart = dateOffsetISO(endDate, 1);
+        if (!original.endDate || restoreStart <= original.endDate) {
+          teacher.regularSlots.push({
+            ...original,
+            id: uid("slot"),
+            startDate: restoreStart,
+            endDate: original.endDate || "",
+            locked: false,
+            unavailable: false,
+            source: "teacher-overview-restored",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
+        }
+      }
+    }
+
+    function confirmFixedRegularBooking() {
+      const data = JSON.parse($("fixedRegularSlotData").value || "null");
+      const teacher = data ? teacherById(data.teacherId) : null;
+      const student = studentById($("fixedRegularStudent").value);
+      if (!data || !teacher) return alert("Open slot data is missing.");
+      if (!student) return alert("Choose a valid student.");
+      const openSlot = (teacher.regularSlots || []).find(slot => slot.id === data.slotId && !slot.locked);
+      if (!openSlot) return alert("This slot is no longer open. Refresh the Teacher Overview and try again.");
+
+      const mode = $("fixedRegularMode").value;
+      const startDate = mode === "start_now" ? todayISO() : dateOnly($("fixedRegularStartDate").value);
+      const endDate = mode === "temporary" ? dateOnly($("fixedRegularEndDate").value) : "";
+      if (!startDate) return alert("Choose a start date.");
+      if (mode === "temporary" && !endDate) return alert("Choose an end date for the temporary period.");
+      if (endDate && endDate < startDate) return alert("End date cannot be before the start date.");
+
+      const subject = data.subject || openSlot.subject || (teacher.subjects || [])[0] || "";
+      const candidate = { teacherId: teacher.id, day: data.day, time: data.time, subject, startDate, endDate };
+      const conflict = studentRegularSlotConflict(student.name, candidate);
+      if (conflict) return alert(conflict);
+      const duplicate = getStudentRegularSlots(student).find(slot =>
+        slot.teacherId === teacher.id && slot.day === data.day && slot.time === data.time && regularSlotRangesOverlap(slot, candidate)
+      );
+      if (duplicate) return alert(`${student.name} already has this regular slot during the selected period.`);
+
+      splitOpenSlotForFixedBooking(teacher, openSlot, startDate, endDate);
+      const now = new Date().toISOString();
+      const studentSlot = {
+        id: uid("student_slot"),
+        teacherId: teacher.id,
+        day: data.day,
+        time: data.time,
+        subject,
+        startDate,
+        endDate,
+        source: "teacher-overview",
+        createdAt: now,
+        updatedAt: now
+      };
+      student.regularSlots ||= [];
+      student.regularSlots.push(studentSlot);
+      teacher.regularSlots.push({
+        id: uid("slot"),
+        studentId: student.id,
+        studentSlotId: studentSlot.id,
+        studentName: student.name,
+        day: data.day,
+        time: data.time,
+        subject,
+        startDate,
+        endDate,
+        locked: true,
+        unavailable: false,
+        source: "teacher-overview",
+        createdAt: now,
+        updatedAt: now
+      });
+      student.updatedAt = now;
+      teacher.updatedAt = now;
+      const period = endDate ? `${startDate} to ${endDate}` : `${startDate} onward`;
+      logAction("Fixed Regular Class Booked", `${student.name} with ${teacher.name}`, "Open weekly slot", `${data.day} ${timeLabel(data.time)} | ${period}`, $("fixedRegularRemark").value.trim() || "Booked from Teacher Overview.");
+      $("fixedRegularBookingModal").classList.add("hide");
+      save(false);
+      renderTeacherOverview();
+      renderStudents();
+      setStatus(`Regular class booked for ${student.name}: ${data.day} ${timeLabel(data.time)}, ${period}.`);
     }
 
     function openOffSlotModal(data) {
@@ -7064,7 +7225,13 @@
       }
       const openSlotAction = e.target.closest("[data-open-slot-action]");
       if (openSlotAction) {
-        openSlotActionModal(JSON.parse(openSlotAction.dataset.openSlotAction));
+        const data = JSON.parse(openSlotAction.dataset.openSlotAction);
+        if (data.interactionSource === "teacher_overview") openFixedRegularBookingModal(data);
+        else openSlotActionModal(data);
+      }
+      const fixedRegularMode = e.target.closest("[data-fixed-regular-mode]");
+      if (fixedRegularMode) {
+        setFixedRegularMode(fixedRegularMode.dataset.fixedRegularMode);
       }
       const slot = e.target.closest("[data-slot]");
       if (slot) {
@@ -8166,6 +8333,13 @@
       });
     };
     $("bookOpenSlotBtn").onclick = startBookingFromOpenSlotAction;
+    $("confirmFixedRegularBookingBtn").onclick = () => {
+      try { confirmFixedRegularBooking(); }
+      catch (err) {
+        setStatus(`Regular class booking failed: ${err.message}`, "error");
+        alert(`Regular class booking failed: ${err.message}`);
+      }
+    };
     $("editOpenSlotTimeBtn").onclick = () => openEditTimeSlotForAvailability(JSON.parse($("openSlotActionData").value || "null"));
     $("changeRegularSlotBtn").onclick = openRegularChangeModalFromOpenSlot;
     $("openSlotApplyMode").addEventListener("change", updateAvailabilityEndFields);
