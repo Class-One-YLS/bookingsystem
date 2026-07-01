@@ -1271,6 +1271,21 @@
     </div>
   </div>
 
+  <div id="cancelFixedRegularModal" class="modal hide">
+    <div class="modal-card">
+      <div class="row spread"><h2 id="cancelFixedRegularTitle">Cancel Regular Slot</h2><button class="btn ghost small" data-close>Close</button></div>
+      <input id="cancelFixedRegularData" type="hidden">
+      <div class="card" style="margin-top:14px;">
+        <div id="cancelFixedRegularInfo"></div>
+        <div class="subtle" style="margin-top:8px;">This ends the student's recurring assignment from today. Previous class history remains unchanged, and this weekly slot becomes open.</div>
+      </div>
+      <div class="row" style="margin-top:14px;">
+        <button class="btn danger" id="confirmCancelFixedRegularBtn">Confirm Cancellation</button>
+        <button class="btn ghost" data-close>Keep Regular Class</button>
+      </div>
+    </div>
+  </div>
+
   <div id="editTimeSlotModal" class="modal hide">
     <div class="modal-card">
       <div class="row spread"><h2>Edit Time Slot</h2><button class="btn ghost small" data-close>Close</button></div>
@@ -3181,6 +3196,91 @@
       save(false);
       renderTeacherOverview();
       setStatus(`${teacher.name}: ${data.day} ${timeLabel(data.time)} is now OFF.`);
+    }
+
+    function openCancelFixedRegularModal(data) {
+      const teacher = teacherById(data.teacherId);
+      const recurringSlot = teacher?.regularSlots?.find(slot => slot.id === data.slotId && slot.locked);
+      if (!teacher || !recurringSlot) return alert("This regular slot is no longer available. Refresh the Teacher Overview and try again.");
+      const studentName = recurringSlot.studentName || data.studentName || "this student";
+      $("cancelFixedRegularData").value = JSON.stringify(data);
+      $("cancelFixedRegularTitle").textContent = `Cancel Regular Slot for ${studentName}?`;
+      $("cancelFixedRegularInfo").innerHTML = `<strong>${escapeHtml(studentName)}</strong><div class="subtle">${escapeHtml(teacher.name)} | ${escapeHtml(recurringSlot.day)} ${timeLabel(recurringSlot.time)}${recurringSlot.subject ? ` | ${escapeHtml(recurringSlot.subject)}` : ""}</div>`;
+      $("cancelFixedRegularModal").classList.remove("hide");
+    }
+
+    function endSlotFromToday(collection, slot) {
+      const today = todayISO();
+      const historicalEnd = dateOffsetISO(today, -1);
+      if (slot.startDate && slot.startDate >= today) {
+        return collection.filter(item => item.id !== slot.id);
+      }
+      slot.endDate = historicalEnd;
+      slot.updatedAt = new Date().toISOString();
+      return collection;
+    }
+
+    function confirmCancelFixedRegular() {
+      const data = JSON.parse($("cancelFixedRegularData").value || "null");
+      const teacher = data ? teacherById(data.teacherId) : null;
+      const recurringSlot = teacher?.regularSlots?.find(slot => slot.id === data.slotId && slot.locked);
+      if (!data || !teacher || !recurringSlot) return alert("This regular slot is no longer available. Refresh the Teacher Overview and try again.");
+
+      const today = todayISO();
+      const now = new Date().toISOString();
+      const originalEndDate = recurringSlot.endDate || "";
+      const student = studentById(recurringSlot.studentId) || (state.students || []).find(item => studentNameKey(item.name) === studentNameKey(recurringSlot.studentName || data.studentName));
+      let studentSlot = null;
+      if (student) {
+        student.regularSlots ||= [];
+        studentSlot = student.regularSlots.find(slot => slot.id === recurringSlot.studentSlotId) || student.regularSlots.find(slot =>
+          slot.teacherId === teacher.id && slot.day === recurringSlot.day && slot.time === recurringSlot.time && regularSlotRangesOverlap(slot, { startDate: today, endDate: originalEndDate })
+        );
+        if (studentSlot) student.regularSlots = endSlotFromToday(student.regularSlots, studentSlot);
+        student.updatedAt = now;
+      }
+
+      teacher.regularSlots = endSlotFromToday(teacher.regularSlots, recurringSlot);
+      const alreadyOpen = teacher.regularSlots.some(slot =>
+        !slot.locked && !slot.unavailable && slot.day === recurringSlot.day && slot.time === recurringSlot.time &&
+        regularSlotRangesOverlap(slot, { startDate: today, endDate: originalEndDate })
+      );
+      if (!alreadyOpen) {
+        teacher.regularSlots.push({
+          id: uid("slot"),
+          day: recurringSlot.day,
+          time: recurringSlot.time,
+          subject: recurringSlot.subject || (teacher.subjects || [])[0] || "",
+          startDate: today,
+          endDate: originalEndDate,
+          locked: false,
+          unavailable: false,
+          source: "teacher-overview-cancelled-regular",
+          createdAt: now,
+          updatedAt: now
+        });
+      }
+      teacher.updatedAt = now;
+
+      scheduleBookings().filter(booking =>
+        booking.teacherId === teacher.id && booking.date >= today && !slotHasPassed(booking.date, booking.time) &&
+        booking.time === recurringSlot.time && dayFromISO(booking.date) === recurringSlot.day &&
+        studentNameKey(booking.studentName) === studentNameKey(recurringSlot.studentName || data.studentName) &&
+        (booking.type || "regular class") === "regular class"
+      ).forEach(booking => {
+        booking.status = "deleted";
+        booking.archived = true;
+        booking.deletedAt = now;
+        booking.updatedAt = now;
+      });
+
+      const studentName = recurringSlot.studentName || data.studentName || "Student";
+      logAction("Fixed Regular Slot Cancelled", studentName, `${teacher.name} | ${recurringSlot.day} ${timeLabel(recurringSlot.time)}`, "Regular assignment ended; slot open", "Cancelled from Teacher Overview. Previous history retained.");
+      $("cancelFixedRegularModal").classList.add("hide");
+      save(false);
+      renderTeacherOverview();
+      renderStudents();
+      setStatus(`${studentName}'s regular slot ended. ${teacher.name}'s ${recurringSlot.day} ${timeLabel(recurringSlot.time)} slot is now open.`);
     }
 
     function openOffSlotModal(data) {
@@ -7285,8 +7385,12 @@
       const fixedSlotBtn = e.target.closest("[data-fixed-slot]");
       if (fixedSlotBtn) {
         const data = JSON.parse(fixedSlotBtn.dataset.fixedSlot);
-        const booking = ensureBookingFromFixedSlot(data);
-        openOutcomeModal(booking, data.interactionSource || "weekly_timetable");
+        if (data.interactionSource === "teacher_overview") {
+          openCancelFixedRegularModal(data);
+        } else {
+          const booking = ensureBookingFromFixedSlot(data);
+          openOutcomeModal(booking, data.interactionSource || "weekly_timetable");
+        }
       }
       const close = e.target.closest("[data-close]");
       if (close) {
@@ -8366,6 +8470,13 @@
       }
     };
     $("setFixedRegularSlotOffBtn").onclick = setFixedRegularSlotOff;
+    $("confirmCancelFixedRegularBtn").onclick = () => {
+      try { confirmCancelFixedRegular(); }
+      catch (err) {
+        setStatus(`Regular slot cancellation failed: ${err.message}`, "error");
+        alert(`Regular slot cancellation failed: ${err.message}`);
+      }
+    };
     $("editOpenSlotTimeBtn").onclick = () => openEditTimeSlotForAvailability(JSON.parse($("openSlotActionData").value || "null"));
     $("changeRegularSlotBtn").onclick = openRegularChangeModalFromOpenSlot;
     $("openSlotApplyMode").addEventListener("change", updateAvailabilityEndFields);
