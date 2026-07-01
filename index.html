@@ -6241,18 +6241,34 @@
 
     async function neonPull(logManual = false) {
       if (!neonConfigured()) return alert("Neon API URL and API key are required.");
-      const manifest = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon load", SYNC_READ_TIMEOUT_MS);
-      state.settings.neonVersion = Number(manifest.version || 0);
-      if (manifest.empty || !manifest.totalChunks) {
-        if (logManual) setStatus("Neon database is empty. Current browser data is unchanged.", "warn");
-        return { empty: true };
+      let manifest = null;
+      let payload = null;
+      let chunkError = null;
+      for (let attempt = 1; attempt <= 3 && !payload; attempt += 1) {
+        try {
+          manifest = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon load", SYNC_READ_TIMEOUT_MS);
+          if (manifest.empty || !manifest.totalChunks) {
+            if (logManual) setStatus("Neon database is empty. Current browser data is unchanged.", "warn");
+            return { empty: true };
+          }
+          const chunks = [];
+          for (let index = 0; index < Number(manifest.totalChunks || 0); index += 1) {
+            const part = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}&version=${encodeURIComponent(manifest.version)}&chunk=${index}`, { method: "GET" }, `Neon load chunk ${index + 1}/${manifest.totalChunks}`, SYNC_READ_TIMEOUT_MS);
+            chunks.push(part.chunk || "");
+          }
+          payload = JSON.parse(chunks.join(""));
+        } catch (err) {
+          chunkError = err;
+          if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 600));
+        }
       }
-      const chunks = [];
-      for (let index = 0; index < Number(manifest.totalChunks || 0); index += 1) {
-        const part = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}&version=${encodeURIComponent(manifest.version)}&chunk=${index}`, { method: "GET" }, `Neon load chunk ${index + 1}/${manifest.totalChunks}`, SYNC_READ_TIMEOUT_MS);
-        chunks.push(part.chunk || "");
+      if (!payload) {
+        const fallback = await fetchNeonJson(`/api/state?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon recovery load", SYNC_READ_TIMEOUT_MS);
+        if (!fallback.data) throw chunkError || new Error("Neon state could not be loaded.");
+        payload = fallback.data;
+        manifest = { version: Number(fallback.version || 0) };
+        setStatus("Recovered Neon data through the complete-state endpoint.", "warn");
       }
-      const payload = JSON.parse(chunks.join(""));
       applyPulledPayload(payload);
       state.settings.neonVersion = Number(manifest.version || 0);
       state.settings.lastSyncedAt = new Date().toISOString();
