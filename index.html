@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Class One Booking Manager</title>
+  <title>Class One Internal System</title>
   <link rel="icon" type="image/png" href="favicon.png">
   <style>
     :root {
@@ -41,7 +41,7 @@
     .logo { width: 96px; height: 48px; border-radius: 8px; background: #fff; object-fit: contain; padding: 4px; }
     .brand strong { display: block; font-size: 16px; }
     .brand span { color: #b9c4c0; font-size: 12px; }
-    .side-toggle { width: 100%; margin-bottom: 12px; }
+    .side-toggle { width: 42px; height: 42px; min-height: 42px; margin: 0 0 12px auto; padding: 0; display: grid; place-items: center; font-size: 28px; line-height: 1; }
     .app-shell.sidebar-collapsed aside { padding: 18px 10px; }
     .app-shell.sidebar-collapsed .brand { justify-content: center; }
     .app-shell.sidebar-collapsed .brand div { display: none; }
@@ -263,10 +263,10 @@
   </div>
   <div class="app-shell">
     <aside>
-      <button class="btn ghost side-toggle" id="sidebarToggle">Hide Sidebar</button>
+      <button class="btn ghost side-toggle" id="sidebarToggle" title="Hide sidebar" aria-label="Hide sidebar">&lsaquo;</button>
       <div class="brand">
         <img class="logo" src="classone-logo.jpeg" alt="Class One logo">
-        <div><strong>Booking Manager</strong><span>No Firebase edition</span></div>
+        <div><strong>Class One Internal System</strong></div>
       </div>
       <button class="nav-btn active" data-tab="schedule" data-short="Week">Weekly Timetable</button>
       <button class="nav-btn" data-tab="teacherOverview" data-short="Tutor">Teacher Overview</button>
@@ -8348,7 +8348,9 @@
 
     function setSidebarCollapsed(collapsed) {
       document.querySelector(".app-shell").classList.toggle("sidebar-collapsed", collapsed);
-      $("sidebarToggle").textContent = collapsed ? "Show" : "Hide Sidebar";
+      $("sidebarToggle").textContent = collapsed ? "\u203a" : "\u2039";
+      $("sidebarToggle").title = collapsed ? "Show sidebar" : "Hide sidebar";
+      $("sidebarToggle").setAttribute("aria-label", collapsed ? "Show sidebar" : "Hide sidebar");
       safeStorageSet("classOneSidebarCollapsed", collapsed ? "1" : "0");
     }
 
