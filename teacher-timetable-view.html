@@ -296,6 +296,48 @@
     .student-table { min-width: 900px; }
     .simple-table th { background: #e8f8f0; }
     .simple-table td, .simple-table th { border-color: var(--line); text-align: left; }
+    .claim-toolbar {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(140px, 1fr)) auto;
+      gap: 12px;
+      align-items: end;
+    }
+    .claim-fields {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .claim-rewards { display: grid; gap: 10px; }
+    .claim-reward {
+      display: grid;
+      grid-template-columns: minmax(210px, .8fr) minmax(0, 1.4fr);
+      gap: 12px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fbfefd;
+    }
+    .claim-check {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin: 0;
+      color: var(--ink);
+      font-size: 14px;
+    }
+    .claim-check input { width: 20px; min-height: 20px; margin: 0; }
+    .claim-reward-fields {
+      display: grid;
+      grid-template-columns: 100px minmax(0, 1fr);
+      gap: 10px;
+    }
+    .claim-reward-fields.single { grid-template-columns: 1fr; }
+    .claim-reward-fields[aria-disabled="true"] { opacity: .48; }
+    .claim-summary { min-width: 820px; }
+    .claim-summary tfoot td { background: #e8f8f0; font-weight: 900; }
+    .claim-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+    .btn.ghost { background: #edf4f0; color: var(--ink); }
     .hide { display: none !important; }
     @media (max-width: 860px) {
       .topbar { grid-template-columns: 1fr; }
@@ -304,12 +346,14 @@
       .toolbar { grid-template-columns: 1fr 1fr; }
       .toolbar .btn { grid-column: span 2; }
       .metrics { grid-template-columns: 1fr 1fr; }
+      .claim-reward { grid-template-columns: 1fr; }
     }
     @media (max-width: 560px) {
       .toolbar, .metrics { grid-template-columns: 1fr; }
       .toolbar .btn { grid-column: auto; }
       .brand { align-items: flex-start; flex-direction: column; }
       section { padding: 12px; }
+      .claim-toolbar, .claim-fields, .claim-reward-fields { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -333,6 +377,7 @@
     <div class="view-tabs">
       <button class="view-tab active" data-view-tab="timetable">Timetable</button>
       <button class="view-tab" data-view-tab="students">Students</button>
+      <button class="view-tab" data-view-tab="claims">Incentive Claim</button>
     </div>
 
     <div id="timetableView">
@@ -393,6 +438,73 @@
         <div id="studentListTable" class="timetable-wrap" style="margin-top:12px;"></div>
       </section>
     </div>
+
+    <div id="claimsView" class="hide">
+      <section>
+        <div class="claim-toolbar">
+          <div><label>Claim Month</label><select id="claimMonthSelect"></select></div>
+          <div><label>Claim Year</label><select id="claimYearSelect"></select></div>
+          <button class="btn ghost" id="loadClaimBtn">Load Month</button>
+        </div>
+        <p class="subtle" id="claimLoadStatus" style="margin-top:10px;">Choose a month to prepare the claim.</p>
+      </section>
+
+      <section>
+        <h2>Payment Details</h2>
+        <div class="claim-fields">
+          <div><label>Email</label><input id="claimEmail" type="email" autocomplete="email" placeholder="Teacher email"></div>
+          <div><label>Account Name</label><input id="claimAccountName" placeholder="Bank account holder name"></div>
+          <div><label>Bank Name</label><input id="claimBankName" placeholder="Bank name"></div>
+          <div><label>Account Number</label><input id="claimAccountNumber" inputmode="numeric" placeholder="Bank account number"></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Monthly Automatic Incentives</h2>
+        <div id="claimAutomaticSummary" class="timetable-wrap"></div>
+      </section>
+
+      <section>
+        <h2>Other Rewards</h2>
+        <div class="claim-rewards">
+          <div class="claim-reward">
+            <label class="claim-check"><input type="checkbox" id="claimBirthday"> Birthday Reward (RM10)</label>
+            <div class="claim-reward-fields single" id="claimBirthdayFields" aria-disabled="true">
+              <input id="claimBirthdayRemark" placeholder="Birthday date" disabled>
+            </div>
+          </div>
+          <div class="claim-reward">
+            <label class="claim-check"><input type="checkbox" id="claimBestTeacher"> Monthly Best Teacher Award (RM25)</label>
+            <div class="claim-reward-fields single" id="claimBestTeacherFields" aria-disabled="true">
+              <input id="claimBestTeacherRemark" placeholder="Award reference or remark" disabled>
+            </div>
+          </div>
+          <div class="claim-reward">
+            <label class="claim-check"><input type="checkbox" id="claimGoogleReview"> Google Review (RM20 each)</label>
+            <div class="claim-reward-fields" id="claimGoogleReviewFields" aria-disabled="true">
+              <input id="claimGoogleReviewQty" type="number" min="1" max="100" value="1" aria-label="Google review quantity" disabled>
+              <input id="claimGoogleReviewRemark" placeholder="Parent or reviewer name(s)" disabled>
+            </div>
+          </div>
+          <div class="claim-reward">
+            <label class="claim-check"><input type="checkbox" id="claimTrialEnrollment"> Trial to Enrollment (RM10 each)</label>
+            <div class="claim-reward-fields" id="claimTrialEnrollmentFields" aria-disabled="true">
+              <input id="claimTrialEnrollmentQty" type="number" min="1" max="100" value="1" aria-label="Trial enrollment quantity" disabled>
+              <input id="claimTrialEnrollmentRemark" placeholder="Student name(s)" disabled>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Claim Summary</h2>
+        <div id="claimSummary" class="timetable-wrap"></div>
+        <div class="claim-actions">
+          <button class="btn ghost" id="exportClaimPdfBtn">Export Claim PDF</button>
+          <button class="btn" id="saveClaimBtn">Save Claim</button>
+        </div>
+      </section>
+    </div>
   </main>
 
   <script>
@@ -420,6 +532,8 @@
     let lastAutoSyncAt = null;
     let lastLoadedVersion = 0;
     let studentSaveTimer = null;
+    let incentiveClaimLoadedKey = "";
+    let incentiveClaimLoading = false;
 
     function escapeHtml(value) {
       return String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
@@ -598,6 +712,17 @@
       const selectedYear = Math.max(FIRST_VIEW_YEAR, Number(params.get("year") || currentYear));
       $("yearSelect").value = String(selectedYear);
       fillMonthSelect(selectedYear, selectedMonth);
+      $("claimYearSelect").innerHTML = $("yearSelect").innerHTML;
+      $("claimYearSelect").value = String(selectedYear);
+      fillClaimMonthSelect(selectedYear, selectedMonth);
+    }
+
+    function fillClaimMonthSelect(year, preferredMonth = null) {
+      const months = availableMonthsForYear(year);
+      $("claimMonthSelect").innerHTML = months.map(item => `<option value="${item.index}">${item.month}</option>`).join("");
+      const fallback = months[0]?.index ?? FIRST_VIEW_MONTH;
+      const safeMonth = months.some(item => item.index === Number(preferredMonth)) ? Number(preferredMonth) : fallback;
+      $("claimMonthSelect").value = String(safeMonth);
     }
 
     function mondayOf(date) {
@@ -914,6 +1039,263 @@
       return 0;
     }
 
+    function selectedClaimMonthKey() {
+      return `${$("claimYearSelect").value}-${String(Number($("claimMonthSelect").value) + 1).padStart(2, "0")}`;
+    }
+
+    function claimAutomaticSummary() {
+      const month = Number($("claimMonthSelect").value);
+      const year = Number($("claimYearSelect").value);
+      const from = localISO(new Date(year, month, 1));
+      const to = localISO(new Date(year, month + 1, 0));
+      const entries = timetableData ? classEntries(from, to) : [];
+      const completed = entries.filter(entry => entryMeta(entry).status === "completed");
+      const notShows = entries.filter(entry => entryMeta(entry).status === "student_not_show");
+      const teacherLeaveCount = entries.filter(entry => entryMeta(entry).status === "teacher_leave").length;
+      const lessonPay = completed.reduce((sum, entry) => sum + Number(entryMeta(entry).estimatedPay || 0), 0);
+      const notShowPay = notShows.length * 5;
+      let attendancePay = 0;
+      if (!teacherLeaveCount) {
+        if (completed.length > 130) attendancePay = 100;
+        else if (completed.length > 80) attendancePay = 80;
+        else if (completed.length > 50) attendancePay = 50;
+      }
+      return {
+        completedCount: completed.length,
+        notShowCount: notShows.length,
+        teacherLeaveCount,
+        lessonPay,
+        notShowPay,
+        attendancePay
+      };
+    }
+
+    function rewardValue(prefix, amount, quantityEnabled = false) {
+      const claimed = $(`claim${prefix}`).checked;
+      const quantity = quantityEnabled ? Math.max(1, Number($(`claim${prefix}Qty`).value) || 1) : 1;
+      return {
+        claimed,
+        quantity,
+        remark: $(`claim${prefix}Remark`).value.trim(),
+        amount: claimed ? amount * quantity : 0
+      };
+    }
+
+    function currentClaimForm() {
+      return {
+        email: $("claimEmail").value.trim(),
+        accountName: $("claimAccountName").value.trim(),
+        bankName: $("claimBankName").value.trim(),
+        accountNumber: $("claimAccountNumber").value.trim(),
+        birthday: rewardValue("Birthday", 10),
+        bestTeacher: rewardValue("BestTeacher", 25),
+        googleReview: rewardValue("GoogleReview", 20, true),
+        trialEnrollment: rewardValue("TrialEnrollment", 10, true)
+      };
+    }
+
+    function setRewardForm(prefix, reward, quantityEnabled = false) {
+      $(`claim${prefix}`).checked = Boolean(reward?.claimed);
+      if (quantityEnabled) $(`claim${prefix}Qty`).value = String(Math.max(1, Number(reward?.quantity) || 1));
+      $(`claim${prefix}Remark`).value = reward?.remark || "";
+      toggleRewardFields(prefix, quantityEnabled);
+    }
+
+    function fillClaimForm(claim) {
+      const value = claim || {};
+      $("claimEmail").value = value.email || timetableData?.teacher?.email || "";
+      $("claimAccountName").value = value.accountName || timetableData?.teacher?.name || "";
+      $("claimBankName").value = value.bankName || "";
+      $("claimAccountNumber").value = value.accountNumber || "";
+      setRewardForm("Birthday", value.birthday);
+      setRewardForm("BestTeacher", value.bestTeacher);
+      setRewardForm("GoogleReview", value.googleReview, true);
+      setRewardForm("TrialEnrollment", value.trialEnrollment, true);
+      renderIncentiveClaim();
+    }
+
+    function toggleRewardFields(prefix, quantityEnabled = false) {
+      const enabled = $(`claim${prefix}`).checked;
+      const fields = $(`claim${prefix}Fields`);
+      fields.setAttribute("aria-disabled", enabled ? "false" : "true");
+      $(`claim${prefix}Remark`).disabled = !enabled;
+      if (quantityEnabled) $(`claim${prefix}Qty`).disabled = !enabled;
+    }
+
+    function claimRows() {
+      const automatic = claimAutomaticSummary();
+      const claim = currentClaimForm();
+      const rate = Number(timetableData?.teacher?.rate || 0);
+      const rows = [
+        {
+          project: "Online class incentive",
+          description: rate > 0 ? `${automatic.completedCount} completed lessons x RM${rate.toFixed(2)}` : `${automatic.completedCount} completed lessons`,
+          amount: automatic.lessonPay,
+          automatic: true
+        },
+        {
+          project: "Online class incentive (waiting without inform)",
+          description: `${automatic.notShowCount} lesson${automatic.notShowCount === 1 ? "" : "s"} x RM5`,
+          amount: automatic.notShowPay,
+          automatic: true
+        },
+        {
+          project: "Full attendance reward",
+          description: automatic.teacherLeaveCount
+            ? `${automatic.teacherLeaveCount} teacher leave record${automatic.teacherLeaveCount === 1 ? "" : "s"}; not eligible`
+            : `${automatic.completedCount} completed lessons; no teacher leave`,
+          amount: automatic.attendancePay,
+          automatic: true
+        }
+      ];
+      if (claim.birthday.claimed) rows.push({ project: "Birthday reward", description: claim.birthday.remark, amount: 10 });
+      if (claim.bestTeacher.claimed) rows.push({ project: "Monthly best teacher award", description: claim.bestTeacher.remark, amount: 25 });
+      if (claim.googleReview.claimed) rows.push({ project: "Google review", description: `${claim.googleReview.quantity} review${claim.googleReview.quantity === 1 ? "" : "s"} x RM20 | ${claim.googleReview.remark}`, amount: claim.googleReview.amount });
+      if (claim.trialEnrollment.claimed) rows.push({ project: "Trial to enrollment", description: `${claim.trialEnrollment.quantity} enrollment${claim.trialEnrollment.quantity === 1 ? "" : "s"} x RM10 | ${claim.trialEnrollment.remark}`, amount: claim.trialEnrollment.amount });
+      return rows;
+    }
+
+    function renderIncentiveClaim() {
+      if (!$("claimAutomaticSummary")) return;
+      const automatic = claimAutomaticSummary();
+      $("claimAutomaticSummary").innerHTML = tableHtml(
+        ["Item", "Calculation", "Amount"],
+        [
+          ["Completed lessons", `${automatic.completedCount} lessons`, money(automatic.lessonPay)],
+          ["Student not show", `${automatic.notShowCount} x RM5`, money(automatic.notShowPay)],
+          ["Full attendance", automatic.teacherLeaveCount ? `Not eligible (${automatic.teacherLeaveCount} teacher leave)` : `${automatic.completedCount} completed lessons`, money(automatic.attendancePay)]
+        ]
+      );
+      const rows = claimRows();
+      const total = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+      $("claimSummary").innerHTML = `<table class="simple-table claim-summary">
+        <thead><tr><th>No.</th><th>Project</th><th>Description</th><th>Amount (RM)</th></tr></thead>
+        <tbody>${rows.map((row, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(row.project)}</td><td>${escapeHtml(row.description)}</td><td>${escapeHtml(money(row.amount))}</td></tr>`).join("")}</tbody>
+        <tfoot><tr><td colspan="3">Total</td><td>${escapeHtml(money(total))}</td></tr></tfoot>
+      </table>`;
+    }
+
+    function validateClaimForm() {
+      const claim = currentClaimForm();
+      const required = [
+        ["Birthday reward", claim.birthday],
+        ["Monthly best teacher award", claim.bestTeacher],
+        ["Google review", claim.googleReview],
+        ["Trial to enrollment", claim.trialEnrollment]
+      ];
+      const missing = required.find(([, reward]) => reward.claimed && !reward.remark);
+      if (missing) throw new Error(`${missing[0]} requires a remark or reference.`);
+      return claim;
+    }
+
+    function claimApiUrl() {
+      const url = new URL(`${API_BASE}/api/teacher-incentive-claim`);
+      url.searchParams.set("key", STATE_KEY);
+      url.searchParams.set("teacherId", params.get("teacherId") || params.get("teacher") || "");
+      url.searchParams.set("token", params.get("token") || "");
+      url.searchParams.set("monthKey", selectedClaimMonthKey());
+      return url;
+    }
+
+    async function loadIncentiveClaim() {
+      if (incentiveClaimLoading || !timetableData) return;
+      incentiveClaimLoading = true;
+      $("claimLoadStatus").textContent = "Loading saved claim...";
+      try {
+        const response = await fetch(claimApiUrl().toString(), { method: "GET", cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok || data.ok === false) throw new Error(data.error || `Claim load failed with HTTP ${response.status}`);
+        incentiveClaimLoadedKey = selectedClaimMonthKey();
+        fillClaimForm(data.claim);
+        $("claimLoadStatus").textContent = data.updatedAt
+          ? `Saved claim loaded. Last saved ${new Date(data.updatedAt).toLocaleString()}.`
+          : "No saved claim for this month yet. You can prepare a new claim.";
+      } catch (error) {
+        $("claimLoadStatus").textContent = `Could not load claim: ${error.message}`;
+      } finally {
+        incentiveClaimLoading = false;
+      }
+    }
+
+    async function loadClaimMonth() {
+      const month = Number($("claimMonthSelect").value);
+      const year = Number($("claimYearSelect").value);
+      $("yearSelect").value = String(year);
+      fillMonthSelect(year, month);
+      $("monthSelect").value = String(month);
+      $("claimLoadStatus").textContent = "Loading timetable and saved claim for this month...";
+      await loadTimetable({ silent: true });
+      await loadIncentiveClaim();
+    }
+
+    async function saveIncentiveClaim() {
+      const claim = validateClaimForm();
+      $("saveClaimBtn").disabled = true;
+      $("claimLoadStatus").textContent = "Saving claim to Class One database...";
+      try {
+        const response = await fetch(`${API_BASE}/api/teacher-incentive-claim`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            key: STATE_KEY,
+            teacherId: params.get("teacherId") || params.get("teacher") || "",
+            token: params.get("token") || "",
+            monthKey: selectedClaimMonthKey(),
+            claim
+          })
+        });
+        const data = await response.json();
+        if (!response.ok || data.ok === false) throw new Error(data.error || `Claim save failed with HTTP ${response.status}`);
+        incentiveClaimLoadedKey = selectedClaimMonthKey();
+        $("claimLoadStatus").textContent = `Claim saved at ${new Date(data.updatedAt).toLocaleString()}.`;
+      } catch (error) {
+        $("claimLoadStatus").textContent = `Claim was not saved: ${error.message}`;
+      } finally {
+        $("saveClaimBtn").disabled = false;
+      }
+    }
+
+    function exportClaimPdf() {
+      let claim;
+      try {
+        claim = validateClaimForm();
+      } catch (error) {
+        return alert(error.message);
+      }
+      const rows = claimRows();
+      const total = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+      const month = Number($("claimMonthSelect").value);
+      const year = Number($("claimYearSelect").value);
+      const teacherName = timetableData?.teacher?.name || "Teacher";
+      const logoUrl = new URL("classone-logo.jpeg", window.location.href).href;
+      const tableRows = rows.map((row, index) => `<tr>
+        <td>${index + 1}</td>
+        <td>${escapeHtml(row.project)}</td>
+        <td>${escapeHtml(row.description)}${row.automatic ? "" : "<br><small>Evidence attached separately</small>"}</td>
+        <td>${escapeHtml(money(row.amount))}</td>
+      </tr>`).join("");
+      const popup = window.open("", "_blank");
+      if (!popup) return alert("Please allow popups to export PDF.");
+      popup.document.write(`<!doctype html><html><head><title>${escapeHtml(teacherName)} ${MONTHS[month]} ${year} Incentive Claim</title>
+        <style>
+          *{box-sizing:border-box} body{font-family:Arial,sans-serif;color:#111;padding:28px;max-width:980px;margin:auto} .header{display:grid;grid-template-columns:230px 1fr;gap:22px;align-items:start}.header img{width:210px;max-height:125px;object-fit:contain}.company{font-size:18px;line-height:1.45}.company strong{font-size:22px}.title{text-align:center;font-size:30px;margin:34px 0 24px}.details{display:grid;grid-template-columns:1fr 1fr;gap:8px 36px;margin-bottom:26px}.details div{display:grid;grid-template-columns:105px 1fr;gap:8px}table{width:100%;border-collapse:collapse}th,td{border:1.5px solid #111;padding:9px;text-align:left;vertical-align:top}th{text-align:center;background:#fff}.number{width:55px}.amount{width:140px;text-align:right}tfoot td{font-weight:700;font-size:17px}small{color:#555}.print{float:right;padding:9px 14px;margin-bottom:12px}@media print{body{padding:0}.print{display:none}}
+        </style></head><body>
+        <button class="print" onclick="window.print()">Print / Save PDF</button>
+        <div class="header"><img src="${logoUrl}" alt="Class One"><div class="company"><strong>CLASSONE ELEARNING EDUCATION SDN. BHD.</strong><br>36D, Jalan Radin Anum,<br>Bandar Baru Seri Petaling,<br>57000, Wilayah Persekutuan, KL</div></div>
+        <h1 class="title">Incentive Claim</h1>
+        <div class="details">
+          <div><strong>Department:</strong><span>Class.One</span></div><div><strong>Date:</strong><span>${escapeHtml(new Date().toLocaleDateString("en-GB"))}</span></div>
+          <div><strong>To:</strong><span>${escapeHtml(teacherName)}</span></div><div><strong>Claim Month:</strong><span>${escapeHtml(`${MONTHS[month]} ${year}`)}</span></div>
+          <div><strong>Email:</strong><span>${escapeHtml(claim.email || "-")}</span></div><div><strong>Bank:</strong><span>${escapeHtml(claim.bankName || "-")}</span></div>
+          <div><strong>Account Name:</strong><span>${escapeHtml(claim.accountName || "-")}</span></div><div><strong>Acc No:</strong><span>${escapeHtml(claim.accountNumber || "-")}</span></div>
+        </div>
+        <table><thead><tr><th class="number">No.</th><th>Project</th><th>Description</th><th class="amount">Amount (RM)</th></tr></thead><tbody>${tableRows}</tbody><tfoot><tr><td colspan="3" style="text-align:right">Total:</td><td class="amount">${escapeHtml(money(total))}</td></tr></tfoot></table>
+      </body></html>`);
+      popup.document.close();
+      popup.focus();
+      setTimeout(() => popup.print(), 350);
+    }
+
     function renderUpcoming() {
       const from = localISO(new Date());
       const to = from;
@@ -1143,6 +1525,7 @@
       renderLeaveList();
       renderIncomeHistory();
       renderTeacherStudents();
+      if (incentiveClaimLoadedKey === selectedClaimMonthKey()) renderIncentiveClaim();
       renderVisibility();
     }
 
@@ -1153,11 +1536,45 @@
     });
     $("refreshBtn").addEventListener("click", () => loadTimetable().catch(error => setStatus(error.message, "error")));
     $("exportIncomePdfBtn").addEventListener("click", exportIncomePdf);
+    $("claimYearSelect").addEventListener("change", () => {
+      fillClaimMonthSelect(Number($("claimYearSelect").value), Number($("claimMonthSelect").value));
+      incentiveClaimLoadedKey = "";
+      $("claimLoadStatus").textContent = "Click Load Month to view this claim period.";
+    });
+    $("claimMonthSelect").addEventListener("change", () => {
+      incentiveClaimLoadedKey = "";
+      $("claimLoadStatus").textContent = "Click Load Month to view this claim period.";
+    });
+    $("loadClaimBtn").addEventListener("click", () => loadClaimMonth().catch(error => {
+      $("claimLoadStatus").textContent = `Could not load claim month: ${error.message}`;
+    }));
+    $("saveClaimBtn").addEventListener("click", () => saveIncentiveClaim().catch(error => {
+      $("claimLoadStatus").textContent = `Claim was not saved: ${error.message}`;
+    }));
+    $("exportClaimPdfBtn").addEventListener("click", exportClaimPdf);
+    [
+      ["Birthday", false],
+      ["BestTeacher", false],
+      ["GoogleReview", true],
+      ["TrialEnrollment", true]
+    ].forEach(([prefix, quantityEnabled]) => {
+      $(`claim${prefix}`).addEventListener("change", () => {
+        toggleRewardFields(prefix, quantityEnabled);
+        renderIncentiveClaim();
+      });
+    });
+    $("claimsView").addEventListener("input", event => {
+      if (event.target.matches("input")) renderIncentiveClaim();
+    });
     document.querySelectorAll("[data-view-tab]").forEach(button => {
       button.addEventListener("click", () => {
         document.querySelectorAll("[data-view-tab]").forEach(item => item.classList.toggle("active", item === button));
         $("timetableView").classList.toggle("hide", button.dataset.viewTab !== "timetable");
         $("studentsView").classList.toggle("hide", button.dataset.viewTab !== "students");
+        $("claimsView").classList.toggle("hide", button.dataset.viewTab !== "claims");
+        if (button.dataset.viewTab === "claims" && timetableData && incentiveClaimLoadedKey !== selectedClaimMonthKey()) {
+          loadIncentiveClaim();
+        }
       });
     });
     $("studentListTable").addEventListener("input", event => {
