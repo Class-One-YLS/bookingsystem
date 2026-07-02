@@ -1956,6 +1956,13 @@
         student.name = cleanStudentName(student.name);
         student.subjects = normalizeSubjects(Array.isArray(student.subjects) ? student.subjects : [student.subject].filter(Boolean));
         student.subject = student.subjects[0] || normalizeSubject(student.subject || "");
+        student.regularSlots = Array.isArray(student.regularSlots) ? student.regularSlots : [];
+        student.regularSlots.forEach(slot => {
+          slot.subject = normalizeSubject(slot.subject || student.subject || "");
+          slot.time = normalizeTimeValue(slot.time) || slot.time;
+          slot.startDate = dateOnly(slot.startDate || "");
+          slot.endDate = dateOnly(slot.endDate || "");
+        });
         student.packageAmount = Number(student.packageAmount || 0);
         student.packageClasses = Number(student.packageClasses || 0);
         student.packageNotes ||= "";
@@ -1963,6 +1970,7 @@
         student.registeredRemark ||= "";
       });
       state.students = mergeDuplicateStudents(state.students);
+      repairTeacherSlotsFromStudentProfiles();
       state.leads.forEach((lead, index) => {
         lead.id ||= stableLeadId(lead, index);
         lead.status ||= "New Contact";
@@ -4166,6 +4174,50 @@
         return [{ teacherId: student.teacherId || "", day: student.day || "", time: student.time || "", subject: student.subject || "" }];
       }
       return [];
+    }
+
+    function repairTeacherSlotsFromStudentProfiles() {
+      let repaired = 0;
+      (state.students || []).filter(student => student.status !== "archived").forEach(student => {
+        getStudentRegularSlots(student).forEach(studentSlot => {
+          if (!studentSlot.teacherId || !studentSlot.day || !studentSlot.time) return;
+          const teacher = teacherById(studentSlot.teacherId);
+          if (!teacher || isTeacherArchived(teacher)) return;
+          teacher.regularSlots ||= [];
+          let teacherSlot = teacher.regularSlots.find(slot => slot.studentSlotId && slot.studentSlotId === studentSlot.id);
+          if (!teacherSlot) {
+            teacherSlot = teacher.regularSlots.find(slot =>
+              slot.locked && slot.day === studentSlot.day && slot.time === studentSlot.time &&
+              studentNameKey(slot.studentName) === studentNameKey(student.name) &&
+              regularSlotRangesOverlap(slot, studentSlot)
+            );
+          }
+          const values = {
+            studentId: student.id,
+            studentSlotId: studentSlot.id,
+            studentName: student.name,
+            day: studentSlot.day,
+            time: studentSlot.time,
+            subject: studentSlot.subject || student.subject || (teacher.subjects || [])[0] || "",
+            startDate: dateOnly(studentSlot.startDate || ""),
+            endDate: dateOnly(studentSlot.endDate || ""),
+            locked: true,
+            unavailable: false
+          };
+          if (!teacherSlot) {
+            teacher.regularSlots.push({ id: uid("slot"), ...values, source: "student-profile-repair", createdAt: studentSlot.createdAt || student.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() });
+            repaired += 1;
+            return;
+          }
+          const needsRepair = !teacherSlot.locked || !teacherSlot.studentName || teacherSlot.studentId !== student.id || teacherSlot.studentSlotId !== studentSlot.id;
+          Object.assign(teacherSlot, values);
+          if (needsRepair) {
+            teacherSlot.updatedAt = new Date().toISOString();
+            repaired += 1;
+          }
+        });
+      });
+      return repaired;
     }
 
     function activeTeacherStudentRows(teacher) {
