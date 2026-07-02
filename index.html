@@ -97,6 +97,7 @@
     #overviewTeacherLinkActions .btn { min-height: 36px; padding: 0 12px; flex: 0 0 auto; width: auto; }
     #overviewTeacherLinkActions a.btn, #overviewTeacherLinkActions a.btn:visited { color: var(--ink); text-decoration: none; }
     .pill { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 900; background: #edf4f0; color: var(--ink); margin: 2px; }
+    .pill.unavailable { opacity: .55; }
     .pill.booked { background: var(--warn); }
     .pill.completed { background: var(--ok); }
     .pill.cancelled { background: var(--danger); }
@@ -175,10 +176,14 @@
     .reminder-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px; border: 1px solid #f4dda0; background: #fff; border-radius: 8px; font-size: 12px; }
     .view-toggle .btn.active { background: var(--ink); color: #fff; }
     .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
-    .lead-table { min-width: 1220px; }
+    .lead-table { min-width: 1880px; }
     .lead-table th { position: sticky; top: 0; z-index: 1; }
     .lead-table select, .lead-table input { min-height: 32px; padding: 6px 8px; font-size: 12px; }
+    .lead-table textarea { min-height: 64px; min-width: 190px; padding: 6px 8px; font-size: 12px; }
     .lead-table td { vertical-align: top; }
+    .crm-session-editor { display: grid; gap: 5px; min-width: 190px; }
+    .crm-session-editor + .crm-session-editor { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line); }
+    .crm-session-editor strong { font-size: 11px; color: var(--muted); }
     .guide-list { display: grid; gap: 10px; }
     .guide-list li { background: #fbfdfc; border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
     .flow-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
@@ -322,6 +327,7 @@
             <div><label>&nbsp;</label><button class="btn ghost" id="clearOverviewFiltersBtn">Clear Overview</button></div>
           </div>
         </div>
+        <div id="teacherOverviewStats"></div>
         <div class="panel hide" id="teacherSlotEditPanel">
           <div class="row spread">
             <div><h2>Edit Teacher Slots</h2><div class="subtle" id="teacherSlotEditTeacherLabel"></div></div>
@@ -363,7 +369,7 @@
             <div class="grid two">
               <div><label>Parent Name</label><input id="leadParentName" placeholder="Optional"></div>
               <div><label>Parent Phone</label><input id="leadParentPhone" placeholder="Phone / WhatsApp"></div>
-              <div><label>Child Name</label><input id="leadChildName" placeholder="Child name"></div>
+              <div><label>Child Name</label><input id="leadChildName" placeholder="Optional"></div>
               <div><label>Child Age / Year</label><input id="leadChildAge" placeholder="Age or school year"></div>
               <div><label>Source</label><input id="leadSource" list="leadSourceOptions" placeholder="Facebook Ads"></div>
               <div><label>Salesperson</label><input id="leadSalesperson" placeholder="Salesperson name"></div>
@@ -390,7 +396,7 @@
         </div>
         <div class="panel">
             <div class="row spread">
-              <div><h2>CRM Lead List</h2><div class="subtle">Track active leads, follow-ups and progression.</div></div>
+              <div><h2>CRM Lead List</h2><div class="subtle">Edit table fields directly. Changes save automatically when you leave a field.</div></div>
               <div class="row">
                 <button class="btn mint" id="openLeadModalBtn">Add Lead</button>
                 <div class="row view-toggle hide">
@@ -424,7 +430,6 @@
               </div>
             </div>
             <div class="reminder-panel" id="leadReminderBox"></div>
-            <div id="oldImportedLeadBox" style="margin-top:14px;"></div>
             <div id="leadList" class="list" style="margin-top:14px;"></div>
             <div class="row spread" id="leadPagination" style="margin-top:12px;"></div>
         </div>
@@ -532,8 +537,8 @@
               <div class="flow-steps">
                 <div><span>&gt;</span><p>Add every new parent contact from ads, referral, walk-in, or WhatsApp.</p></div>
                 <div><span>&gt;</span><p>Check Needs Action first. Follow the Next action shown for each lead.</p></div>
-                <div><span>&gt;</span><p>Old sheet leads are inside Old Imported Leads. Expand only when checking old records.</p></div>
-                <div><span>&gt;</span><p>If an old imported lead replies again, click Move to Active so it appears in the normal active lead list.</p></div>
+                <div><span>&gt;</span><p>Use the CRM lead table to update contact details, progress, follow-up dates, and notes directly.</p></div>
+                <div><span>&gt;</span><p>When a parent replies, search their phone number and update the lead status, notes, and next follow-up directly in the table.</p></div>
                 <div><span>&gt;</span><p>Use table view to filter by status, urgency, child, parent phone, source, salesperson, assessment date, or trial date.</p></div>
               </div>
             </div>
@@ -654,7 +659,7 @@
               <h3>Salesperson Actions</h3>
               <div class="flow-steps">
                 <div><span>&gt;</span><p><strong>New lead:</strong> Open CRM Leads &gt; Click Add Lead &gt; Complete the popup &gt; Set New Contact &gt; Set urgency/source &gt; Set next follow-up.</p></div>
-                <div><span>&gt;</span><p><strong>Old imported lead replies:</strong> Open Old Imported Leads &gt; Search lead &gt; Move to Active &gt; Update notes &gt; Set next follow-up.</p></div>
+                <div><span>&gt;</span><p><strong>Lead replies:</strong> Search the lead &gt; Update the table directly &gt; Change status &gt; Set the next follow-up.</p></div>
                 <div><span>&gt;</span><p><strong>Parent replies:</strong> Find the lead in the table &gt; Click Edit &gt; Update the popup profile and notes &gt; Set next follow-up.</p></div>
                 <div><span>&gt;</span><p><strong>Parent asks time:</strong> Open Weekly Timetable/Teacher Overview &gt; Filter slots &gt; Propose open slots only &gt; Record options in notes.</p></div>
                 <div><span>&gt;</span><p><strong>Assessment:</strong> Set Assessment &gt; Weekly Timetable opens &gt; Choose teacher slot &gt; Confirm assessment.</p></div>
@@ -1114,7 +1119,7 @@
         <div><label>Registered Remark</label><input id="studentRegisteredRemark" placeholder="Remark for registered list"></div>
         <div><label>Regular Teacher</label><select id="studentTeacher"></select></div>
         <div><label>Regular Days</label><div id="studentDayChecks" class="row"></div></div>
-        <div><label>Regular Time</label><input id="studentTime" type="time" step="1800"></div>
+        <div><label>Regular Time</label><select id="studentTime"><option value="">Choose day or teacher first</option></select></div>
         <div><label>Regular Subject</label><select id="studentRegularSubject"></select></div>
         <div><label>Effective Start Date</label><input id="studentRegularStartDate" type="date"></div>
         <div><label>Effective End Date</label><input id="studentRegularEndDate" type="date"><div class="subtle">Leave empty for an ongoing schedule.</div></div>
@@ -2699,13 +2704,101 @@
       loadRevenueEntryForm();
     }
 
-    function updateStudentTeacherOptions(preferredTeacherId = "") {
+    function studentScheduleRange() {
+      return {
+        startDate: dateOnly($("studentRegularStartDate")?.value || todayISO()),
+        endDate: dateOnly($("studentRegularEndDate")?.value || "")
+      };
+    }
+
+    function regularSlotCoversRange(slot, startDate, endDate) {
+      const slotStart = slot.startDate || "0000-01-01";
+      const slotEnd = slot.endDate || "9999-12-31";
+      const targetEnd = endDate || "9999-12-31";
+      return slotStart <= startDate && slotEnd >= targetEnd;
+    }
+
+    function studentTeacherSlotReason(teacher, day, time, subject, startDate, endDate) {
+      if (!teacher) return "Choose a valid teacher.";
+      if (subject && !(teacher.subjects || []).map(normalizeSubject).includes(normalizeSubject(subject))) return `${teacher.name} does not teach ${subject}.`;
+      const ownSlot = (teacher.regularSlots || []).find(slot =>
+        slot.locked && slot.studentSlotId === studentRegularSlotEditId && slot.day === day && slot.time === time && regularSlotCoversRange(slot, startDate, endDate)
+      );
+      if (ownSlot) return "";
+      const conflict = (teacher.regularSlots || []).find(slot =>
+        slot.locked && slot.studentSlotId !== studentRegularSlotEditId && slot.day === day && slot.time === time &&
+        regularSlotRangesOverlap(slot, { startDate, endDate })
+      );
+      if (conflict) {
+        if (conflict.reserved) return `${teacher.name}'s ${day} ${timeLabel(time)} slot is reserved for ${conflict.reservationName || conflict.studentName || "another student"}.`;
+        return `${teacher.name} already has a fixed regular class for ${conflict.studentName || "another student"} on ${day} at ${timeLabel(time)}.`;
+      }
+      const open = (teacher.regularSlots || []).find(slot =>
+        !slot.locked && !slot.unavailable && slot.day === day && slot.time === time && regularSlotCoversRange(slot, startDate, endDate)
+      );
+      return open ? "" : `${teacher.name} does not have an open ${day} ${timeLabel(time)} slot for the selected effective period.`;
+    }
+
+    function studentScheduleTimes() {
+      return halfHourOptions(8 * 60, 21 * 60 + 30).filter(option => option.value !== "all").map(option => option.value);
+    }
+
+    function teacherAvailableForStudentSelection(teacher, days, time, subject) {
+      const { startDate, endDate } = studentScheduleRange();
+      if (subject && !(teacher.subjects || []).map(normalizeSubject).includes(normalizeSubject(subject))) return false;
+      if (!days.length) {
+        if (time) return DAYS.some(day => !studentTeacherSlotReason(teacher, day, time, subject, startDate, endDate));
+        return DAYS.some(day => studentScheduleTimes().some(candidateTime => !studentTeacherSlotReason(teacher, day, candidateTime, subject, startDate, endDate)));
+      }
+      if (time) return days.every(day => !studentTeacherSlotReason(teacher, day, time, subject, startDate, endDate));
+      return studentScheduleTimes().some(candidateTime => days.every(day => !studentTeacherSlotReason(teacher, day, candidateTime, subject, startDate, endDate)));
+    }
+
+    function studentSelectionConflict(teacherId, days, time, subject) {
+      if (!teacherId || !days.length || !time) return "";
+      const teacher = teacherById(teacherId);
+      const { startDate, endDate } = studentScheduleRange();
+      return days.map(day => studentTeacherSlotReason(teacher, day, time, subject, startDate, endDate)).find(Boolean) || "";
+    }
+
+    function refreshStudentScheduleOptions(preferredTeacherId = "") {
       const subject = $("studentRegularSubject")?.value || selectedStudentSubjects()[0] || "";
-      const eligible = [...activeTeachers()].sort(byName).filter(teacher => !subject || (teacher.subjects || []).includes(subject));
-      const current = preferredTeacherId || $("studentTeacher")?.value || "";
-      const options = eligible.map(teacher => ({ value: teacher.id, label: `${teacher.name} (${(teacher.subjects || []).join(", ") || "No subject"})` }));
-      $("studentTeacher").innerHTML = `<option value="">${eligible.length ? "Choose teacher" : "No eligible teacher"}</option>` + options.map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("");
-      if (eligible.some(teacher => teacher.id === current)) $("studentTeacher").value = current;
+      const days = selectedStudentRegularDays();
+      const currentTeacherId = preferredTeacherId || $("studentTeacher")?.value || "";
+      const currentTime = $("studentTime")?.value || "";
+      const eligible = [...activeTeachers()].sort(byName).filter(teacher => teacherAvailableForStudentSelection(teacher, days, currentTime, subject));
+      const currentTeacher = teacherById(currentTeacherId);
+      if (currentTeacher && !eligible.some(teacher => teacher.id === currentTeacherId)) eligible.push(currentTeacher);
+      $("studentTeacher").innerHTML = `<option value="">${eligible.length ? "Choose teacher" : "No available teacher"}</option>` + eligible.sort(byName).map(teacher => `<option value="${escapeHtml(teacher.id)}">${escapeHtml(`${teacher.name} (${(teacher.subjects || []).join(", ") || "No subject"})`)}</option>`).join("");
+      if (currentTeacherId) $("studentTeacher").value = currentTeacherId;
+
+      const teacher = teacherById(currentTeacherId);
+      const availableTimes = studentScheduleTimes().filter(time => {
+        if (teacher) return teacherAvailableForStudentSelection(teacher, days, time, subject);
+        return [...activeTeachers()].some(candidate => teacherAvailableForStudentSelection(candidate, days, time, subject));
+      });
+      if (currentTime && !availableTimes.includes(currentTime)) availableTimes.push(currentTime);
+      availableTimes.sort((a, b) => minutes(a) - minutes(b));
+      $("studentTime").innerHTML = `<option value="">Choose available time</option>${availableTimes.map(time => `<option value="${escapeHtml(time)}">${escapeHtml(timeLabel(time))}</option>`).join("")}`;
+      if (currentTime) $("studentTime").value = currentTime;
+
+      document.querySelectorAll("#studentDayChecks input").forEach(input => {
+        const canUse = currentTime
+          ? (teacher ? teacherAvailableForStudentSelection(teacher, [input.value], currentTime, subject) : [...activeTeachers()].some(candidate => teacherAvailableForStudentSelection(candidate, [input.value], currentTime, subject)))
+          : (teacher ? teacherAvailableForStudentSelection(teacher, [input.value], "", subject) : true);
+        input.disabled = false;
+        input.closest("label")?.classList.toggle("unavailable", !canUse && !input.checked);
+        input.closest("label")?.setAttribute("title", canUse ? "Available" : "No matching teacher slot for the current selections");
+      });
+      $("studentTeacher").dataset.previous = $("studentTeacher").value || "";
+      $("studentTime").dataset.previous = $("studentTime").value || "";
+      $("studentRegularSubject").dataset.previous = $("studentRegularSubject").value || "";
+      $("studentRegularStartDate").dataset.previous = $("studentRegularStartDate").value || "";
+      $("studentRegularEndDate").dataset.previous = $("studentRegularEndDate").value || "";
+    }
+
+    function updateStudentTeacherOptions(preferredTeacherId = "") {
+      refreshStudentScheduleOptions(preferredTeacherId);
     }
 
     function refreshWeeks() {
@@ -3144,6 +3237,7 @@
       }
       if (!teacherId || teacherId === "all") {
         renderTeacherOverviewLink(null);
+        $("teacherOverviewStats").innerHTML = "";
         $("teacherLeaveSummary").innerHTML = "";
         $("teacherOverviewGrid").innerHTML = `<div class="empty">Choose one teacher to view their timetable overview.</div>`;
         return;
@@ -3151,12 +3245,14 @@
       const teacher = teacherById(teacherId);
       if (!teacher) {
         renderTeacherOverviewLink(null);
+        $("teacherOverviewStats").innerHTML = "";
         $("teacherLeaveSummary").innerHTML = "";
         $("teacherOverviewGrid").innerHTML = `<div class="empty">Teacher not found.</div>`;
         return;
       }
       const dates = weekDates();
       renderTeacherOverviewLink(teacher);
+      renderTeacherOverviewStats(teacher);
       renderTeacherLeaveSummary(teacher);
       if ($("overviewViewMode").value === "list") {
         $("teacherOverviewGrid").className = "overview-grid";
@@ -3165,6 +3261,22 @@
       }
       $("teacherOverviewGrid").className = "";
       $("teacherOverviewGrid").innerHTML = teacherOverviewTableHtml(teacher, dates);
+    }
+
+    function teacherWeeklyFixedClassCount(teacher) {
+      const keys = new Set();
+      DAYS.forEach(day => {
+        teacherOverviewTimes(teacher, []).forEach(time => {
+          const slot = teacherOverviewActiveSlot(teacher, day, time);
+          if (slot?.locked && !slot.reserved) keys.add(`${day}|${time}`);
+        });
+      });
+      return keys.size;
+    }
+
+    function renderTeacherOverviewStats(teacher) {
+      const total = teacherWeeklyFixedClassCount(teacher);
+      $("teacherOverviewStats").innerHTML = `<div class="panel"><div class="row spread"><div><strong>Total Fixed Regular Classes Per Week</strong><div class="subtle">${escapeHtml(teacher.name)}'s active fixed weekly classes. Reservations are excluded.</div></div><strong style="font-size:28px;">${total}</strong></div></div>`;
     }
 
     function renderTeacherOverviewLink(teacher) {
@@ -4574,6 +4686,7 @@
       $("studentRegularStartDate").value = todayISO();
       $("studentRegularEndDate").value = "";
       setSelectedStudentRegularDays([]);
+      refreshStudentScheduleOptions();
     }
 
     function studentRegularSlotKey(slot) {
@@ -4983,7 +5096,7 @@
         <button class="metric" id="openLeadActionModalBtn" style="width:100%;">
           <span class="subtle">CRM Needs Action</span>
           <strong>${reminders.length}</strong>
-          <span class="subtle">Only active/new leads are counted. Old imported sheet leads are excluded unless moved to active.</span>
+          <span class="subtle">Active leads that require follow-up or a status update.</span>
         </button>`;
     }
 
@@ -5056,7 +5169,7 @@
 
     function showLeadActionModal() {
       const reminders = leadsNeedingAction();
-      $("leadActionSubtitle").textContent = `${reminders.length} active lead${reminders.length === 1 ? "" : "s"} need status update. Old imported leads are excluded unless moved to active.`;
+      $("leadActionSubtitle").textContent = `${reminders.length} active lead${reminders.length === 1 ? "" : "s"} need status update.`;
       $("leadActionList").innerHTML = reminders.map(lead => `
         <div class="card lead-card ${escapeHtml(lead.urgency || "warm")}">
           <div class="row spread"><strong>${escapeHtml(lead.childName || "Unnamed Child")}</strong><span class="pill">${escapeHtml(lead.status || "New Contact")}</span></div>
@@ -5156,36 +5269,7 @@
     }
 
     function renderOldImportedLeads() {
-      const oldLeads = filteredOldImportedLeads();
-      $("oldImportedLeadBox").innerHTML = `
-        <details class="panel">
-          <summary class="row spread" style="cursor:pointer;">
-            <div><strong>Old Imported Leads</strong><div class="subtle">Pulled from older CRM sheet tabs. Expand only when you need to search old records.</div></div>
-            <span class="pill">${oldLeads.length}</span>
-          </summary>
-          <div class="row" style="margin-top:12px;">
-            <button class="btn small ghost" id="exportOldImportedLeadsBtn">Export Old Leads Backup</button>
-            <button class="btn small danger" id="cleanupOldImportedLeadsBtn">Backup & Remove Old Imported Leads</button>
-          </div>
-          <div class="subtle" style="margin-top:8px;">Cleanup preserves monthly dashboard totals and keeps pinned active, enrolled, and student-linked records.</div>
-          <div class="list" style="margin-top:12px;">
-            ${oldLeads.slice(0, LEADS_PER_PAGE).map(lead => `
-              <div class="card lead-card ${escapeHtml(lead.urgency || "warm")}">
-                <div class="row spread"><strong>${escapeHtml(lead.childName || "Unnamed Child")}</strong><span class="pill">${escapeHtml(lead.status || "New Contact")}</span></div>
-                <div class="subtle">
-                  Parent: ${escapeHtml(lead.parentName || "")} | ${phoneHtml(lead.parentPhone)}<br>
-                  Subject: ${(lead.subjects || []).map(escapeHtml).join(", ") || "-"} | Source: ${escapeHtml(lead.source || "-")}<br>
-                  Created: ${escapeHtml(dateOnly(lead.createdAt) || "-")} | Follow-up: ${escapeHtml(lead.nextFollowUp || "-")}
-                </div>
-                <div class="row" style="margin-top:8px;">
-                  <button class="btn small mint" data-move-lead-active="${lead.id}">Move to Active</button>
-                  <button class="btn small ghost" data-edit-lead="${lead.id}">Edit</button>
-                </div>
-              </div>
-            `).join("") || `<div class="empty">No old imported leads match these filters.</div>`}
-          </div>
-          ${oldLeads.length > LEADS_PER_PAGE ? `<div class="subtle" style="margin-top:10px;">Showing first ${LEADS_PER_PAGE}. Use the filters/search above to narrow old imported leads.</div>` : ""}
-        </details>`;
+      return "";
     }
 
     function oldImportedLeadsForBackup() {
@@ -5276,6 +5360,61 @@
       if (synced) setStatus(`${candidates.length} old imported leads removed and synced. Monthly totals remain available.`);
     }
 
+    function crmSessionConfig(kind) {
+      return {
+        assessment: { teacher: "assessmentTeacherId", date: "assessmentDate", time: "assessmentTime", booking: "assessmentBookingId", type: "assessment", status: "Assessment" },
+        trial1: { teacher: "trialTeacherId", date: "trialDate", time: "trialTime", booking: "trialBookingId", type: "trial class", status: "Trial Class" },
+        trial2: { teacher: "trialTeacherId2", date: "trialDate2", time: "trialTime2", booking: "trialBookingId2", type: "trial class", status: "Trial Class" }
+      }[kind];
+    }
+
+    function crmLeadSubject(lead, teacher = null) {
+      return normalizeSubject((lead.subjects || [])[0] || (teacher?.subjects || [])[0] || "");
+    }
+
+    function crmEligibleTeachers(lead) {
+      const subject = crmLeadSubject(lead);
+      return [...activeTeachers()].filter(teacher => !subject || (teacher.subjects || []).map(normalizeSubject).includes(subject)).sort(byName);
+    }
+
+    function crmTeacherOptions(lead, selectedId = "") {
+      const teachers = crmEligibleTeachers(lead);
+      const selectedTeacher = selectedId ? teacherById(selectedId) : null;
+      if (selectedTeacher && !teachers.some(teacher => teacher.id === selectedId)) teachers.push(selectedTeacher);
+      return `<option value="">Choose teacher</option>${teachers.map(teacher => `<option value="${escapeHtml(teacher.id)}" ${teacher.id === selectedId ? "selected" : ""}>${escapeHtml(teacher.name)}</option>`).join("")}`;
+    }
+
+    function crmAvailableTimes(lead, kind, teacherId, date) {
+      if (!teacherId || !date) return [];
+      const config = crmSessionConfig(kind);
+      const currentBookingId = lead[config.booking] || "";
+      const times = new Set(collectSlotsForDate(parseISODate(date)).filter(slot => slot.teacherId === teacherId).map(slot => slot.time));
+      return [...times]
+        .filter(time => slotAvailabilityCheck(teacherId, date, time, { excludeBookingId: currentBookingId }).kind === "open")
+        .sort((a, b) => minutes(a) - minutes(b));
+    }
+
+    function crmTimeOptions(lead, kind, teacherId, date, selectedTime = "") {
+      const times = crmAvailableTimes(lead, kind, teacherId, date);
+      if (selectedTime && !times.includes(selectedTime)) times.push(selectedTime);
+      times.sort((a, b) => minutes(a) - minutes(b));
+      const label = !teacherId ? "Choose teacher first" : (!date ? "Choose date first" : (times.length ? "Choose available slot" : "No open slots"));
+      return `<option value="">${label}</option>${times.map(time => `<option value="${escapeHtml(time)}" ${time === selectedTime ? "selected" : ""}>${escapeHtml(timeLabel(time))}${time === selectedTime && !crmAvailableTimes(lead, kind, teacherId, date).includes(time) ? " (current)" : ""}</option>`).join("")}`;
+    }
+
+    function crmSessionEditorHtml(lead, kind, title) {
+      const config = crmSessionConfig(kind);
+      const teacherId = lead[config.teacher] || (kind === "trial2" ? lead.trialTeacherId || "" : "");
+      const date = lead[config.date] || "";
+      const time = lead[config.time] || "";
+      return `<div class="crm-session-editor">
+        <strong>${escapeHtml(title)}</strong>
+        <select data-crm-session="${escapeHtml(`${lead.id}|${kind}|teacher`)}">${crmTeacherOptions(lead, teacherId)}</select>
+        <input type="date" value="${escapeHtml(date)}" data-crm-session="${escapeHtml(`${lead.id}|${kind}|date`)}" ${teacherId ? "" : "disabled"}>
+        <select data-crm-session="${escapeHtml(`${lead.id}|${kind}|time`)}" ${teacherId && date ? "" : "disabled"}>${crmTimeOptions(lead, kind, teacherId, date, time)}</select>
+      </div>`;
+    }
+
     function renderLeadTable(leads) {
       const statusOptions = LEAD_STATUSES.map(status => `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`).join("");
       const urgencyOptions = URGENCIES.map(urgency => `<option value="${escapeHtml(urgency)}">${escapeHtml(urgency)}</option>`).join("");
@@ -5283,24 +5422,118 @@
         lead.id ||= stableLeadId(lead, index);
         return `
         <tr>
-          <td>${escapeHtml(dateOnly(lead.createdAt))}</td>
-          <td><strong>${escapeHtml(lead.childName || "Unnamed Child")}</strong><br><span class="subtle">${escapeHtml(lead.childAge || "")}</span></td>
-          <td>${escapeHtml(lead.parentName || "")}<br><span class="subtle">${phoneHtml(lead.parentPhone)}</span></td>
-          <td>${(lead.subjects || []).map(escapeHtml).join(", ") || "-"}</td>
-          <td>${escapeHtml(lead.source || "-")}</td>
-          <td>${escapeHtml(lead.salesperson || "-")}</td>
+          <td><input type="date" value="${escapeHtml(dateOnly(lead.createdAt))}" data-lead-quick="${lead.id}|createdAt"></td>
+          <td><input value="${escapeHtml(lead.childName || "")}" data-lead-quick="${lead.id}|childName" placeholder="Child name"><input value="${escapeHtml(lead.childAge || "")}" data-lead-quick="${lead.id}|childAge" placeholder="Age / year" style="margin-top:5px;"></td>
+          <td><input value="${escapeHtml(lead.parentName || "")}" data-lead-quick="${lead.id}|parentName" placeholder="Parent name"><input value="${escapeHtml(lead.parentPhone || "")}" data-lead-quick="${lead.id}|parentPhone" placeholder="Phone / WhatsApp" style="margin-top:5px;"></td>
+          <td><input value="${escapeHtml((lead.subjects || []).join(", "))}" data-lead-quick="${lead.id}|subjects" placeholder="BC, BM"></td>
+          <td><input value="${escapeHtml(lead.source || "")}" data-lead-quick="${lead.id}|source" placeholder="Source"></td>
+          <td><input value="${escapeHtml(lead.salesperson || "")}" data-lead-quick="${lead.id}|salesperson" placeholder="Salesperson"></td>
           <td><select data-lead-quick="${lead.id}|status">${statusOptions}</select></td>
           <td><select data-lead-quick="${lead.id}|urgency">${urgencyOptions}</select></td>
           <td><input type="date" value="${escapeHtml(lead.nextFollowUp || "")}" data-lead-quick="${lead.id}|nextFollowUp">${lead.followUpAuto ? `<span class="subtle">Auto-generated</span>` : ""}</td>
-          <td>${escapeHtml(lead.assessmentDate || "-")} ${escapeHtml(lead.assessmentTime || "")}</td>
-          <td>${escapeHtml(lead.trialDate || "-")} ${escapeHtml(lead.trialTime || "")}<br><span class="subtle">${escapeHtml(lead.trialDate2 || "-")} ${escapeHtml(lead.trialTime2 || "")}</span></td>
-          <td>${escapeHtml(lead.packageInterested || "-")}</td>
+          <td>${crmSessionEditorHtml(lead, "assessment", "Assessment")}</td>
+          <td>${crmSessionEditorHtml(lead, "trial1", "Trial 1")}${crmSessionEditorHtml(lead, "trial2", "Trial 2")}</td>
+          <td><input value="${escapeHtml(lead.packageInterested || "")}" data-lead-quick="${lead.id}|packageInterested" placeholder="Package"></td>
           <td>${escapeHtml(dateOnly(lead.updatedAt))}</td>
-          <td style="min-width:220px;">${escapeHtml(lead.notes || "")}</td>
-          <td><div class="row"><button class="btn small ghost" data-edit-lead="${lead.id}">Edit</button><button class="btn small ghost" data-archive-lead="${lead.id}">Archive</button></div></td>
+          <td style="min-width:220px;"><textarea data-lead-quick="${lead.id}|notes" placeholder="Notes">${escapeHtml(lead.notes || "")}</textarea></td>
+          <td><div class="row"><button class="btn small ghost" data-edit-lead="${lead.id}">Full Profile</button><button class="btn small ghost" data-archive-lead="${lead.id}">Archive</button></div></td>
         </tr>`;
       }).join("") || `<tr><td colspan="15">No matching leads.</td></tr>`;
-      return `<div class="table-wrap"><table class="lead-table"><thead><tr><th>Created</th><th>Child</th><th>Parent</th><th>Subjects</th><th>Source</th><th>Salesperson</th><th>Status</th><th>Urgency</th><th>Next Follow-up</th><th>Assessment</th><th>Trial 1 / 2</th><th>Package</th><th>Latest Update</th><th>Notes</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      return `<div class="table-wrap"><table class="lead-table"><thead><tr><th>Created</th><th>Child</th><th>Parent</th><th>Subjects</th><th>Source</th><th>Salesperson</th><th>Status</th><th>Urgency</th><th>Next Follow-up</th><th>Assessment Teacher / Slot</th><th>Trial 1 / Trial 2</th><th>Package</th><th>Latest Update</th><th>Notes</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+
+    function crmSessionSelection(lead, kind, changedField = "", changedValue = "") {
+      const config = crmSessionConfig(kind);
+      const selection = {
+        teacherId: lead[config.teacher] || (kind === "trial2" ? lead.trialTeacherId || "" : ""),
+        date: lead[config.date] || "",
+        time: lead[config.time] || ""
+      };
+      if (changedField === "teacher") selection.teacherId = changedValue;
+      if (changedField === "date") selection.date = changedValue;
+      if (changedField === "time") selection.time = changedValue;
+      return selection;
+    }
+
+    function saveCrmSessionBooking(lead, kind, selection) {
+      const config = crmSessionConfig(kind);
+      const teacher = teacherById(selection.teacherId);
+      if (!teacher) throw new Error("Choose a valid teacher first.");
+      if (!lead.childName?.trim()) throw new Error("Add the child's name before booking an assessment or trial class.");
+      const existing = lead[config.booking] ? state.bookings.find(booking => booking.id === lead[config.booking]) : null;
+      const availability = slotAvailabilityCheck(selection.teacherId, selection.date, selection.time, { excludeBookingId: existing?.id || "" });
+      if (availability.kind !== "open") throw new Error(availability.reason || "This teacher slot is not available.");
+      const now = new Date().toISOString();
+      const before = existing ? bookingLogSummary(existing) : "";
+      const booking = existing || { id: uid("booking"), createdAt: now };
+      Object.assign(booking, {
+        teacherId: teacher.id,
+        studentId: "",
+        studentName: cleanStudentName(lead.childName),
+        subject: crmLeadSubject(lead, teacher),
+        type: config.type,
+        date: selection.date,
+        day: dayFromISO(selection.date),
+        time: selection.time,
+        status: slotHasPassed(selection.date, selection.time) ? "completed" : "booked",
+        archived: slotHasPassed(selection.date, selection.time),
+        minutes: 25,
+        source: "crm-inline-booking",
+        crmLeadId: lead.id,
+        updatedAt: now
+      });
+      if (booking.status === "completed") booking.completedAt ||= slotDateTime(selection.date, selection.time).toISOString();
+      else delete booking.completedAt;
+      if (!existing) state.bookings.push(booking);
+      lead[config.booking] = booking.id;
+      const previousStatus = lead.status || "New Contact";
+      lead.status = config.status;
+      if (previousStatus !== config.status) lead.statusChangedAt = todayISO();
+      lead.updatedAt = now;
+      applyCrmAutomaticFollowUp(lead, true);
+      logAction(existing ? "CRM Session Rescheduled" : "CRM Session Booked", lead.childName || lead.parentPhone || lead.id, before, bookingLogSummary(booking), `${kind === "assessment" ? "Assessment" : kind === "trial1" ? "Trial 1" : "Trial 2"} booked from CRM table.`);
+      return booking;
+    }
+
+    function updateCrmSessionField(control) {
+      const [leadId, kind, field] = String(control.dataset.crmSession || "").split("|");
+      const lead = state.leads.find(item => String(item.id || "") === leadId);
+      const config = crmSessionConfig(kind);
+      if (!lead || !config || !["teacher", "date", "time"].includes(field)) return;
+      const value = String(control.value || "").trim();
+      const selection = crmSessionSelection(lead, kind, field, value);
+      const existingBooking = lead[config.booking] ? state.bookings.find(booking => booking.id === lead[config.booking]) : null;
+      if (existingBooking && !value) {
+        renderLeads();
+        alert("This session is already booked. Open Full Profile or reschedule it to another valid teacher, date and slot instead of clearing one field.");
+        return;
+      }
+      if (selection.teacherId && selection.date && selection.time) {
+        const availability = slotAvailabilityCheck(selection.teacherId, selection.date, selection.time, { excludeBookingId: existingBooking?.id || "" });
+        if (availability.kind !== "open") {
+          renderLeads();
+          alert(availability.reason || "This teacher slot is not available.");
+          return;
+        }
+      }
+      try {
+        if (selection.teacherId && selection.date && selection.time) saveCrmSessionBooking(lead, kind, selection);
+      } catch (error) {
+        renderLeads();
+        alert(error.message);
+        return;
+      }
+      lead[config.teacher] = selection.teacherId;
+      lead[config.date] = selection.date;
+      lead[config.time] = selection.time;
+      if (kind === "trial1" && !lead.trialTeacher2ManuallySet && !lead.trialBookingId2) lead.trialTeacherId2 = selection.teacherId;
+      if (kind === "trial2" && field === "teacher") lead.trialTeacher2ManuallySet = true;
+      lead.updatedAt = new Date().toISOString();
+      save(false);
+      autoPushCrmIfConfigured();
+      setStatus(selection.teacherId && selection.date && selection.time
+        ? `${kind === "assessment" ? "Assessment" : kind === "trial1" ? "Trial 1" : "Trial 2"} booked and CRM status updated.`
+        : "CRM booking selection saved. Complete teacher, date and slot to create the booking.");
     }
 
     function dateOnly(value) {
@@ -5321,7 +5554,6 @@
       $("leadTableViewBtn").classList.toggle("active", leadViewMode === "table");
       $("leadTableViewBtn").classList.toggle("ghost", leadViewMode !== "table");
       $("leadList").classList.toggle("list", leadViewMode === "cards");
-      renderOldImportedLeads();
       $("leadList").innerHTML = leadViewMode === "table" ? renderLeadTable(leads) : renderLeadCards(leads);
       $("leadPagination").innerHTML = `
         <div class="subtle">Showing ${shownStart}-${shownEnd} of ${allLeads.length} leads</div>
@@ -8183,13 +8415,14 @@
         const slot = studentRegularSlotsDraft.find(item => item.id === editStudentRegular.dataset.editStudentRegular);
         if (!slot) return;
         studentRegularSlotEditId = slot.id;
-        $("studentTeacher").value = slot.teacherId || "";
-        $("studentTime").value = slot.time || "";
         $("studentRegularSubject").value = slot.subject || selectedStudentSubjects()[0] || "CN";
-        updateStudentTeacherOptions(slot.teacherId);
         $("studentRegularStartDate").value = slot.startDate || todayISO();
         $("studentRegularEndDate").value = slot.endDate || "";
         setSelectedStudentRegularDays([slot.day].filter(Boolean));
+        $("studentTime").value = "";
+        updateStudentTeacherOptions(slot.teacherId);
+        $("studentTime").value = slot.time || "";
+        refreshStudentScheduleOptions(slot.teacherId);
         $("addStudentRegularSlotBtn").textContent = "Update Regular Slot";
         $("cancelStudentRegularEditBtn").classList.remove("hide");
       }
@@ -8451,21 +8684,40 @@
         if (student) $(prefix + "ChildName").value = cleanStudentName(student.name || "");
       }
 
+      const crmSession = e.target.closest("[data-crm-session]");
+      if (crmSession) {
+        updateCrmSessionField(crmSession);
+        return;
+      }
+
       const quick = e.target.closest("[data-lead-quick]");
       if (quick) {
         const [leadId, field] = quick.dataset.leadQuick.split("|");
         const lead = state.leads.find(item => String(item.id || "") === String(leadId || ""));
-        if (!lead || !["status", "urgency", "nextFollowUp"].includes(field)) return;
+        const editableFields = ["createdAt", "childName", "childAge", "parentName", "parentPhone", "subjects", "source", "salesperson", "status", "urgency", "nextFollowUp", "assessmentDate", "assessmentTime", "trialDate", "trialTime", "trialDate2", "trialTime2", "packageInterested", "notes"];
+        if (!lead || !editableFields.includes(field)) return;
         const before = leadLogSummary(lead);
         const previousStatus = lead.status || "";
-        lead[field] = quick.value;
+        const value = String(quick.value || "").trim();
+        if (field === "status" && ["Assessment", "Trial Class"].includes(value)) {
+          renderLeads();
+          alert(`Book the ${value === "Assessment" ? "assessment" : "trial class"} using the teacher, date and available-slot controls in this lead row. The status will update automatically after booking.`);
+          return;
+        }
+        if (field === "subjects") {
+          lead.subjects = [...new Set(value.split(",").map(item => item.trim()).filter(Boolean).map(item => LEAD_SUBJECTS.find(subject => subject.toLowerCase() === item.toLowerCase()) || item))];
+        } else if (field === "createdAt") {
+          if (value) lead.createdAt = `${value}T12:00:00.000Z`;
+        } else {
+          lead[field] = value;
+        }
         if (field === "nextFollowUp") lead.followUpAuto = false;
         if (field === "status" && lead.status !== previousStatus) lead.statusChangedAt = todayISO();
         lead.updatedAt = new Date().toISOString();
-        logAction("CRM Lead Quick Updated", lead.childName || lead.parentName, before, leadLogSummary(lead), `Changed ${field}.`);
+        logAction("CRM Lead Table Updated", lead.childName || lead.parentName || lead.parentPhone || "Lead", before, leadLogSummary(lead), `Changed ${field}.`);
         if (field === "status") handleLeadStatusChange(lead, previousStatus);
+        if (["assessmentDate", "trialDate", "trialDate2"].includes(field) && lead.followUpAuto !== false) applyCrmAutomaticFollowUp(lead, true);
         save(false);
-        renderLeads();
         autoPushCrmIfConfigured();
         return;
       }
@@ -8635,6 +8887,8 @@
         startDate: startDate || "",
         endDate: endDate || ""
       }));
+      const availabilityConflict = candidates.map(candidate => studentTeacherSlotReason(teacherById(candidate.teacherId), candidate.day, candidate.time, candidate.subject, candidate.startDate || todayISO(), candidate.endDate || "")).find(Boolean);
+      if (availabilityConflict) return alert(availabilityConflict);
       const conflict = candidates.map(candidate => studentRegularSlotConflict($("studentName").value, candidate, editing?.id || "")).find(Boolean);
       if (conflict) return alert(conflict);
       if (editing) {
@@ -8655,18 +8909,80 @@
       renderStudentRegularSlotDraft();
     };
     $("cancelStudentRegularEditBtn").onclick = resetStudentRegularSlotEditor;
-    $("studentRegularSubject").addEventListener("change", () => updateStudentTeacherOptions());
+    $("studentTeacher").addEventListener("change", () => {
+      const previous = $("studentTeacher").dataset.previous || "";
+      const reason = studentSelectionConflict($("studentTeacher").value, selectedStudentRegularDays(), $("studentTime").value, $("studentRegularSubject").value);
+      if (reason) {
+        $("studentTeacher").value = previous;
+        alert(reason);
+        return;
+      }
+      refreshStudentScheduleOptions($("studentTeacher").value);
+    });
+    $("studentTime").addEventListener("change", () => {
+      const previous = $("studentTime").dataset.previous || "";
+      const reason = studentSelectionConflict($("studentTeacher").value, selectedStudentRegularDays(), $("studentTime").value, $("studentRegularSubject").value);
+      if (reason) {
+        $("studentTime").value = previous;
+        alert(reason);
+        return;
+      }
+      refreshStudentScheduleOptions($("studentTeacher").value);
+    });
+    $("studentDayChecks").addEventListener("change", event => {
+      if (!event.target.matches("input[type=checkbox]")) return;
+      const reason = studentSelectionConflict($("studentTeacher").value, selectedStudentRegularDays(), $("studentTime").value, $("studentRegularSubject").value);
+      if (reason) {
+        event.target.checked = !event.target.checked;
+        alert(reason);
+        return;
+      }
+      refreshStudentScheduleOptions($("studentTeacher").value);
+    });
+    ["studentRegularStartDate", "studentRegularEndDate"].forEach(id => $(id).addEventListener("change", () => {
+      const previous = $(id).dataset.previous || "";
+      const startDate = dateOnly($("studentRegularStartDate").value || todayISO());
+      const endDate = dateOnly($("studentRegularEndDate").value || "");
+      if (endDate && endDate < startDate) {
+        $(id).value = previous;
+        alert("Effective end date cannot be before the start date.");
+        return;
+      }
+      const reason = studentSelectionConflict($("studentTeacher").value, selectedStudentRegularDays(), $("studentTime").value, $("studentRegularSubject").value);
+      if (reason) {
+        $(id).value = previous;
+        alert(reason);
+        return;
+      }
+      refreshStudentScheduleOptions($("studentTeacher").value);
+    }));
+    $("studentRegularSubject").addEventListener("change", () => {
+      const previous = $("studentRegularSubject").dataset.previous || "";
+      const reason = studentSelectionConflict($("studentTeacher").value, selectedStudentRegularDays(), $("studentTime").value, $("studentRegularSubject").value);
+      if (reason) {
+        $("studentRegularSubject").value = previous;
+        alert(reason);
+        return;
+      }
+      refreshStudentScheduleOptions($("studentTeacher").value);
+    });
     $("studentSubjectChecks").addEventListener("change", () => {
       const subjects = selectedStudentSubjects();
-      if (subjects.length && !subjects.includes($("studentRegularSubject").value)) $("studentRegularSubject").value = subjects[0];
-      updateStudentTeacherOptions();
+      const currentSubject = $("studentRegularSubject").value;
+      if (subjects.length && !subjects.includes(currentSubject)) {
+        const candidateSubject = subjects[0];
+        const reason = studentSelectionConflict($("studentTeacher").value, selectedStudentRegularDays(), $("studentTime").value, candidateSubject);
+        if (reason) return alert(reason);
+        $("studentRegularSubject").value = candidateSubject;
+      }
+      refreshStudentScheduleOptions($("studentTeacher").value);
     });
     ["leadStatus", "leadAssessmentDate", "leadTrialDate", "leadTrialDate2"].forEach(id => $(id).addEventListener("change", refreshLeadFormAutomaticFollowUp));
     $("saveLeadBtn").onclick = () => {
       const parentName = $("leadParentName").value.trim();
       const parentPhone = $("leadParentPhone").value.trim();
       const childName = $("leadChildName").value.trim();
-      if (!parentPhone || !childName) return alert("Parent phone and child name are required.");
+      if (!parentPhone) return alert("Parent phone is required.");
       const now = new Date().toISOString();
       const id = $("leadId").value || uid("lead");
       const existing = state.leads.find(lead => lead.id === id) || { id, createdAt: now };
@@ -8703,7 +9019,7 @@
       });
       if (followUpWasEdited) existing.followUpAuto = false;
       if (!state.leads.some(lead => lead.id === id)) state.leads.push(existing);
-      logAction(before ? "CRM Lead Updated" : "CRM Lead Added", existing.childName, before, leadLogSummary(existing), existing.parentPhone || "");
+      logAction(before ? "CRM Lead Updated" : "CRM Lead Added", existing.childName || existing.parentName || existing.parentPhone, before, leadLogSummary(existing), existing.parentPhone || "");
       handleLeadStatusChange(existing, previousStatus);
       const bookingDatesChanged = previousAssessmentDate !== existing.assessmentDate || previousTrialDate !== existing.trialDate || previousTrialDate2 !== existing.trialDate2;
       if (existing.status === previousStatus && bookingDatesChanged && existing.followUpAuto !== false) applyCrmAutomaticFollowUp(existing, true);
