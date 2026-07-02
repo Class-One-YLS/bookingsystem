@@ -145,6 +145,7 @@
     .teacher-cell-open { background: #fff; color: var(--ink); }
     .teacher-cell-open:hover { background: #f4fbf7; box-shadow: inset 0 0 0 2px var(--mint); }
     .teacher-cell-booked { background: #fff; color: #111; font-weight: 700; }
+    .teacher-cell-booked.upcoming { background: #fff8cf; box-shadow: inset 0 0 0 2px #eab308; }
     .teacher-cell-booked.type-assessment, .teacher-cell-booked.type-exam, .teacher-cell-booked.type-trial-class { background: #fff2a8; }
     .teacher-cell-booked.type-new, .teacher-cell-booked.type-new-students { background: #fff8cf; }
     .teacher-cell-booked.type-replacement-class { background: #dceafe; }
@@ -1302,7 +1303,7 @@
       <input id="cancelFixedRegularData" type="hidden">
       <div class="card" style="margin-top:14px;">
         <div id="cancelFixedRegularInfo"></div>
-        <div class="subtle" style="margin-top:8px;">This ends the student's recurring assignment from today. Previous class history remains unchanged, and this weekly slot becomes open.</div>
+        <div class="subtle" id="cancelFixedRegularHelp" style="margin-top:8px;">This ends the student's recurring assignment from today. Previous class history remains unchanged, and this weekly slot becomes open.</div>
       </div>
       <div class="row" style="margin-top:14px;">
         <button class="btn danger" id="confirmCancelFixedRegularBtn">Confirm Cancellation</button>
@@ -2157,7 +2158,7 @@
         const slots = [...getStudentRegularSlots(existing), ...getStudentRegularSlots(student)];
         const seenSlots = new Set();
         existing.regularSlots = slots.filter(slot => {
-          const slotKey = [slot.teacherId, slot.day, slot.time, slot.subject].join("|");
+          const slotKey = [slot.teacherId, slot.day, slot.time, slot.subject, slot.startDate || "", slot.endDate || ""].join("|");
           if (seenSlots.has(slotKey)) return false;
           seenSlots.add(slotKey);
           return true;
@@ -2922,6 +2923,15 @@
       return matches.find(slot => slot.locked) || matches[0] || null;
     }
 
+    function teacherOverviewDisplaySlot(teacher, day, time, date = todayISO()) {
+      const active = teacherOverviewActiveSlot(teacher, day, time, date);
+      if (active?.locked) return { slot: active, upcoming: false };
+      const upcoming = (teacher?.regularSlots || [])
+        .filter(slot => slot.locked && slot.day === day && slot.time === time && slot.startDate && slot.startDate > date)
+        .sort((a, b) => String(a.startDate).localeCompare(String(b.startDate)))[0];
+      return upcoming ? { slot: upcoming, upcoming: true } : { slot: active, upcoming: false };
+    }
+
     function openSlotEndBeforeNextRule(teacher, day, time, startDate = todayISO()) {
       const nextStart = (teacher?.regularSlots || [])
         .filter(slot => slot.day === day && slot.time === time && slot.startDate && slot.startDate > startDate)
@@ -3212,10 +3222,12 @@
     function teacherOverviewCellHtml(teacher, date, time) {
       const dateStr = localISO(date);
       const day = DAYS[(date.getDay() + 6) % 7];
-      const slot = teacherOverviewActiveSlot(teacher, day, time);
+      const display = teacherOverviewDisplaySlot(teacher, day, time);
+      const slot = display.slot;
       if (slot?.locked) {
-        const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentName: slot.studentName || "Fixed regular class", slotId: slot.id, interactionSource: "teacher_overview" }));
-        return `<td class="teacher-cell-booked"><button class="teacher-cell-button" data-fixed-slot="${fixedData}">${escapeHtml(slot.studentName || "Fixed regular class")} ${slot.subject ? `(${escapeHtml(slot.subject)})` : ""}</button></td>`;
+        const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentName: slot.studentName || "Fixed regular class", slotId: slot.id, interactionSource: "teacher_overview", upcomingStart: display.upcoming ? slot.startDate : "" }));
+        const title = display.upcoming ? `Upcoming regular class from ${formatDateFromAny(slot.startDate)}` : "Booked regular class";
+        return `<td class="teacher-cell-booked${display.upcoming ? " upcoming" : ""}"><button class="teacher-cell-button" data-fixed-slot="${fixedData}" title="${escapeHtml(title)}">${escapeHtml(slot.studentName || "Fixed regular class")} ${slot.subject ? `(${escapeHtml(slot.subject)})` : ""}</button></td>`;
       }
       if (slot && !slot.unavailable) {
         const data = escapeHtml(JSON.stringify({ teacherId: teacher.id, day, time: slot.time, subject: slot.subject || (teacher.subjects || [])[0] || "", slotId: slot.id || "", source: slot.source || "", interactionSource: "teacher_overview" }));
@@ -3439,6 +3451,9 @@
       $("cancelFixedRegularData").value = JSON.stringify(data);
       $("cancelFixedRegularTitle").textContent = `Cancel Regular Slot for ${studentName}?`;
       $("cancelFixedRegularInfo").innerHTML = `<strong>${escapeHtml(studentName)}</strong><div class="subtle">${escapeHtml(teacher.name)} | ${escapeHtml(recurringSlot.day)} ${timeLabel(recurringSlot.time)}${recurringSlot.subject ? ` | ${escapeHtml(recurringSlot.subject)}` : ""}</div>`;
+      $("cancelFixedRegularHelp").textContent = data.upcomingStart
+        ? `This cancels the upcoming recurring assignment scheduled from ${formatDateFromAny(data.upcomingStart)}. The weekly slot remains open until then.`
+        : "This ends the student's recurring assignment from today. Previous class history remains unchanged, and this weekly slot becomes open.";
       $("cancelFixedRegularModal").classList.remove("hide");
     }
 
@@ -4244,6 +4259,19 @@
             teacherSlot.updatedAt = new Date().toISOString();
             repaired += 1;
           }
+        });
+      });
+      (state.teachers || []).forEach(teacher => {
+        const seenStudentRanges = new Set();
+        teacher.regularSlots = (teacher.regularSlots || []).filter(slot => {
+          if (!slot.locked || !slot.studentSlotId) return true;
+          const key = [slot.studentSlotId, slot.day, slot.time, slot.startDate || "", slot.endDate || ""].join("|");
+          if (seenStudentRanges.has(key)) {
+            repaired += 1;
+            return false;
+          }
+          seenStudentRanges.add(key);
+          return true;
         });
       });
       return repaired;
