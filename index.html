@@ -324,9 +324,11 @@
             <button class="btn ghost" id="exitTeacherSlotEditBtn">Exit Slot Editing</button>
           </div>
           <div style="margin-top:14px;"><label>Weekdays</label><div class="row" id="teacherSlotEditDays"></div></div>
+          <div style="margin-top:14px;">
+            <div class="row spread"><label>Time Periods</label><button type="button" class="btn ghost small" id="addTeacherSlotPeriodBtn">Add Time Period</button></div>
+            <div id="teacherSlotEditPeriods" class="list" style="margin-top:8px;"></div>
+          </div>
           <div class="toolbar" style="margin-top:14px;">
-            <div><label>From Time</label><select id="teacherSlotEditFrom"></select></div>
-            <div><label>To Time</label><select id="teacherSlotEditTo"></select></div>
             <div>
               <label>Action</label>
               <div class="row view-toggle">
@@ -338,7 +340,7 @@
             <div><label>&nbsp;</label><button class="btn mint" id="applyTeacherSlotEditBtn">Apply Slot Changes</button></div>
           </div>
           <div class="subtle" id="teacherSlotEditPreview" style="margin-top:10px;"></div>
-          <div class="subtle" style="margin-top:6px;">The ending time is included. Booked regular classes are protected and will be skipped.</div>
+          <div class="subtle" style="margin-top:6px;">Each ending time is included. Overlapping periods are merged. Booked regular classes are protected and will be skipped.</div>
         </div>
         <div class="panel hide" id="overviewTeacherLinkPanel">
           <div class="row spread">
@@ -517,7 +519,7 @@
               <div class="flow-steps">
                 <div><span>&gt;</span><p>Use this tab when parents request a specific teacher.</p></div>
                 <div><span>&gt;</span><p>Click an open slot to book a regular class. Click a booked slot to cancel or change that student's regular time.</p></div>
-                <div><span>&gt;</span><p>OFF slots are protected. Admin must click Edit Slots before opening individual slots or applying a bulk weekday/time range.</p></div>
+                <div><span>&gt;</span><p>OFF slots are protected. Admin must click Edit Slots before opening individual slots or applying bulk weekday/time periods.</p></div>
                 <div><span>&gt;</span><p>Bulk slot changes skip booked regular classes automatically.</p></div>
               </div>
             </div>
@@ -1554,6 +1556,7 @@
     let currentDragPayloadKind = "";
     let teacherSlotEditMode = false;
     let teacherSlotEditTeacherId = "";
+    let teacherSlotEditPeriods = [];
     const $ = (id) => document.getElementById(id);
     const uid = (prefix) => prefix + "_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
     const localISO = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -2930,15 +2933,47 @@
 
     function teacherSlotEditSelection() {
       const days = [...document.querySelectorAll("#teacherSlotEditDays input:checked")].map(input => input.value);
-      const from = $("teacherSlotEditFrom").value;
-      const to = $("teacherSlotEditTo").value;
-      const times = [];
-      if (from && to && minutes(to) >= minutes(from)) {
-        for (let value = minutes(from); value <= minutes(to); value += 30) {
-          times.push(`${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`);
+      const times = new Set();
+      let invalidPeriods = 0;
+      teacherSlotEditPeriods.forEach(period => {
+        if (!period.from || !period.to || minutes(period.to) < minutes(period.from)) {
+          invalidPeriods += 1;
+          return;
         }
-      }
-      return { days, from, to, times };
+        for (let value = minutes(period.from); value <= minutes(period.to); value += 30) {
+          times.add(`${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`);
+        }
+      });
+      return { days, periods: teacherSlotEditPeriods.map(period => ({ ...period })), times: [...times].sort((a, b) => minutes(a) - minutes(b)), invalidPeriods };
+    }
+
+    function teacherSlotPeriodOptions(selected) {
+      return halfHourOptions(8 * 60, 21 * 60 + 30)
+        .filter(option => option.value !== "all")
+        .map(option => `<option value="${escapeHtml(option.value)}" ${option.value === selected ? "selected" : ""}>${escapeHtml(option.label)}</option>`)
+        .join("");
+    }
+
+    function renderTeacherSlotEditPeriods() {
+      $("teacherSlotEditPeriods").innerHTML = teacherSlotEditPeriods.map((period, index) => `
+        <div class="row" data-teacher-slot-period-row="${index}" style="padding:10px;border:1px solid var(--line);border-radius:8px;background:#fbfdfc;">
+          <div style="flex:1;min-width:150px;"><label>From Time</label><select data-teacher-slot-period="${index}|from">${teacherSlotPeriodOptions(period.from)}</select></div>
+          <div style="flex:1;min-width:150px;"><label>To Time</label><select data-teacher-slot-period="${index}|to">${teacherSlotPeriodOptions(period.to)}</select></div>
+          <button type="button" class="btn ghost small" data-remove-teacher-slot-period="${index}" title="Remove time period" aria-label="Remove time period" ${teacherSlotEditPeriods.length === 1 ? "disabled" : ""}>&times;</button>
+        </div>
+      `).join("");
+      updateTeacherSlotEditPreview();
+    }
+
+    function addTeacherSlotEditPeriod() {
+      const previous = teacherSlotEditPeriods[teacherSlotEditPeriods.length - 1];
+      const fromMinutes = previous ? Math.min(minutes(previous.to) + 30, 21 * 60 + 30) : 18 * 60;
+      const toMinutes = Math.min(fromMinutes + 60, 21 * 60 + 30);
+      teacherSlotEditPeriods.push({
+        from: `${String(Math.floor(fromMinutes / 60)).padStart(2, "0")}:${String(fromMinutes % 60).padStart(2, "0")}`,
+        to: `${String(Math.floor(toMinutes / 60)).padStart(2, "0")}:${String(toMinutes % 60).padStart(2, "0")}`
+      });
+      renderTeacherSlotEditPeriods();
     }
 
     function setTeacherSlotEditAction(action) {
@@ -2954,31 +2989,27 @@
     function updateTeacherSlotEditPreview() {
       if (!teacherSlotEditMode) return;
       const teacher = teacherById($("overviewTeacherFilter").value);
-      const { days, times, from, to } = teacherSlotEditSelection();
+      const { days, periods, times, invalidPeriods } = teacherSlotEditSelection();
       if (!teacher) return;
       if (!days.length) {
         $("teacherSlotEditPreview").textContent = "Choose at least one weekday.";
         return;
       }
-      if (!from || !to || minutes(to) < minutes(from)) {
-        $("teacherSlotEditPreview").textContent = "Choose a valid time range.";
+      if (!periods.length || invalidPeriods) {
+        $("teacherSlotEditPreview").textContent = "Choose a valid From and To time for every period.";
         return;
       }
       const selected = days.length * times.length;
       const booked = days.reduce((count, day) => count + times.filter(time => teacherOverviewActiveSlot(teacher, day, time)?.locked).length, 0);
       const action = $("teacherSlotEditAction").value === "off" ? "set to OFF" : "open";
-      $("teacherSlotEditPreview").textContent = `${selected} slot${selected === 1 ? "" : "s"} selected to ${action}. ${booked ? `${booked} booked slot${booked === 1 ? "" : "s"} will be skipped.` : "No booked conflicts."}`;
+      $("teacherSlotEditPreview").textContent = `${periods.length} time period${periods.length === 1 ? "" : "s"}, ${selected} unique slot${selected === 1 ? "" : "s"} selected to ${action}. ${booked ? `${booked} booked slot${booked === 1 ? "" : "s"} will be skipped.` : "No booked conflicts."}`;
     }
 
     function configureTeacherSlotEditPanel(teacher) {
       $("teacherSlotEditTeacherLabel").textContent = `${teacher.name} | fixed weekly availability`;
       $("teacherSlotEditDays").innerHTML = DAYS.map(day => `<label class="pill"><input type="checkbox" value="${escapeHtml(day)}" style="width:auto;min-height:0;margin-right:6px;" ${!["Saturday", "Sunday"].includes(day) ? "checked" : ""}> ${escapeHtml(day.slice(0, 3))}</label>`).join("");
-      const options = halfHourOptions(8 * 60, 21 * 60 + 30).filter(option => option.value !== "all");
-      const html = options.map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("");
-      $("teacherSlotEditFrom").innerHTML = html;
-      $("teacherSlotEditTo").innerHTML = html;
-      $("teacherSlotEditFrom").value = "18:00";
-      $("teacherSlotEditTo").value = "21:00";
+      teacherSlotEditPeriods = [{ from: "18:00", to: "21:00" }];
+      renderTeacherSlotEditPeriods();
       setTeacherSlotEditAction("open");
     }
 
@@ -3001,9 +3032,9 @@
     function applyTeacherSlotEdits() {
       const teacher = teacherById($("overviewTeacherFilter").value);
       if (!teacherSlotEditMode || !teacher || teacher.id !== teacherSlotEditTeacherId) return alert("Open Edit Slots for the selected teacher first.");
-      const { days, times, from, to } = teacherSlotEditSelection();
+      const { days, periods, times, invalidPeriods } = teacherSlotEditSelection();
       if (!days.length) return alert("Choose at least one weekday.");
-      if (!from || !to || minutes(to) < minutes(from)) return alert("Choose a valid From and To time.");
+      if (!periods.length || invalidPeriods) return alert("Choose a valid From and To time for every period.");
       const action = $("teacherSlotEditAction").value;
       const total = days.length * times.length;
       const actionLabel = action === "off" ? "set to OFF" : "open";
@@ -3038,7 +3069,8 @@
         changed += 1;
       }));
       teacher.updatedAt = new Date().toISOString();
-      logAction("Teacher Slots Bulk Edited", teacher.name, `${days.join(", ")} | ${timeLabel(from)} to ${timeLabel(to)}`, `${changed} ${actionLabel}; ${skipped} booked skipped; ${unchanged} unchanged`, "Updated from Teacher Overview Edit Slots.");
+      const periodLabel = periods.map(period => `${timeLabel(period.from)}-${timeLabel(period.to)}`).join(", ");
+      logAction("Teacher Slots Bulk Edited", teacher.name, `${days.join(", ")} | ${periodLabel}`, `${changed} ${actionLabel}; ${skipped} booked skipped; ${unchanged} unchanged`, "Updated from Teacher Overview Edit Slots.");
       save(false);
       setTeacherSlotEditMode(false);
       setStatus(`${teacher.name}: ${changed} slot${changed === 1 ? "" : "s"} updated, ${skipped} booked skipped, ${unchanged} unchanged.`);
@@ -7711,6 +7743,12 @@
       }
       const teacherSlotEditAction = e.target.closest("[data-teacher-slot-edit-action]");
       if (teacherSlotEditAction) setTeacherSlotEditAction(teacherSlotEditAction.dataset.teacherSlotEditAction);
+      const removeTeacherSlotPeriod = e.target.closest("[data-remove-teacher-slot-period]");
+      if (removeTeacherSlotPeriod) {
+        if (teacherSlotEditPeriods.length <= 1) return alert("Keep at least one time period.");
+        teacherSlotEditPeriods.splice(Number(removeTeacherSlotPeriod.dataset.removeTeacherSlotPeriod), 1);
+        renderTeacherSlotEditPeriods();
+      }
       const fixedRegularMode = e.target.closest("[data-fixed-regular-mode]");
       if (fixedRegularMode) {
         setFixedRegularMode(fixedRegularMode.dataset.fixedRegularMode);
@@ -8141,6 +8179,16 @@
     });
 
     document.addEventListener("change", (e) => {
+      const teacherSlotPeriod = e.target.closest("[data-teacher-slot-period]");
+      if (teacherSlotPeriod) {
+        const [indexValue, field] = teacherSlotPeriod.dataset.teacherSlotPeriod.split("|");
+        const period = teacherSlotEditPeriods[Number(indexValue)];
+        if (period && ["from", "to"].includes(field)) {
+          period[field] = teacherSlotPeriod.value;
+          updateTeacherSlotEditPreview();
+        }
+        return;
+      }
       const teacherStudentRecord = e.target.closest("[data-teacher-student-record]");
       if (teacherStudentRecord) {
         const field = teacherStudentRecord.dataset.teacherStudentRecord;
@@ -8698,8 +8746,8 @@
     ["monthSelect", "yearInput"].forEach(id => $(id).addEventListener("change", () => { refreshWeeks(); renderSchedule(); }));
     ["weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "typeFilter"].forEach(id => $(id).addEventListener("change", renderSchedule));
     ["weekSelect", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear"].forEach(id => $(id).addEventListener("change", renderTeacherOverview));
-    ["teacherSlotEditFrom", "teacherSlotEditTo"].forEach(id => $(id).addEventListener("change", updateTeacherSlotEditPreview));
     $("teacherSlotEditDays").addEventListener("change", updateTeacherSlotEditPreview);
+    $("addTeacherSlotPeriodBtn").onclick = addTeacherSlotEditPeriod;
     $("toggleTeacherSlotEditBtn").onclick = () => setTeacherSlotEditMode(!teacherSlotEditMode);
     $("exitTeacherSlotEditBtn").onclick = () => setTeacherSlotEditMode(false);
     $("applyTeacherSlotEditBtn").onclick = applyTeacherSlotEdits;
