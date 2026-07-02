@@ -412,6 +412,19 @@
             </div>
             <div class="filter-panel">
               <div class="row spread">
+                <div>
+                  <strong>Export CRM Lead List</strong>
+                  <div class="subtle">Choose when the leads were added. Current CRM filters are also applied.</div>
+                </div>
+                <button class="btn ghost" id="exportLeadListPdfBtn">Export PDF</button>
+              </div>
+              <div class="grid two" style="margin-top:12px; max-width:760px;">
+                <div><label>Leads Added From</label><input id="leadExportFromDate" type="date"></div>
+                <div><label>Leads Added To</label><input id="leadExportToDate" type="date"></div>
+              </div>
+            </div>
+            <div class="filter-panel">
+              <div class="row spread">
                 <strong>Table Filters</strong>
                 <button class="btn small ghost" id="clearLeadColumnFiltersBtn">Clear Table Filters</button>
               </div>
@@ -6908,6 +6921,30 @@
       });
     }
 
+    function crmLeadListExportRows() {
+      const from = $("leadExportFromDate").value;
+      const to = $("leadExportToDate").value;
+      if (from && to && to < from) throw new Error("The leads added end date cannot be before the start date.");
+      return filteredLeads()
+        .filter(lead => !from || dateOnly(lead.createdAt) >= from)
+        .filter(lead => !to || dateOnly(lead.createdAt) <= to)
+        .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")))
+        .map(lead => [
+          dateOnly(lead.createdAt) || "-",
+          lead.childName || "",
+          [lead.parentName, lead.parentPhone].filter(Boolean).join(" | "),
+          (lead.subjects || []).join(", "),
+          lead.source || "",
+          lead.salesperson || "",
+          lead.status || "New Contact",
+          lead.urgency || "",
+          lead.nextFollowUp || "",
+          lead.assessmentDate || "",
+          [lead.trialDate, lead.trialDate2].filter(Boolean).join(" / "),
+          lead.notes || ""
+        ]);
+    }
+
     function tableHtml(headers, rows) {
       return `<table><thead><tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("") || `<tr><td colspan="${headers.length}">No data</td></tr>`}</tbody></table>`;
     }
@@ -6928,9 +6965,9 @@
       return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
     }
 
-    function openPrintReport(title, headers, rows) {
+    function openPrintReport(title, headers, rows, landscape = false) {
       const win = window.open("", "_blank");
-      const html = `<!DOCTYPE html><html><head><title>${escapeHtml(title)}</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#17212b}h1{font-size:22px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #dbe5df;padding:8px;text-align:left;font-size:12px}th{background:#f4fbf7}@media print{button{display:none}}</style></head><body><button onclick="window.print()">Save as PDF / Print</button><h1>${escapeHtml(title)}</h1>${tableHtml(headers, rows)}</body></html>`;
+      const html = `<!DOCTYPE html><html><head><title>${escapeHtml(title)}</title><style>${landscape ? "@page{size:landscape;margin:10mm}" : ""}body{font-family:Arial,sans-serif;padding:24px;color:#17212b}h1{font-size:22px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #dbe5df;padding:8px;text-align:left;font-size:${landscape ? "9px" : "12px"};vertical-align:top;overflow-wrap:anywhere}th{background:#f4fbf7}@media print{button{display:none}body{padding:0}}</style></head><body><button onclick="window.print()">Save as PDF / Print</button><h1>${escapeHtml(title)}</h1>${tableHtml(headers, rows)}</body></html>`;
       win.document.write(html);
       win.document.close();
       setStatus(`${title} opened for PDF/print.`);
@@ -9641,6 +9678,18 @@
     $("exportTeachersPdfBtn").onclick = () => openPrintReport("Class One Teachers", ["No.", "Name", "Subjects", "Category", "Tier", "Rate", "Profit Share", "Regular Slots", "Date Slots", "Feedback Count", "Latest Feedback"], numbered(teacherExportRows()));
     $("exportTeacherDirectoryCsvBtn").onclick = () => downloadCsv("class-one-teacher-directory.csv", ["No.", "Teacher Name", "Subjects Covered", "Internal Remark", "Email", "Contact Number", "Zoom ID", "Zoom Link"], numbered(teacherDirectoryExportRows()));
     $("exportTeacherDirectoryPdfBtn").onclick = () => openPrintReport("Class One Teacher Directory", ["No.", "Teacher Name", "Subjects Covered", "Internal Remark", "Email", "Contact Number", "Zoom ID", "Zoom Link"], numbered(teacherDirectoryExportRows()));
+    $("exportLeadListPdfBtn").onclick = () => {
+      try {
+        const rows = crmLeadListExportRows();
+        const from = $("leadExportFromDate").value;
+        const to = $("leadExportToDate").value;
+        const period = from || to ? `${from ? formatDateFromAny(from) : "Beginning"} to ${to ? formatDateFromAny(to) : "Today"}` : "All Added Dates";
+        openPrintReport(`CRM Lead List | ${period} | ${rows.length} lead${rows.length === 1 ? "" : "s"}`, ["No.", "Added", "Child", "Parent / Phone", "Subjects", "Source", "Salesperson", "Status", "Urgency", "Next Follow-up", "Assessment", "Trial 1 / 2", "Notes"], numbered(rows), true);
+      } catch (error) {
+        setStatus(`CRM lead PDF export failed: ${error.message}`, "error");
+        alert(error.message);
+      }
+    };
     $("exportCrmCsvBtn").onclick = () => downloadCsv("class-one-crm-monthly-dashboard.csv", ["No.", ...crmDashboardExportHeaders()], numbered(crmDashboardExportRows()));
     $("exportCrmPdfBtn").onclick = () => openPrintReport("CRM Leads Monthly Dashboard", ["No.", ...crmDashboardExportHeaders()], numbered(crmDashboardExportRows()));
     $("exportAllTeacherPayoutCsvBtn").onclick = () => downloadCsv("class-one-all-teacher-payout.csv", ["No.", "Teacher", "Category", "Tier", "Rate", "Share", "Completed", "Not Show", "Cancelled", "Lesson Pay", "Not Show Pay", "Total Pay"], numbered(teacherMonthlyPayoutRows()));
