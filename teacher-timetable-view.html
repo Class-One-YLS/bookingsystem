@@ -240,6 +240,7 @@
     .type-new, .type-new-students { background: var(--new-yellow); }
     .type-replacement-class { background: var(--blue); }
     .type-extra-class { background: var(--purple); }
+    .type-reserve { background: var(--blue); }
     .status-completed { background: #dcf8ea; color: #111; }
     .status-student-not-show { background: var(--danger); color: #fff; }
     .status-cancelled, .status-public-holiday, .status-teacher-leave { background: var(--grey); color: #111; }
@@ -521,7 +522,8 @@
       student_not_show: "Student Not Show",
       cancelled: "Cancelled",
       public_holiday: "Public Holiday",
-      teacher_leave: "Teacher Leave"
+      teacher_leave: "Teacher Leave",
+      reserved: "Reserved"
     };
     const CANCELLED = ["cancelled", "public_holiday", "teacher_leave"];
     const $ = id => document.getElementById(id);
@@ -974,7 +976,7 @@
     }
 
     function classEntries(fromISO, toISO) {
-      const cells = scheduleCells().filter(cell => cell.date >= fromISO && cell.date <= toISO && cell.kind !== "open");
+      const cells = scheduleCells().filter(cell => cell.date >= fromISO && cell.date <= toISO && !["open", "reserved"].includes(cell.kind));
       if (cells.length) {
         return cells.map(cell => ({ kind: "cell", date: cell.date, time: cell.time, cell }))
           .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
@@ -990,7 +992,7 @@
           entries.push({ kind: "booking", date: dateISO, time: booking.time, booking });
         });
         slots
-          .filter(slot => slot.locked)
+          .filter(slot => slot.locked && !slot.reserved)
           .filter(slot => !occupiedTimes.has(slot.time))
           .forEach(slot => entries.push({ kind: "fixed", date: dateISO, time: slot.time, slot }));
       }
