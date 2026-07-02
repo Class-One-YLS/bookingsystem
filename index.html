@@ -721,6 +721,10 @@
                 <button class="btn ghost small" id="exportTeachersPdfBtn">Export PDF</button>
               </div>
             </div>
+            <div style="max-width:520px; margin:14px 0;">
+              <label>Search Teachers</label>
+              <input id="teacherCardSearch" type="search" placeholder="Search teacher name or subject">
+            </div>
             <div id="teacherList" class="list"></div>
           </div>
           <div class="panel">
@@ -4437,7 +4441,13 @@
     }
 
     function renderTeachers() {
-      $("teacherList").innerHTML = [...activeTeachers()].sort(byName).map(t => {
+      const search = ($("teacherCardSearch")?.value || "").trim().toLowerCase();
+      const teachers = [...activeTeachers()].sort(byName).filter(teacher => !search || [
+        teacher.name,
+        (teacher.subjects || []).join(" "),
+        teacher.category === "micro_franchisee" ? "micro franchisee" : "freelance tutor"
+      ].some(value => String(value || "").toLowerCase().includes(search)));
+      $("teacherList").innerHTML = teachers.map(t => {
         const linkSyncing = teacherLinkSyncing.has(t.id);
         const linkFailed = teacherLinkFailed.has(t.id);
         return `
@@ -4459,7 +4469,7 @@
             <div class="row" style="margin-top:8px;"><button class="btn small ghost" data-edit-teacher="${t.id}">Edit</button><button class="btn small ghost" data-add-teacher-feedback="${t.id}">Add Feedback</button><button class="btn small ghost" data-view-teacher-feedback="${t.id}">View Feedback</button><button class="btn small ghost" data-archive-teacher="${t.id}">Archive</button><button class="btn small danger" data-delete-teacher="${t.id}">Delete</button></div>
           </div>
         </div>`;
-      }).join("") || `<div class="empty">Add your first tutor profile.</div>`;
+      }).join("") || `<div class="empty">${search ? "No teachers match this search." : "Add your first tutor profile."}</div>`;
       renderTeacherDirectory();
       renderSlotList();
     }
@@ -9467,6 +9477,7 @@
       setStatus(`${revenueMonthLabel(month, year)} revenue saved: ${money(amount)}.`);
     };
     $("studentSearch").addEventListener("input", renderStudents);
+    $("teacherCardSearch").addEventListener("input", renderTeachers);
     $("teacherDirectorySearch").addEventListener("input", () => { teacherDirectoryPage = 1; renderTeacherDirectory(); });
     $("teacherDirectorySubject").addEventListener("change", () => { teacherDirectoryPage = 1; renderTeacherDirectory(); });
     $("registeredStudentFilter").addEventListener("change", renderRegisteredStudents);
