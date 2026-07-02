@@ -423,25 +423,7 @@
                 <div><label>Leads Added To</label><input id="leadExportToDate" type="date"></div>
               </div>
             </div>
-            <div class="filter-panel">
-              <div class="row spread">
-                <strong>Table Filters</strong>
-                <button class="btn small ghost" id="clearLeadColumnFiltersBtn">Clear Table Filters</button>
-              </div>
-              <div class="grid four">
-                <div><label>Child</label><input id="leadFilterChild" data-lead-column-filter placeholder="Child name"></div>
-                <div><label>Parent / Phone</label><input id="leadFilterParent" data-lead-column-filter placeholder="Parent or phone"></div>
-                <div><label>Subject</label><input id="leadFilterSubject" data-lead-column-filter placeholder="BC / BM / Phonics"></div>
-                <div><label>Source</label><input id="leadFilterSource" data-lead-column-filter placeholder="Facebook Ads"></div>
-                <div><label>Salesperson</label><input id="leadFilterSalesperson" data-lead-column-filter placeholder="Salesperson"></div>
-                <div><label>Package</label><input id="leadFilterPackage" data-lead-column-filter placeholder="Package"></div>
-                <div><label>Follow-up From</label><input id="leadFilterFollowFrom" data-lead-column-filter type="date"></div>
-                <div><label>Follow-up To</label><input id="leadFilterFollowTo" data-lead-column-filter type="date"></div>
-                <div><label>Assessment Date</label><input id="leadFilterAssessment" data-lead-column-filter type="date"></div>
-                <div><label>Trial Date</label><input id="leadFilterTrial" data-lead-column-filter type="date"></div>
-                <div><label>Notes</label><input id="leadFilterNotes" data-lead-column-filter placeholder="Keyword"></div>
-              </div>
-            </div>
+            <div class="row" style="justify-content:flex-end; margin-top:10px;"><button class="btn small ghost" id="clearLeadColumnFiltersBtn">Clear Column Filters</button></div>
             <div class="reminder-panel" id="leadReminderBox"></div>
             <div id="leadList" class="list" style="margin-top:14px;"></div>
             <div class="row spread" id="leadPagination" style="margin-top:12px;"></div>
@@ -478,9 +460,9 @@
         </div>
       </section>
       <section id="tutorCrm" class="tab hide">
-        <div class="grid two">
-          <div class="panel">
-            <h2>Tutor Lead Profile</h2>
+        <div id="tutorLeadProfileModal" class="modal hide">
+          <div class="modal-card" style="width:min(920px,100%);">
+            <div class="row spread"><h2 id="tutorLeadProfileModalTitle">Add Tutor Lead</h2><button class="btn ghost small" data-close>Close</button></div>
             <input id="tutorLeadId" type="hidden">
             <div class="grid two">
               <div><label>Tutor Name</label><input id="tutorLeadName" placeholder="Tutor name"></div>
@@ -501,13 +483,14 @@
               <button class="btn ghost" id="syncTutorToTeacherBtn">Sync To Teacher Profile</button>
             </div>
           </div>
+        </div>
           <div class="panel">
             <div class="row spread">
-              <h2>Tutor Leads</h2>
-              <div class="row view-toggle">
+              <div><h2>Tutor Leads</h2><div class="subtle">Edit table fields directly. Changes save automatically when you leave a field.</div></div>
+              <div class="row">
                 <span class="pill" id="tutorLeadCount">0</span>
-                <button class="btn small active" id="tutorLeadCardViewBtn">Card View</button>
-                <button class="btn small ghost" id="tutorLeadTableViewBtn">Table View</button>
+                <button class="btn mint" id="openTutorLeadModalBtn">Add Tutor Lead</button>
+                <div class="row view-toggle hide"><button class="btn small active" id="tutorLeadCardViewBtn">Card View</button><button class="btn small ghost" id="tutorLeadTableViewBtn">Table View</button></div>
               </div>
             </div>
             <div class="grid three">
@@ -515,10 +498,20 @@
               <div><label>Category</label><select id="tutorLeadFilterCategory"><option value="all">All Categories</option><option value="freelance">Freelance Tutor</option><option value="micro_franchisee">Micro Franchisee</option></select></div>
               <div><label>Search</label><input id="tutorLeadSearch" placeholder="Name / phone / subject"></div>
             </div>
+            <div class="filter-panel">
+              <div class="row spread">
+                <div><strong>Export Tutor Lead List</strong><div class="subtle">Choose when the tutor leads were added. Current list filters are also applied.</div></div>
+                <button class="btn ghost" id="exportTutorLeadListPdfBtn">Export PDF</button>
+              </div>
+              <div class="grid two" style="margin-top:12px; max-width:760px;">
+                <div><label>Tutor Leads Added From</label><input id="tutorLeadExportFromDate" type="date"></div>
+                <div><label>Tutor Leads Added To</label><input id="tutorLeadExportToDate" type="date"></div>
+              </div>
+            </div>
+            <div class="row" style="justify-content:flex-end; margin-top:10px;"><button class="btn small ghost" id="clearTutorLeadColumnFiltersBtn">Clear Column Filters</button></div>
             <div id="tutorLeadList" class="list" style="margin-top:14px;"></div>
             <div id="tutorLeadPagination" class="row spread" style="margin-top:12px;"></div>
           </div>
-        </div>
       </section>
 
       <section id="guidance" class="tab hide">
@@ -1592,7 +1585,8 @@
     let leadPage = 1;
     let leadViewMode = "table";
     let tutorLeadPage = 1;
-    let tutorLeadViewMode = safeStorageGet("classOneTutorLeadViewMode") || "cards";
+    let tutorLeadViewMode = "table";
+    let leadColumnFilterTimer = null;
     let replacementViewMode = safeStorageGet("classOneReplacementViewMode") || "board";
     const teacherLinkSyncing = new Set();
     const teacherLinkFailed = new Set();
@@ -2053,6 +2047,7 @@
         }
       });
       state.tutorLeads.forEach(lead => {
+        lead.createdAt ||= lead.updatedAt || new Date().toISOString();
         lead.subjects = normalizeSubjects(Array.isArray(lead.subjects) ? lead.subjects : []);
         lead.onboarding = Array.isArray(lead.onboarding) ? lead.onboarding : [];
         lead.category ||= "freelance";
@@ -5140,6 +5135,13 @@
       $("tutorLeadStatus").value = "New Applicant";
       setSelectedTutorSubjects([]);
       setSelectedTutorOnboarding([]);
+      $("tutorLeadProfileModalTitle").textContent = "Add Tutor Lead";
+    }
+
+    function openNewTutorLeadModal() {
+      clearTutorLeadForm();
+      $("tutorLeadProfileModal").classList.remove("hide");
+      $("tutorLeadName").focus();
     }
 
     function openTutorLeadForEdit(lead) {
@@ -5156,8 +5158,9 @@
       $("tutorLeadNotes").value = lead.notes || "";
       setSelectedTutorSubjects(lead.subjects || []);
       setSelectedTutorOnboarding(lead.onboarding || []);
+      $("tutorLeadProfileModalTitle").textContent = `Edit Tutor Lead: ${lead.name || lead.phone || "Tutor"}`;
+      $("tutorLeadProfileModal").classList.remove("hide");
       $("tutorLeadName").focus({ preventScroll: true });
-      $("tutorLeadName").scrollIntoView({ behavior: "smooth", block: "center" });
       setStatus(`Editing tutor lead: ${lead.name || lead.phone || "Tutor"}`);
       return true;
     }
@@ -5562,6 +5565,7 @@
     function renderLeadTable(leads) {
       const statusOptions = LEAD_STATUSES.map(status => `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`).join("");
       const urgencyOptions = URGENCIES.map(urgency => `<option value="${escapeHtml(urgency)}">${escapeHtml(urgency)}</option>`).join("");
+      const filterValue = id => escapeHtml($(id)?.value || "");
       const rows = leads.map((lead, index) => {
         lead.id ||= stableLeadId(lead, index);
         return `
@@ -5583,7 +5587,22 @@
           <td><div class="row"><button class="btn small ghost" data-edit-lead="${lead.id}">Full Profile</button><button class="btn small ghost" data-archive-lead="${lead.id}">Archive</button></div></td>
         </tr>`;
       }).join("") || `<tr><td colspan="15">No matching leads.</td></tr>`;
-      return `<div class="table-wrap"><table class="lead-table"><thead><tr><th>Created</th><th>Child</th><th>Parent</th><th>Subjects</th><th>Source</th><th>Salesperson</th><th>Status</th><th>Urgency</th><th>Next Follow-up</th><th>Assessment Teacher / Slot</th><th>Trial 1 / Trial 2</th><th>Package</th><th>Latest Update</th><th>Notes</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      return `<div class="table-wrap"><table class="lead-table"><thead><tr>
+        <th>Created</th>
+        <th>Child<input id="leadFilterChild" data-lead-column-filter value="${filterValue("leadFilterChild")}" placeholder="Filter child"></th>
+        <th>Parent<input id="leadFilterParent" data-lead-column-filter value="${filterValue("leadFilterParent")}" placeholder="Parent / phone"></th>
+        <th>Subjects<input id="leadFilterSubject" data-lead-column-filter value="${filterValue("leadFilterSubject")}" placeholder="Filter subject"></th>
+        <th>Source<input id="leadFilterSource" data-lead-column-filter value="${filterValue("leadFilterSource")}" placeholder="Filter source"></th>
+        <th>Salesperson<input id="leadFilterSalesperson" data-lead-column-filter value="${filterValue("leadFilterSalesperson")}" placeholder="Filter salesperson"></th>
+        <th>Status</th><th>Urgency</th>
+        <th>Next Follow-up<input id="leadFilterFollowFrom" data-lead-column-filter type="date" value="${filterValue("leadFilterFollowFrom")}" title="Follow-up from"><input id="leadFilterFollowTo" data-lead-column-filter type="date" value="${filterValue("leadFilterFollowTo")}" title="Follow-up to" style="margin-top:5px;"></th>
+        <th>Assessment Teacher / Slot<input id="leadFilterAssessment" data-lead-column-filter type="date" value="${filterValue("leadFilterAssessment")}" title="Assessment date"></th>
+        <th>Trial 1 / Trial 2<input id="leadFilterTrial" data-lead-column-filter type="date" value="${filterValue("leadFilterTrial")}" title="Trial date"></th>
+        <th>Package<input id="leadFilterPackage" data-lead-column-filter value="${filterValue("leadFilterPackage")}" placeholder="Filter package"></th>
+        <th>Latest Update</th>
+        <th>Notes<input id="leadFilterNotes" data-lead-column-filter value="${filterValue("leadFilterNotes")}" placeholder="Filter notes"></th>
+        <th>Actions</th>
+      </tr></thead><tbody>${rows}</tbody></table></div>`;
     }
 
     function crmSessionSelection(lead, kind, changedField = "", changedValue = "") {
@@ -5725,10 +5744,23 @@
       const status = $("tutorLeadFilterStatus")?.value || "all";
       const category = $("tutorLeadFilterCategory")?.value || "all";
       const search = ($("tutorLeadSearch")?.value || "").trim().toLowerCase();
+      const namePhone = ($("tutorLeadFilterName")?.value || "").trim().toLowerCase();
+      const subject = ($("tutorLeadFilterSubject")?.value || "").trim().toLowerCase();
+      const source = ($("tutorLeadFilterSource")?.value || "").trim().toLowerCase();
+      const notes = ($("tutorLeadFilterNotes")?.value || "").trim().toLowerCase();
+      const followFrom = $("tutorLeadFilterFollowFrom")?.value || "";
+      const followTo = $("tutorLeadFilterFollowTo")?.value || "";
       return (state.tutorLeads || [])
+        .filter(lead => !lead.archived)
         .filter(lead => status === "all" || lead.status === status)
         .filter(lead => category === "all" || lead.category === category)
         .filter(lead => !search || [lead.name, lead.phone, lead.source, lead.notes, (lead.subjects || []).join(", ")].some(v => String(v || "").toLowerCase().includes(search)))
+        .filter(lead => !namePhone || [lead.name, lead.phone].some(v => String(v || "").toLowerCase().includes(namePhone)))
+        .filter(lead => !subject || (lead.subjects || []).some(v => String(v || "").toLowerCase().includes(subject)))
+        .filter(lead => !source || String(lead.source || "").toLowerCase().includes(source))
+        .filter(lead => !notes || String(lead.notes || "").toLowerCase().includes(notes))
+        .filter(lead => !followFrom || (lead.nextFollowUp && lead.nextFollowUp >= followFrom))
+        .filter(lead => !followTo || (lead.nextFollowUp && lead.nextFollowUp <= followTo))
         .sort((a, b) => leadLatestTime(b) - leadLatestTime(a));
     }
 
@@ -5773,23 +5805,35 @@
 
     function renderTutorLeadTable(leads) {
       const statusOptions = TUTOR_STATUSES.map(status => `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`).join("");
+      const filterValue = id => escapeHtml($(id)?.value || "");
       const rows = leads.map(lead => {
         const categoryOptions = `<option value="freelance">Freelance Tutor</option><option value="micro_franchisee">Micro Franchisee</option>`;
         const done = (lead.onboarding || []).length;
         return `<tr>
-          <td>${escapeHtml(lead.name || "Unnamed Tutor")}<br><span class="subtle">${phoneHtml(lead.phone)}</span></td>
+          <td><input type="date" value="${escapeHtml(dateOnly(lead.createdAt))}" data-tutor-lead-quick="${lead.id}|createdAt"></td>
+          <td><input value="${escapeHtml(lead.name || "")}" data-tutor-lead-quick="${lead.id}|name" placeholder="Tutor name"><input value="${escapeHtml(lead.phone || "")}" data-tutor-lead-quick="${lead.id}|phone" placeholder="Phone / WhatsApp" style="margin-top:5px;"></td>
           <td><select data-tutor-lead-quick="${lead.id}|status">${statusOptions}</select></td>
           <td><select data-tutor-lead-quick="${lead.id}|category">${categoryOptions}</select></td>
-          <td>${(lead.subjects || []).map(escapeHtml).join(", ") || "-"}</td>
-          <td>${lead.category === "micro_franchisee" ? `${Number(lead.profitShare || 0).toFixed(2)}% share` : money(lead.rate)}</td>
+          <td><input value="${escapeHtml((lead.subjects || []).join(", "))}" data-tutor-lead-quick="${lead.id}|subjects" placeholder="BM, PK"></td>
+          <td><input type="number" min="0" step="0.01" value="${Number(lead.rate || 0)}" data-tutor-lead-quick="${lead.id}|rate" title="Approved rate"><input type="number" min="0" max="100" step="0.01" value="${Number(lead.profitShare || 0)}" data-tutor-lead-quick="${lead.id}|profitShare" title="Profit share %" style="margin-top:5px;"></td>
           <td>${done}/${TUTOR_ONBOARDING_STEPS.length}</td>
           <td><input type="date" value="${escapeHtml(lead.nextFollowUp || "")}" data-tutor-lead-quick="${lead.id}|nextFollowUp"></td>
-          <td>${escapeHtml(lead.source || "-")}</td>
-          <td style="min-width:220px;">${escapeHtml(lead.notes || "")}</td>
-          <td><div class="row"><button class="btn small ghost" data-edit-tutor-lead="${lead.id}">Edit</button><button class="btn small mint" data-sync-tutor-lead="${lead.id}">Sync</button><button class="btn small danger" data-delete-tutor-lead="${lead.id}">Delete</button></div></td>
+          <td><input value="${escapeHtml(lead.source || "")}" data-tutor-lead-quick="${lead.id}|source" placeholder="Source"></td>
+          <td style="min-width:220px;"><textarea data-tutor-lead-quick="${lead.id}|notes" placeholder="Notes">${escapeHtml(lead.notes || "")}</textarea></td>
+          <td><div class="row"><button class="btn small ghost" data-edit-tutor-lead="${lead.id}">Full Profile</button><button class="btn small mint" data-sync-tutor-lead="${lead.id}">Sync</button><button class="btn small danger" data-delete-tutor-lead="${lead.id}">Delete</button></div></td>
         </tr>`;
-      }).join("") || `<tr><td colspan="10">No tutor leads yet.</td></tr>`;
-      return `<div class="table-wrap"><table class="lead-table"><thead><tr><th>Tutor</th><th>Status</th><th>Category</th><th>Subjects</th><th>Rate / Share</th><th>Onboarding</th><th>Next Follow-up</th><th>Source</th><th>Notes</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      }).join("") || `<tr><td colspan="11">No tutor leads match these filters.</td></tr>`;
+      return `<div class="table-wrap"><table class="lead-table"><thead><tr>
+        <th>Created</th>
+        <th>Tutor / Phone<input id="tutorLeadFilterName" data-tutor-lead-column-filter value="${filterValue("tutorLeadFilterName")}" placeholder="Filter name / phone"></th>
+        <th>Status</th><th>Category</th>
+        <th>Subjects<input id="tutorLeadFilterSubject" data-tutor-lead-column-filter value="${filterValue("tutorLeadFilterSubject")}" placeholder="Filter subject"></th>
+        <th>Rate / Share</th><th>Onboarding</th>
+        <th>Next Follow-up<input id="tutorLeadFilterFollowFrom" data-tutor-lead-column-filter type="date" value="${filterValue("tutorLeadFilterFollowFrom")}" title="Follow-up from"><input id="tutorLeadFilterFollowTo" data-tutor-lead-column-filter type="date" value="${filterValue("tutorLeadFilterFollowTo")}" title="Follow-up to" style="margin-top:5px;"></th>
+        <th>Source<input id="tutorLeadFilterSource" data-tutor-lead-column-filter value="${filterValue("tutorLeadFilterSource")}" placeholder="Filter source"></th>
+        <th>Notes<input id="tutorLeadFilterNotes" data-tutor-lead-column-filter value="${filterValue("tutorLeadFilterNotes")}" placeholder="Filter notes"></th>
+        <th>Actions</th>
+      </tr></thead><tbody>${rows}</tbody></table></div>`;
     }
 
     function hydrateTutorLeadQuickFields(leads) {
@@ -6941,6 +6985,30 @@
           lead.nextFollowUp || "",
           lead.assessmentDate || "",
           [lead.trialDate, lead.trialDate2].filter(Boolean).join(" / "),
+          lead.notes || ""
+        ]);
+    }
+
+    function tutorLeadListExportRows() {
+      const from = $("tutorLeadExportFromDate").value;
+      const to = $("tutorLeadExportToDate").value;
+      if (from && to && to < from) throw new Error("The tutor leads added end date cannot be before the start date.");
+      return filteredTutorLeads()
+        .filter(lead => !from || dateOnly(lead.createdAt) >= from)
+        .filter(lead => !to || dateOnly(lead.createdAt) <= to)
+        .sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || "")))
+        .map(lead => [
+          dateOnly(lead.createdAt) || "-",
+          lead.name || "",
+          lead.phone || "",
+          lead.category === "micro_franchisee" ? "Micro Franchisee" : "Freelance Tutor",
+          (lead.subjects || []).join(", "),
+          lead.status || "New Applicant",
+          Number(lead.rate || 0).toFixed(2),
+          `${Number(lead.profitShare || 0).toFixed(2)}%`,
+          `${(lead.onboarding || []).length}/${TUTOR_ONBOARDING_STEPS.length}`,
+          lead.nextFollowUp || "",
+          lead.source || "",
           lead.notes || ""
         ]);
     }
@@ -8896,10 +8964,16 @@
       if (tutorQuick) {
         const [leadId, field] = tutorQuick.dataset.tutorLeadQuick.split("|");
         const lead = (state.tutorLeads || []).find(item => String(item.id || "") === String(leadId || ""));
-        if (!lead || !["status", "category", "nextFollowUp"].includes(field)) return;
+        const editableFields = ["createdAt", "name", "phone", "status", "category", "subjects", "rate", "profitShare", "nextFollowUp", "source", "notes"];
+        if (!lead || !editableFields.includes(field)) return;
         const before = tutorLeadLogSummary(lead);
         const previousStatus = lead.status || "";
-        lead[field] = tutorQuick.value;
+        const value = String(tutorQuick.value || "").trim();
+        if (field === "subjects") lead.subjects = normalizeSubjects(value.split(",").map(item => item.trim()).filter(Boolean));
+        else if (["rate", "profitShare"].includes(field)) lead[field] = Number(value || 0);
+        else if (field === "createdAt") {
+          if (value) lead.createdAt = `${value}T12:00:00.000Z`;
+        } else lead[field] = value;
         lead.updatedAt = new Date().toISOString();
         logAction("Tutor Lead Quick Updated", lead.name || lead.phone, before, tutorLeadLogSummary(lead), `Changed ${field}.`);
         if (field === "status") promptSyncOnboardTutorToTeacher(lead, previousStatus);
@@ -9231,9 +9305,11 @@
       logAction(before ? "Tutor Lead Updated" : "Tutor Lead Added", existing.name, before, tutorLeadLogSummary(existing), "");
       promptSyncOnboardTutorToTeacher(existing, previousStatus);
       save();
+      $("tutorLeadProfileModal").classList.add("hide");
       clearTutorLeadForm();
     };
     $("newTutorLeadBtn").onclick = clearTutorLeadForm;
+    $("openTutorLeadModalBtn").onclick = openNewTutorLeadModal;
     $("syncTutorToTeacherBtn").onclick = () => {
       const id = $("tutorLeadId").value;
       if (!id) return alert("Choose a tutor lead first.");
@@ -9527,10 +9603,38 @@
     };
     ["leadFilterStatus", "leadFilterUrgency"].forEach(id => $(id).addEventListener("change", resetLeadPageAndRender));
     $("leadSearch").addEventListener("input", resetLeadPageAndRender);
-    document.querySelectorAll("[data-lead-column-filter]").forEach(input => input.addEventListener("input", resetLeadPageAndRender));
+    document.addEventListener("input", event => {
+      const leadFilter = event.target.closest("[data-lead-column-filter]");
+      const tutorFilter = event.target.closest("[data-tutor-lead-column-filter]");
+      if (!leadFilter && !tutorFilter) return;
+      const control = leadFilter || tutorFilter;
+      const controlId = control.id;
+      const selectionStart = control.selectionStart;
+      const selectionEnd = control.selectionEnd;
+      clearTimeout(leadColumnFilterTimer);
+      leadColumnFilterTimer = setTimeout(() => {
+        if (leadFilter) {
+          leadPage = 1;
+          renderLeads();
+        } else {
+          tutorLeadPage = 1;
+          renderTutorCrm();
+        }
+        const replacement = $(controlId);
+        if (replacement) {
+          replacement.focus({ preventScroll: true });
+          if (replacement.setSelectionRange && selectionStart !== null) replacement.setSelectionRange(selectionStart, selectionEnd);
+        }
+      }, 300);
+    });
     $("clearLeadColumnFiltersBtn").onclick = () => {
       document.querySelectorAll("[data-lead-column-filter]").forEach(input => input.value = "");
       resetLeadPageAndRender();
+    };
+    $("clearTutorLeadColumnFiltersBtn").onclick = () => {
+      document.querySelectorAll("[data-tutor-lead-column-filter]").forEach(input => input.value = "");
+      tutorLeadPage = 1;
+      renderTutorCrm();
     };
     $("leadCardViewBtn").onclick = () => { leadViewMode = "cards"; safeStorageSet("classOneLeadViewMode", leadViewMode); resetLeadPageAndRender(); };
     $("leadTableViewBtn").onclick = () => { leadViewMode = "table"; safeStorageSet("classOneLeadViewMode", leadViewMode); resetLeadPageAndRender(); };
@@ -9687,6 +9791,18 @@
         openPrintReport(`CRM Lead List | ${period} | ${rows.length} lead${rows.length === 1 ? "" : "s"}`, ["No.", "Added", "Child", "Parent / Phone", "Subjects", "Source", "Salesperson", "Status", "Urgency", "Next Follow-up", "Assessment", "Trial 1 / 2", "Notes"], numbered(rows), true);
       } catch (error) {
         setStatus(`CRM lead PDF export failed: ${error.message}`, "error");
+        alert(error.message);
+      }
+    };
+    $("exportTutorLeadListPdfBtn").onclick = () => {
+      try {
+        const rows = tutorLeadListExportRows();
+        const from = $("tutorLeadExportFromDate").value;
+        const to = $("tutorLeadExportToDate").value;
+        const period = from || to ? `${from ? formatDateFromAny(from) : "Beginning"} to ${to ? formatDateFromAny(to) : "Today"}` : "All Added Dates";
+        openPrintReport(`Tutor CRM Lead List | ${period} | ${rows.length} lead${rows.length === 1 ? "" : "s"}`, ["No.", "Added", "Tutor", "Phone", "Category", "Subjects", "Status", "Rate", "Profit Share", "Onboarding", "Next Follow-up", "Source", "Notes"], numbered(rows), true);
+      } catch (error) {
+        setStatus(`Tutor CRM PDF export failed: ${error.message}`, "error");
         alert(error.message);
       }
     };
