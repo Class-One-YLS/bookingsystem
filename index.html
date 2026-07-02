@@ -1274,6 +1274,20 @@
     </div>
   </div>
 
+  <div id="teacherOpenSlotChoiceModal" class="modal hide">
+    <div class="modal-card">
+      <div class="row spread"><h2>Open Slot Action</h2><button class="btn ghost small" data-close>Close</button></div>
+      <input id="teacherOpenSlotChoiceData" type="hidden">
+      <div class="subtle" id="teacherOpenSlotChoiceInfo"></div>
+      <div class="row" style="margin-top:16px;">
+        <button class="btn ghost" id="chooseReserveSlotBtn">Reserve</button>
+        <button class="btn mint" id="chooseBookRegularBtn">Book Regular Class</button>
+        <button class="btn danger" id="chooseSetSlotOffBtn">Set To OFF</button>
+        <button class="btn ghost" data-close>Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div id="fixedRegularBookingModal" class="modal hide">
     <div class="modal-card">
       <div class="row spread"><h2>Book Fixed Regular Class</h2><button class="btn ghost small" data-close>Close</button></div>
@@ -1282,12 +1296,6 @@
       <div class="grid two" style="margin-top:14px;">
         <div><label>Student</label><select id="fixedRegularStudent"></select></div>
         <div><label>Remark</label><input id="fixedRegularRemark" placeholder="Optional note"></div>
-      </div>
-      <div style="margin-top:14px;">
-        <label>Reserve Name</label>
-        <input id="fixedRegularReserveName" list="fixedRegularReserveNames" placeholder="Child's name for reservation">
-        <datalist id="fixedRegularReserveNames"></datalist>
-        <div class="subtle" style="margin-top:6px;">Use this when parents want the slot but have not confirmed enrollment. The reservation expires automatically after 14 days.</div>
       </div>
       <div style="margin-top:14px;">
         <label>Schedule</label>
@@ -1305,8 +1313,31 @@
       <div class="subtle" style="margin-top:10px;">The subject follows the selected teacher's open slot automatically. A temporary booking returns this slot to open after its end date.</div>
       <div class="row" style="margin-top:14px;">
         <button class="btn mint" id="confirmFixedRegularBookingBtn">Confirm Regular Class</button>
-        <button class="btn ghost" id="reserveFixedRegularSlotBtn">Reserve for 14 Days</button>
-        <button class="btn danger" id="setFixedRegularSlotOffBtn">Set Slot To OFF</button>
+        <button class="btn danger hide" id="setFixedRegularSlotOffBtn">Set Slot To OFF</button>
+        <button class="btn ghost" data-close>Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="reserveRegularSlotModal" class="modal hide">
+    <div class="modal-card">
+      <div class="row spread"><h2>Reserve Regular Slot</h2><button class="btn ghost small" data-close>Close</button></div>
+      <input id="reserveRegularSlotData" type="hidden">
+      <div class="subtle" id="reserveRegularSlotInfo"></div>
+      <div style="margin-top:14px;"><label>Student</label><select id="reserveRegularStudent"></select></div>
+      <div style="margin-top:14px;">
+        <label>Reservation Type</label>
+        <div class="row view-toggle" id="reserveRegularModeButtons">
+          <button type="button" class="btn active" data-reserve-regular-mode="tentative">Not Confirmed Yet - 14 Days</button>
+          <button type="button" class="btn ghost" data-reserve-regular-mode="future_regular">Regular Class Starting Later</button>
+        </div>
+        <input id="reserveRegularMode" type="hidden" value="tentative">
+      </div>
+      <div id="reserveRegularStartField" class="hide" style="margin-top:14px;"><label>Regular Class Start Date</label><input id="reserveRegularStartDate" type="date"></div>
+      <div style="margin-top:14px;"><label>Remark</label><input id="reserveRegularRemark" placeholder="Optional note"></div>
+      <div class="subtle" id="reserveRegularHelp" style="margin-top:10px;"></div>
+      <div class="row" style="margin-top:14px;">
+        <button class="btn mint" id="confirmReserveRegularBtn">Confirm Reservation</button>
         <button class="btn ghost" data-close>Cancel</button>
       </div>
     </div>
@@ -3385,6 +3416,10 @@
       const day = DAYS[(date.getDay() + 6) % 7];
       const display = teacherOverviewDisplaySlot(teacher, day, time);
       const slot = display.slot;
+      if (slot?.futureRegularReservation && display.upcoming) {
+        const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentName: slot.studentName || "Future regular class", slotId: slot.id, interactionSource: "teacher_overview", upcomingStart: slot.startDate, futureRegularReservation: true }));
+        return `<td class="teacher-cell-reserved"><button class="teacher-cell-button" data-fixed-slot="${fixedData}" title="Click to change or cancel this future regular class">${escapeHtml(futureRegularReservationLabel(slot))}</button></td>`;
+      }
       if (slot?.reserved) {
         const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentName: slot.studentName || "Reserved", slotId: slot.id, reserved: true, interactionSource: "teacher_overview" }));
         return `<td class="teacher-cell-reserved"><button class="teacher-cell-button" data-fixed-slot="${fixedData}" title="Click to release this reservation early">${escapeHtml(reservationLabel(slot))}</button></td>`;
@@ -3471,6 +3506,20 @@
         .sort(byName);
     }
 
+    function reservationStudentOptions() {
+      return [...(state.students || [])]
+        .filter(student => student.status !== "archived" && (student.registeredStatus || "active") !== "drop")
+        .sort(byName);
+    }
+
+    function openTeacherOpenSlotChoiceModal(data) {
+      const teacher = teacherById(data.teacherId);
+      if (!teacher) return alert("Teacher not found.");
+      $("teacherOpenSlotChoiceData").value = JSON.stringify(data);
+      $("teacherOpenSlotChoiceInfo").textContent = `${teacher.name} | ${data.day} ${timeLabel(data.time)} | ${data.subject || (teacher.subjects || [])[0] || "Teacher's subject"}`;
+      $("teacherOpenSlotChoiceModal").classList.remove("hide");
+    }
+
     function openFixedRegularBookingModal(data) {
       const teacher = teacherById(data.teacherId);
       if (!teacher) return alert("Teacher not found.");
@@ -3478,19 +3527,41 @@
       const subject = data.subject || (teacher.subjects || [])[0] || "";
       const options = students.map(student => `<option value="${escapeHtml(student.id)}">${escapeHtml(student.name)}${student.package ? ` - ${escapeHtml(student.package)}` : ""}</option>`).join("");
       $("fixedRegularStudent").innerHTML = `<option value="">Choose registered student</option>${options}`;
-      const reserveNames = [...new Set([
-        ...students.map(student => cleanStudentName(student.name)),
-        ...(state.leads || []).map(lead => cleanStudentName(lead.childName || ""))
-      ].filter(Boolean))].sort((a, b) => a.localeCompare(b));
-      $("fixedRegularReserveNames").innerHTML = reserveNames.map(name => `<option value="${escapeHtml(name)}"></option>`).join("");
       $("fixedRegularSlotData").value = JSON.stringify({ ...data, subject });
       $("fixedRegularSlotInfo").textContent = `${teacher.name} | ${data.day} ${timeLabel(data.time)} | ${subject || "Teacher's subject"}`;
       $("fixedRegularStartDate").value = todayISO();
       $("fixedRegularEndDate").value = "";
       $("fixedRegularRemark").value = "";
-      $("fixedRegularReserveName").value = "";
       setFixedRegularMode("start_now");
       $("fixedRegularBookingModal").classList.remove("hide");
+    }
+
+    function setReserveRegularMode(mode) {
+      const validMode = mode === "future_regular" ? "future_regular" : "tentative";
+      $("reserveRegularMode").value = validMode;
+      document.querySelectorAll("[data-reserve-regular-mode]").forEach(button => {
+        const active = button.dataset.reserveRegularMode === validMode;
+        button.classList.toggle("active", active);
+        button.classList.toggle("ghost", !active);
+      });
+      $("reserveRegularStartField").classList.toggle("hide", validMode !== "future_regular");
+      $("reserveRegularHelp").textContent = validMode === "tentative"
+        ? "This holds the slot for 14 days. It reopens automatically if enrollment is not confirmed."
+        : "Before the start date, this slot can only be used for Assessment, Exam, Trial Class, Extra Class, or Replacement Class.";
+    }
+
+    function openReserveRegularSlotModal(data) {
+      const teacher = teacherById(data.teacherId);
+      if (!teacher) return alert("Teacher not found.");
+      const students = reservationStudentOptions();
+      if (!students.length) return alert("Add the child to the Students list before reserving a regular slot.");
+      $("reserveRegularStudent").innerHTML = `<option value="">Choose student</option>${students.map(student => `<option value="${escapeHtml(student.id)}">${escapeHtml(student.name)}${student.package ? ` - ${escapeHtml(student.package)}` : ""}</option>`).join("")}`;
+      $("reserveRegularSlotData").value = JSON.stringify(data);
+      $("reserveRegularSlotInfo").textContent = `${teacher.name} | ${data.day} ${timeLabel(data.time)} | ${data.subject || (teacher.subjects || [])[0] || "Teacher's subject"}`;
+      $("reserveRegularStartDate").value = firstWeeklyDateOnOrAfter(dateOffsetISO(todayISO(), 1), data.day);
+      $("reserveRegularRemark").value = "";
+      setReserveRegularMode("tentative");
+      $("reserveRegularSlotModal").classList.remove("hide");
     }
 
     function reservationDaysLeft(slot, referenceDate = todayISO()) {
@@ -3505,20 +3576,56 @@
       return `Reserve for ${name} - ${days} day${days === 1 ? "" : "s"} left`;
     }
 
-    function confirmFixedRegularReservation() {
-      const data = JSON.parse($("fixedRegularSlotData").value || "null");
+    function futureRegularReservationLabel(slot) {
+      return `Reserve for ${cleanStudentName(slot.studentName || "Student")} - starts ${formatDateFromAny(slot.startDate)}`;
+    }
+
+    function confirmRegularReservation() {
+      const data = JSON.parse($("reserveRegularSlotData").value || "null");
       const teacher = data ? teacherById(data.teacherId) : null;
       if (!data || !teacher) return alert("Open slot data is missing.");
       const openSlot = (teacher.regularSlots || []).find(slot => slot.id === data.slotId && !slot.locked);
       if (!openSlot) return alert("This slot is no longer open. Refresh the Teacher Overview and try again.");
-      const selectedStudent = studentById($("fixedRegularStudent").value);
-      const reserveName = cleanStudentName($("fixedRegularReserveName").value) || cleanStudentName(selectedStudent?.name || "");
-      if (!reserveName) return alert("Type the child's name in Reserve Name, or choose a registered student.");
+      const selectedStudent = studentById($("reserveRegularStudent").value);
+      if (!selectedStudent) return alert("Choose a student from the list.");
+      const reserveName = cleanStudentName(selectedStudent.name);
+      const mode = $("reserveRegularMode").value;
       const startDate = todayISO();
-      const endDate = dateOffsetISO(startDate, 13);
       const subject = data.subject || openSlot.subject || (teacher.subjects || [])[0] || "";
-      splitOpenSlotForFixedBooking(teacher, openSlot, startDate, endDate);
       const now = new Date().toISOString();
+      if (mode === "future_regular") {
+        const regularStartDate = dateOnly($("reserveRegularStartDate").value);
+        if (!regularStartDate || regularStartDate <= todayISO()) return alert("Choose a future regular class start date.");
+        if (dayFromISO(regularStartDate) !== data.day) return alert(`The start date must be a ${data.day}, matching this weekly slot.`);
+        const candidate = { teacherId: teacher.id, day: data.day, time: data.time, subject, startDate: regularStartDate, endDate: "" };
+        const studentConflict = studentRegularSlotConflict(selectedStudent.name, candidate);
+        if (studentConflict) return alert(studentConflict);
+        const duplicateStudentSlot = getStudentRegularSlots(selectedStudent).find(slot => slot.teacherId === teacher.id && slot.day === data.day && slot.time === data.time && regularSlotRangesOverlap(slot, candidate));
+        if (duplicateStudentSlot) return alert(`${selectedStudent.name} already has this regular slot during the selected period.`);
+        const futureBookingConflict = activeBookings().find(booking => booking.teacherId === teacher.id && booking.time === data.time && booking.date >= regularStartDate && dayFromISO(booking.date) === data.day);
+        if (futureBookingConflict) return alert(`${teacher.name} already has ${futureBookingConflict.studentName || "a class"} on ${formatClassDateTime(futureBookingConflict.date, futureBookingConflict.time)}.`);
+        splitOpenSlotForFixedBooking(teacher, openSlot, regularStartDate, "");
+        const studentSlot = {
+          id: uid("student_slot"), teacherId: teacher.id, day: data.day, time: data.time, subject,
+          startDate: regularStartDate, endDate: "", source: "future-regular-reservation", createdAt: now, updatedAt: now
+        };
+        selectedStudent.regularSlots ||= [];
+        selectedStudent.regularSlots.push(studentSlot);
+        teacher.regularSlots.push({
+          id: uid("slot"), studentId: selectedStudent.id, studentSlotId: studentSlot.id, studentName: reserveName,
+          futureRegularReservation: true, day: data.day, time: data.time, subject, startDate: regularStartDate, endDate: "",
+          locked: true, unavailable: false, source: "future-regular-reservation", remark: $("reserveRegularRemark").value.trim(), createdAt: now, updatedAt: now
+        });
+        selectedStudent.updatedAt = now;
+        teacher.updatedAt = now;
+        logAction("Future Regular Class Reserved", `${reserveName} with ${teacher.name}`, "Open weekly slot", `${data.day} ${timeLabel(data.time)} | starts ${regularStartDate}`, "Temporary classes remain allowed before the start date.");
+        $("reserveRegularSlotModal").classList.add("hide");
+        save(false);
+        setStatus(`${futureRegularReservationLabel({ studentName: reserveName, startDate: regularStartDate })}.`);
+        return;
+      }
+      const endDate = dateOffsetISO(startDate, 13);
+      splitOpenSlotForFixedBooking(teacher, openSlot, startDate, endDate);
       teacher.regularSlots.push({
         id: uid("slot"),
         studentId: selectedStudent?.id || "",
@@ -3534,13 +3641,13 @@
         locked: true,
         unavailable: false,
         source: "teacher-overview-reservation",
-        remark: $("fixedRegularRemark").value.trim(),
+        remark: $("reserveRegularRemark").value.trim(),
         createdAt: now,
         updatedAt: now
       });
       teacher.updatedAt = now;
       logAction("Regular Slot Reserved", `${reserveName} with ${teacher.name}`, "Open weekly slot", `${data.day} ${timeLabel(data.time)} | ${startDate} to ${endDate}`, "Reservation expires automatically after 14 days.");
-      $("fixedRegularBookingModal").classList.add("hide");
+      $("reserveRegularSlotModal").classList.add("hide");
       save(false);
       setStatus(`${teacher.name}'s ${data.day} ${timeLabel(data.time)} slot is reserved for ${reserveName} for 14 days.`);
     }
@@ -3843,12 +3950,25 @@
       openBookingModalForSlot(data);
     }
 
+    const FUTURE_REGULAR_TEMPORARY_TYPES = ["assessment", "exam", "trial class", "extra class", "replacement class"];
+
+    function futureRegularReservationForDate(teacherId, date, time) {
+      const teacher = teacherById(teacherId);
+      if (!teacher || !date) return null;
+      const day = dayFromISO(date);
+      return (teacher.regularSlots || []).find(slot =>
+        slot.futureRegularReservation && slot.locked && slot.day === day && slot.time === time && slot.startDate && date < slot.startDate
+      ) || null;
+    }
+
     function openBookingModalForSlot(data) {
       $("bookingSlot").value = JSON.stringify(data);
       const teacher = teacherById(data.teacherId);
+      const futureReservation = futureRegularReservationForDate(data.teacherId, data.date || todayISO(), data.time);
       $("bookingInfo").textContent = data.interactionSource === "teacher_overview"
         ? `${teacher.name} | ${data.day} ${timeLabel(data.time)} | choose the booking date below`
-        : `${teacher.name} | ${data.date} | ${timeLabel(data.time)} | ${data.subject}`;
+        : `${teacher.name} | ${data.date} | ${timeLabel(data.time)} | ${data.subject}${futureReservation ? ` | Reserved for ${futureReservation.studentName} from ${formatDateFromAny(futureReservation.startDate)}; temporary classes only before then` : ""}`;
+      fillSelect($("bookingType"), (futureReservation ? FUTURE_REGULAR_TEMPORARY_TYPES : BOOKING_TYPES).map(type => ({ value: type, label: type.replace(/\b\w/g, char => char.toUpperCase()) })));
       if ([...$("bookingSubject").options].some(o => o.value === data.subject)) $("bookingSubject").value = data.subject;
       $("bookingStudent").value = "all";
       $("bookingStudentName").value = "";
@@ -4312,7 +4432,8 @@
         if (slot.reserved) return `<button class="slot reserve" title="Reserved slot" data-fixed-slot="${fixedData}">${escapeHtml(teacher.name)}<small>${escapeHtml(reservationLabel(slot))} | ${escapeHtml(subject)}</small></button>`;
         return `<button class="slot fixed" draggable="true" title="Drag to an open slot to move this fixed regular class" data-drag-fixed-slot="${fixedData}" data-fixed-slot="${fixedData}">${escapeHtml(teacher.name)}<small>Fixed regular: ${escapeHtml(slot.studentName || "occupied")} | ${escapeHtml(subject)} | drag to move</small></button>`;
       }
-      return `<button class="slot" data-slot="${escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject }))}">${escapeHtml(teacher.name)}<small>Available | ${escapeHtml(subject)} | 30 min slot, 25 min class</small></button>`;
+      const futureReservation = futureRegularReservationForDate(slot.teacherId, slot.date, slot.time);
+      return `<button class="slot" data-slot="${escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject }))}">${escapeHtml(teacher.name)}<small>${futureReservation ? `Temporary classes only until ${escapeHtml(formatDateFromAny(futureReservation.startDate))} | reserved for ${escapeHtml(futureReservation.studentName || "student")}` : `Available | ${escapeHtml(subject)} | 30 min slot, 25 min class`}</small></button>`;
     }
 
     function renderTeachers() {
@@ -8177,7 +8298,7 @@
       if (openSlotAction) {
         const data = JSON.parse(openSlotAction.dataset.openSlotAction);
         if (data.interactionSource === "teacher_overview" && teacherSlotEditMode) setTeacherOverviewSlotOffFromEditMode(data);
-        else if (data.interactionSource === "teacher_overview") openFixedRegularBookingModal(data);
+        else if (data.interactionSource === "teacher_overview") openTeacherOpenSlotChoiceModal(data);
         else openSlotActionModal(data);
       }
       const teacherSlotEditAction = e.target.closest("[data-teacher-slot-edit-action]");
@@ -8192,6 +8313,8 @@
       if (fixedRegularMode) {
         setFixedRegularMode(fixedRegularMode.dataset.fixedRegularMode);
       }
+      const reserveRegularMode = e.target.closest("[data-reserve-regular-mode]");
+      if (reserveRegularMode) setReserveRegularMode(reserveRegularMode.dataset.reserveRegularMode);
       const regularChangeType = e.target.closest("[data-regular-change-type]");
       if (regularChangeType) {
         $("regularChangeType").value = regularChangeType.dataset.regularChangeType;
@@ -9111,6 +9234,11 @@
       const remark = $("bookingRemark").value.trim();
       let period;
       try { period = bookingDatesFromForm(slot); } catch (err) { return alert(err.message); }
+      const restrictedDate = period.dates.find(date => futureRegularReservationForDate(slot.teacherId, date, slot.time));
+      if (restrictedDate && !FUTURE_REGULAR_TEMPORARY_TYPES.includes(type)) {
+        const reservation = futureRegularReservationForDate(slot.teacherId, restrictedDate, slot.time);
+        return alert(`This slot is reserved for ${reservation?.studentName || "a future regular student"} from ${formatDateFromAny(reservation?.startDate)}. Before that date, it can only be booked for Assessment, Exam, Trial Class, Extra Class, or Replacement Class.`);
+      }
       if (slot.reuseCancelledBookingId && (period.mode !== "one_date" || period.startDate !== slot.date)) return alert("A cancelled slot can only be rebooked for its original date and time.");
       if (period.mode === "permanent" && type !== "regular class") return alert("Ongoing bookings are only available for Regular Class. Choose particular date or temporary period for other class types.");
       if (type === "replacement class" && period.mode !== "one_date") return alert("Each replacement credit books one class. Choose Particular Date Only.");
@@ -9423,17 +9551,32 @@
         alert(`Regular class booking failed: ${err.message}`);
       }
     };
-    $("reserveFixedRegularSlotBtn").onclick = () => {
-      try { confirmFixedRegularReservation(); }
+    $("chooseReserveSlotBtn").onclick = () => {
+      const data = JSON.parse($("teacherOpenSlotChoiceData").value || "null");
+      if (!data) return alert("Open slot data is missing.");
+      $("teacherOpenSlotChoiceModal").classList.add("hide");
+      openReserveRegularSlotModal(data);
+    };
+    $("chooseBookRegularBtn").onclick = () => {
+      const data = JSON.parse($("teacherOpenSlotChoiceData").value || "null");
+      if (!data) return alert("Open slot data is missing.");
+      $("teacherOpenSlotChoiceModal").classList.add("hide");
+      openFixedRegularBookingModal(data);
+    };
+    $("chooseSetSlotOffBtn").onclick = () => {
+      const data = JSON.parse($("teacherOpenSlotChoiceData").value || "null");
+      if (!data) return alert("Open slot data is missing.");
+      $("teacherOpenSlotChoiceModal").classList.add("hide");
+      $("fixedRegularSlotData").value = JSON.stringify(data);
+      setFixedRegularSlotOff();
+    };
+    $("confirmReserveRegularBtn").onclick = () => {
+      try { confirmRegularReservation(); }
       catch (err) {
         setStatus(`Slot reservation failed: ${err.message}`, "error");
         alert(`Slot reservation failed: ${err.message}`);
       }
     };
-    $("fixedRegularStudent").addEventListener("change", () => {
-      const student = studentById($("fixedRegularStudent").value);
-      if (student && !$("fixedRegularReserveName").value.trim()) $("fixedRegularReserveName").value = cleanStudentName(student.name);
-    });
     $("setFixedRegularSlotOffBtn").onclick = setFixedRegularSlotOff;
     $("confirmCancelFixedRegularBtn").onclick = () => {
       try { confirmCancelFixedRegular(); }
