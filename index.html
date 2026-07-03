@@ -28,7 +28,7 @@
     button, input, select, textarea { font: inherit; }
     button { cursor: pointer; border: 0; }
     .app-shell { min-height: 100vh; display: grid; grid-template-columns: 260px minmax(0, 1fr); transition: grid-template-columns .2s ease; }
-    .app-shell.sidebar-collapsed { grid-template-columns: 76px minmax(0, 1fr); }
+    .app-shell.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr); }
     .tab.layout-stacked .grid.two,
     .tab.layout-stacked .grid.three,
     .tab.layout-stacked .grid.four,
@@ -42,12 +42,9 @@
     .brand strong { display: block; font-size: 16px; }
     .brand span { color: #b9c4c0; font-size: 12px; }
     .side-toggle { width: 42px; height: 42px; min-height: 42px; margin: 0 0 12px auto; padding: 0; display: grid; place-items: center; font-size: 28px; line-height: 1; }
-    .app-shell.sidebar-collapsed aside { padding: 18px 10px; }
-    .app-shell.sidebar-collapsed .brand { justify-content: center; }
-    .app-shell.sidebar-collapsed .brand div { display: none; }
-    .app-shell.sidebar-collapsed .logo { width: 52px; height: 42px; }
-    .app-shell.sidebar-collapsed .nav-btn { font-size: 0; text-align: center; padding: 12px 6px; }
-    .app-shell.sidebar-collapsed .nav-btn::after { content: attr(data-short); font-size: 12px; }
+    .app-shell.sidebar-collapsed aside { width: 0; padding: 0; overflow: visible; }
+    .app-shell.sidebar-collapsed .brand, .app-shell.sidebar-collapsed .nav-btn { display: none; }
+    .app-shell.sidebar-collapsed .side-toggle { position: fixed; left: 14px; bottom: 14px; z-index: 18; margin: 0; background: var(--mint); color: var(--ink); box-shadow: 0 8px 22px rgba(23,33,43,.22); }
     .nav-btn { width: 100%; text-align: left; color: #cbd5d1; background: transparent; padding: 12px 14px; border-radius: 8px; margin: 4px 0; font-weight: 800; font-size: 13px; }
     .nav-btn.active { color: var(--ink); background: var(--mint); }
     main { padding: 24px; min-width: 0; }
@@ -93,6 +90,8 @@
     .btn.ghost { background: #edf4f0; color: var(--ink); }
     .btn.danger { background: #e5484d; color: #fff; }
     .btn.small { min-height: 32px; padding: 0 10px; font-size: 11px; }
+    .btn.icon-only { width: 40px; padding: 0; font-size: 18px; }
+    .btn.small.icon-only { width: 32px; padding: 0; font-size: 16px; }
     #overviewTeacherLinkActions { justify-content: flex-end; }
     #overviewTeacherLinkActions .btn { min-height: 36px; padding: 0 12px; flex: 0 0 auto; width: auto; }
     #overviewTeacherLinkActions a.btn, #overviewTeacherLinkActions a.btn:visited { color: var(--ink); text-decoration: none; }
@@ -104,6 +103,7 @@
     .pill.archived { background: #e8edf1; color: var(--muted); }
     .pill.available { background: var(--ok); }
     .toolbar { display: grid; grid-template-columns: repeat(8, minmax(120px, 1fr)); gap: 12px; align-items: end; }
+    .crm-dashboard-toolbar { grid-template-columns: minmax(170px,1fr) minmax(170px,1fr) auto auto auto; gap: 18px; }
     .schedule-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
     .schedule { min-width: 1040px; display: grid; grid-template-columns: 90px repeat(7, minmax(130px, 1fr)); }
     .cell { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 8px; min-height: 74px; }
@@ -181,6 +181,12 @@
     .lead-table select, .lead-table input { min-height: 32px; padding: 6px 8px; font-size: 12px; }
     .lead-table textarea { min-height: 64px; min-width: 190px; padding: 6px 8px; font-size: 12px; }
     .lead-table td { vertical-align: top; }
+    .column-filter { position: relative; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+    .column-filter-toggle { width: 24px; height: 24px; border-radius: 6px; background: #edf4f0; color: var(--ink); padding: 0; font-weight: 900; }
+    .column-filter-toggle.active { background: var(--mint); }
+    .column-filter-panel { display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 12; min-width: 190px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; box-shadow: 0 12px 28px rgba(23,33,43,.18); }
+    .column-filter.open .column-filter-panel { display: block; }
+    .column-filter-panel input { width: 100%; }
     .crm-session-editor { display: grid; gap: 5px; min-width: 190px; }
     .crm-session-editor + .crm-session-editor { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line); }
     .crm-session-editor strong { font-size: 11px; color: var(--muted); }
@@ -874,7 +880,7 @@
         </div>
         <div class="panel">
           <h2>CRM Leads Monthly Dashboard</h2>
-          <div class="toolbar">
+          <div class="toolbar crm-dashboard-toolbar">
             <div><label>Year</label><input id="crmReportYear" type="number" min="2024" max="2035"></div>
             <div><label>Compare Year</label><input id="crmCompareYear" type="number" min="2024" max="2035" placeholder="Optional"></div>
             <div><label>&nbsp;</label><button class="btn mint" id="generateCrmDashboardBtn">Generate CRM Dashboard</button></div>
@@ -1587,6 +1593,7 @@
     let tutorLeadPage = 1;
     let tutorLeadViewMode = "table";
     let leadColumnFilterTimer = null;
+    let openColumnFilterId = "";
     let replacementViewMode = safeStorageGet("classOneReplacementViewMode") || "board";
     const teacherLinkSyncing = new Set();
     const teacherLinkFailed = new Set();
@@ -5566,6 +5573,8 @@
       const statusOptions = LEAD_STATUSES.map(status => `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`).join("");
       const urgencyOptions = URGENCIES.map(urgency => `<option value="${escapeHtml(urgency)}">${escapeHtml(urgency)}</option>`).join("");
       const filterValue = id => escapeHtml($(id)?.value || "");
+      const filterBox = (key, label, body, active = false) => `<div class="column-filter ${openColumnFilterId === key ? "open" : ""}"><span>${escapeHtml(label)}</span><button type="button" class="column-filter-toggle ${active ? "active" : ""}" data-column-filter-toggle="${escapeHtml(key)}" title="Filter ${escapeHtml(label)}" aria-label="Filter ${escapeHtml(label)}">&#9662;</button><div class="column-filter-panel">${body}</div></div>`;
+      const textFilter = (id, label, placeholder) => filterBox(id, label, `<input id="${id}" data-lead-column-filter value="${filterValue(id)}" placeholder="${escapeHtml(placeholder)}">`, Boolean($(id)?.value));
       const rows = leads.map((lead, index) => {
         lead.id ||= stableLeadId(lead, index);
         return `
@@ -5589,18 +5598,18 @@
       }).join("") || `<tr><td colspan="15">No matching leads.</td></tr>`;
       return `<div class="table-wrap"><table class="lead-table"><thead><tr>
         <th>Created</th>
-        <th>Child<input id="leadFilterChild" data-lead-column-filter value="${filterValue("leadFilterChild")}" placeholder="Filter child"></th>
-        <th>Parent<input id="leadFilterParent" data-lead-column-filter value="${filterValue("leadFilterParent")}" placeholder="Parent / phone"></th>
-        <th>Subjects<input id="leadFilterSubject" data-lead-column-filter value="${filterValue("leadFilterSubject")}" placeholder="Filter subject"></th>
-        <th>Source<input id="leadFilterSource" data-lead-column-filter value="${filterValue("leadFilterSource")}" placeholder="Filter source"></th>
-        <th>Salesperson<input id="leadFilterSalesperson" data-lead-column-filter value="${filterValue("leadFilterSalesperson")}" placeholder="Filter salesperson"></th>
+        <th>${textFilter("leadFilterChild", "Child", "Child name")}</th>
+        <th>${textFilter("leadFilterParent", "Parent", "Parent / phone")}</th>
+        <th>${textFilter("leadFilterSubject", "Subjects", "Subject")}</th>
+        <th>${textFilter("leadFilterSource", "Source", "Source")}</th>
+        <th>${textFilter("leadFilterSalesperson", "Salesperson", "Salesperson")}</th>
         <th>Status</th><th>Urgency</th>
-        <th>Next Follow-up<input id="leadFilterFollowFrom" data-lead-column-filter type="date" value="${filterValue("leadFilterFollowFrom")}" title="Follow-up from"><input id="leadFilterFollowTo" data-lead-column-filter type="date" value="${filterValue("leadFilterFollowTo")}" title="Follow-up to" style="margin-top:5px;"></th>
-        <th>Assessment Teacher / Slot<input id="leadFilterAssessment" data-lead-column-filter type="date" value="${filterValue("leadFilterAssessment")}" title="Assessment date"></th>
-        <th>Trial 1 / Trial 2<input id="leadFilterTrial" data-lead-column-filter type="date" value="${filterValue("leadFilterTrial")}" title="Trial date"></th>
-        <th>Package<input id="leadFilterPackage" data-lead-column-filter value="${filterValue("leadFilterPackage")}" placeholder="Filter package"></th>
+        <th>${filterBox("leadFollowUpFilters", "Next Follow-up", `<label>From</label><input id="leadFilterFollowFrom" data-lead-column-filter type="date" value="${filterValue("leadFilterFollowFrom")}"><label style="margin-top:8px;">To</label><input id="leadFilterFollowTo" data-lead-column-filter type="date" value="${filterValue("leadFilterFollowTo")}">`, Boolean($("leadFilterFollowFrom")?.value || $("leadFilterFollowTo")?.value))}</th>
+        <th>${filterBox("leadFilterAssessment", "Assessment Teacher / Slot", `<input id="leadFilterAssessment" data-lead-column-filter type="date" value="${filterValue("leadFilterAssessment")}">`, Boolean($("leadFilterAssessment")?.value))}</th>
+        <th>${filterBox("leadFilterTrial", "Trial 1 / Trial 2", `<input id="leadFilterTrial" data-lead-column-filter type="date" value="${filterValue("leadFilterTrial")}">`, Boolean($("leadFilterTrial")?.value))}</th>
+        <th>${textFilter("leadFilterPackage", "Package", "Package")}</th>
         <th>Latest Update</th>
-        <th>Notes<input id="leadFilterNotes" data-lead-column-filter value="${filterValue("leadFilterNotes")}" placeholder="Filter notes"></th>
+        <th>${textFilter("leadFilterNotes", "Notes", "Keyword")}</th>
         <th>Actions</th>
       </tr></thead><tbody>${rows}</tbody></table></div>`;
     }
@@ -5806,6 +5815,8 @@
     function renderTutorLeadTable(leads) {
       const statusOptions = TUTOR_STATUSES.map(status => `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`).join("");
       const filterValue = id => escapeHtml($(id)?.value || "");
+      const filterBox = (key, label, body, active = false) => `<div class="column-filter ${openColumnFilterId === key ? "open" : ""}"><span>${escapeHtml(label)}</span><button type="button" class="column-filter-toggle ${active ? "active" : ""}" data-column-filter-toggle="${escapeHtml(key)}" title="Filter ${escapeHtml(label)}" aria-label="Filter ${escapeHtml(label)}">&#9662;</button><div class="column-filter-panel">${body}</div></div>`;
+      const textFilter = (id, label, placeholder) => filterBox(id, label, `<input id="${id}" data-tutor-lead-column-filter value="${filterValue(id)}" placeholder="${escapeHtml(placeholder)}">`, Boolean($(id)?.value));
       const rows = leads.map(lead => {
         const categoryOptions = `<option value="freelance">Freelance Tutor</option><option value="micro_franchisee">Micro Franchisee</option>`;
         const done = (lead.onboarding || []).length;
@@ -5825,13 +5836,13 @@
       }).join("") || `<tr><td colspan="11">No tutor leads match these filters.</td></tr>`;
       return `<div class="table-wrap"><table class="lead-table"><thead><tr>
         <th>Created</th>
-        <th>Tutor / Phone<input id="tutorLeadFilterName" data-tutor-lead-column-filter value="${filterValue("tutorLeadFilterName")}" placeholder="Filter name / phone"></th>
+        <th>${textFilter("tutorLeadFilterName", "Tutor / Phone", "Name / phone")}</th>
         <th>Status</th><th>Category</th>
-        <th>Subjects<input id="tutorLeadFilterSubject" data-tutor-lead-column-filter value="${filterValue("tutorLeadFilterSubject")}" placeholder="Filter subject"></th>
+        <th>${textFilter("tutorLeadFilterSubject", "Subjects", "Subject")}</th>
         <th>Rate / Share</th><th>Onboarding</th>
-        <th>Next Follow-up<input id="tutorLeadFilterFollowFrom" data-tutor-lead-column-filter type="date" value="${filterValue("tutorLeadFilterFollowFrom")}" title="Follow-up from"><input id="tutorLeadFilterFollowTo" data-tutor-lead-column-filter type="date" value="${filterValue("tutorLeadFilterFollowTo")}" title="Follow-up to" style="margin-top:5px;"></th>
-        <th>Source<input id="tutorLeadFilterSource" data-tutor-lead-column-filter value="${filterValue("tutorLeadFilterSource")}" placeholder="Filter source"></th>
-        <th>Notes<input id="tutorLeadFilterNotes" data-tutor-lead-column-filter value="${filterValue("tutorLeadFilterNotes")}" placeholder="Filter notes"></th>
+        <th>${filterBox("tutorFollowUpFilters", "Next Follow-up", `<label>From</label><input id="tutorLeadFilterFollowFrom" data-tutor-lead-column-filter type="date" value="${filterValue("tutorLeadFilterFollowFrom")}"><label style="margin-top:8px;">To</label><input id="tutorLeadFilterFollowTo" data-tutor-lead-column-filter type="date" value="${filterValue("tutorLeadFilterFollowTo")}">`, Boolean($("tutorLeadFilterFollowFrom")?.value || $("tutorLeadFilterFollowTo")?.value))}</th>
+        <th>${textFilter("tutorLeadFilterSource", "Source", "Source")}</th>
+        <th>${textFilter("tutorLeadFilterNotes", "Notes", "Keyword")}</th>
         <th>Actions</th>
       </tr></thead><tbody>${rows}</tbody></table></div>`;
     }
@@ -7065,6 +7076,40 @@
       section.insertBefore(nav, section.firstElementChild);
     }
 
+    function actionSymbol(label) {
+      if (label === "Save" || label.startsWith("Save ")) return "\u2713";
+      if (label === "New" || label.startsWith("Add ")) return "+";
+      if (label === "Close" || label === "Cancel") return "\u00d7";
+      if (label.startsWith("Clear")) return "\u27f3";
+      if (label === "Edit" || label.startsWith("Edit ")) return "\u270e";
+      if (label === "Delete" || label.startsWith("Delete ")) return "\u232b";
+      if (label.startsWith("Copy ")) return "\u29c9";
+      if (label.startsWith("Remove ")) return "\u2212";
+      if (label === "Previous") return "\u2039";
+      if (label === "Next") return "\u203a";
+      if (label === "Open View" || label === "Open Teacher View") return "\u2197";
+      return "";
+    }
+
+    function symbolizeActionButtons(root = document) {
+      const buttons = root.matches?.("button") ? [root] : [...root.querySelectorAll?.("button") || []];
+      buttons.forEach(button => {
+        if (button.dataset.symbolized || button.id === "sidebarToggle" || button.hasAttribute("data-column-filter-toggle")) return;
+        const label = button.textContent.trim().replace(/\s+/g, " ");
+        const symbol = actionSymbol(label);
+        if (!symbol) return;
+        button.dataset.symbolized = "1";
+        button.title ||= label;
+        button.setAttribute("aria-label", label);
+        button.textContent = symbol;
+        button.classList.add("icon-only");
+      });
+    }
+
+    const symbolButtonObserver = new MutationObserver(mutations => mutations.forEach(mutation => mutation.addedNodes.forEach(node => {
+      if (node.nodeType === 1) symbolizeActionButtons(node);
+    })));
+
     function renderAll() {
       if (initialDataLoadComplete) processExpiredReservations();
       const old = Object.fromEntries(["monthSelect", "reportMonth", "businessDashboardMonth", "businessDashboardYear", "revenueFromMonth", "revenueFromYear", "revenueToMonth", "revenueToYear", "revenueEntryMonth", "revenueEntryYear", "weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "typeFilter", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear", "slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher", "teacherStudentRecordTeacher", "teacherStudentRecordStatus", "teacherStudentRecordSearch", "teacherDirectorySubject", "reportTeacher", "tutorLeadFilterStatus", "tutorLeadFilterCategory"].map(id => [id, $(id)?.value]));
@@ -7091,6 +7136,7 @@
       renderActivityLog();
       renderSectionNav();
       updateActionPopup();
+      symbolizeActionButtons();
     }
 
     function clearTeacherForm() {
@@ -9605,6 +9651,22 @@
     };
     ["leadFilterStatus", "leadFilterUrgency"].forEach(id => $(id).addEventListener("change", resetLeadPageAndRender));
     $("leadSearch").addEventListener("input", resetLeadPageAndRender);
+    document.addEventListener("click", event => {
+      const toggle = event.target.closest("[data-column-filter-toggle]");
+      if (toggle) {
+        event.preventDefault();
+        event.stopPropagation();
+        const key = toggle.dataset.columnFilterToggle;
+        openColumnFilterId = openColumnFilterId === key ? "" : key;
+        document.querySelectorAll(".column-filter").forEach(filter => filter.classList.toggle("open", filter.contains(toggle) && Boolean(openColumnFilterId)));
+        if (openColumnFilterId) setTimeout(() => toggle.closest(".column-filter")?.querySelector("input")?.focus(), 0);
+        return;
+      }
+      if (!event.target.closest(".column-filter-panel")) {
+        openColumnFilterId = "";
+        document.querySelectorAll(".column-filter.open").forEach(filter => filter.classList.remove("open"));
+      }
+    });
     document.addEventListener("input", event => {
       const leadFilter = event.target.closest("[data-lead-column-filter]");
       const tutorFilter = event.target.closest("[data-tutor-lead-column-filter]");
@@ -9631,10 +9693,12 @@
     });
     $("clearLeadColumnFiltersBtn").onclick = () => {
       document.querySelectorAll("[data-lead-column-filter]").forEach(input => input.value = "");
+      openColumnFilterId = "";
       resetLeadPageAndRender();
     };
     $("clearTutorLeadColumnFiltersBtn").onclick = () => {
       document.querySelectorAll("[data-tutor-lead-column-filter]").forEach(input => input.value = "");
+      openColumnFilterId = "";
       tutorLeadPage = 1;
       renderTutorCrm();
     };
@@ -9886,6 +9950,7 @@
 
     async function initApp() {
       try {
+        symbolButtonObserver.observe(document.body, { childList: true, subtree: true });
         load();
         setSidebarCollapsed(safeStorageGet("classOneSidebarCollapsed") === "1");
         initializeTabLayouts();
