@@ -191,10 +191,24 @@
       display: grid;
       gap: 16px;
     }
+    .week-navigation {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr) 44px;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 12px;
+      touch-action: pan-y;
+    }
+    .week-navigation .btn { width: 44px; padding: 0; font-size: 25px; }
+    .week-navigation-label { text-align: center; min-width: 0; }
+    .week-navigation-label strong { display: block; font-size: 15px; }
+    .week-navigation-label span { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; font-weight: 800; }
     .month-week {
       display: grid;
       gap: 8px;
+      animation: week-in .18s ease;
     }
+    @keyframes week-in { from { opacity: .45; transform: translateX(8px); } to { opacity: 1; transform: translateX(0); } }
     .month-week h3 {
       display: flex;
       justify-content: space-between;
@@ -405,6 +419,11 @@
 
     <section id="monthCalendarSection">
       <h2>Whole Month Calendar</h2>
+      <div class="week-navigation" id="weekNavigation" aria-label="Week navigation">
+        <button class="btn ghost" id="previousWeekBtn" title="Previous week" aria-label="Previous week">&lsaquo;</button>
+        <div class="week-navigation-label"><strong id="selectedWeekLabel">Loading week...</strong><span id="selectedWeekContext"></span></div>
+        <button class="btn ghost" id="nextWeekBtn" title="Next week" aria-label="Next week">&rsaquo;</button>
+      </div>
       <div id="monthCalendar" class="month-calendar"></div>
     </section>
 
@@ -533,6 +552,8 @@
     let autoSyncInProgress = false;
     let lastAutoSyncAt = null;
     let lastLoadedVersion = 0;
+    let selectedWeekStartISO = "";
+    let weekSwipeStart = null;
     let studentSaveTimer = null;
     let incentiveClaimLoadedKey = "";
     let incentiveClaimLoading = false;
@@ -717,6 +738,7 @@
       $("claimYearSelect").innerHTML = $("yearSelect").innerHTML;
       $("claimYearSelect").value = String(selectedYear);
       fillClaimMonthSelect(selectedYear, selectedMonth);
+      resetSelectedWeek(true);
     }
 
     function fillClaimMonthSelect(year, preferredMonth = null) {
@@ -748,11 +770,60 @@
       return weeks;
     }
 
+    function weekIntersectsMonth(startISO, year, month) {
+      const start = parseISODate(startISO);
+      const end = parseISODate(dateOffsetISO(startISO, 6));
+      const monthStart = new Date(year, month, 1);
+      const monthEnd = new Date(year, month + 1, 0, 23, 59, 59);
+      return start <= monthEnd && end >= monthStart;
+    }
+
+    function resetSelectedWeek(preferLiveWeek = false) {
+      const month = Number($("monthSelect").value);
+      const year = Number($("yearSelect").value);
+      const liveWeek = localISO(mondayOf(new Date()));
+      selectedWeekStartISO = preferLiveWeek && weekIntersectsMonth(liveWeek, year, month)
+        ? liveWeek
+        : (weeksForMonth(year, month)[0] || liveWeek);
+    }
+
+    function selectedWeekIsLive() {
+      return selectedWeekStartISO === localISO(mondayOf(new Date()));
+    }
+
+    function ensureYearOption(year) {
+      if (![...$("yearSelect").options].some(option => Number(option.value) === year)) {
+        $("yearSelect").add(new Option(String(year), String(year)));
+      }
+    }
+
+    async function navigateWeek(offset) {
+      const candidate = dateOffsetISO(selectedWeekStartISO || localISO(mondayOf(new Date())), offset * 7);
+      const minimumDate = new Date(FIRST_VIEW_YEAR, FIRST_VIEW_MONTH, 1);
+      if (parseISODate(dateOffsetISO(candidate, 6)) < minimumDate) return;
+      const selectedMonth = Number($("monthSelect").value);
+      const selectedYear = Number($("yearSelect").value);
+      selectedWeekStartISO = candidate;
+      if (weekIntersectsMonth(candidate, selectedYear, selectedMonth)) {
+        renderMonthCalendar();
+        return;
+      }
+      const reference = parseISODate(offset > 0 ? dateOffsetISO(candidate, 6) : candidate);
+      const targetYear = reference.getFullYear();
+      const targetMonth = reference.getMonth();
+      ensureYearOption(targetYear);
+      $("yearSelect").value = String(targetYear);
+      fillMonthSelect(targetYear, targetMonth);
+      $("monthSelect").value = String(targetMonth);
+      await loadTimetable();
+    }
+
     function selectedMonthRange() {
       const month = Number($("monthSelect").value);
       const year = Number($("yearSelect").value);
-      const monthStart = new Date(year, month, 1);
-      const monthEnd = new Date(year, month + 1, 0);
+      const monthStart = mondayOf(new Date(year, month, 1));
+      const monthEndMonday = mondayOf(new Date(year, month + 1, 0));
+      const monthEnd = parseISODate(dateOffsetISO(localISO(monthEndMonday), 6));
       const nextWeek = parseISODate(dateOffsetISO(localISO(new Date()), 7));
       const toDate = new Date(Math.max(monthEnd.getTime(), nextWeek.getTime()));
       return { from: localISO(monthStart), to: localISO(toDate), month, year };
@@ -965,14 +1036,15 @@
     function renderMonthCalendar() {
       const month = Number($("monthSelect").value);
       const year = Number($("yearSelect").value);
+      if (!selectedWeekStartISO || !weekIntersectsMonth(selectedWeekStartISO, year, month)) resetSelectedWeek(true);
+      const dates = weekDates(selectedWeekStartISO);
       const weeks = weeksForMonth(year, month);
-      $("monthCalendar").innerHTML = weeks.map((startISO, index) => {
-        const dates = weekDates(startISO);
-        return `<div class="month-week">
-          <h3><span>Week ${index + 1}</span><span>${dateLabel(localISO(dates[0]))} - ${dateLabel(localISO(dates[6]))}</span></h3>
-          <div class="timetable-wrap">${weekTableHtml(dates, { month })}</div>
-        </div>`;
-      }).join("");
+      const weekIndex = weeks.indexOf(selectedWeekStartISO);
+      $("selectedWeekLabel").textContent = `${dateLabel(localISO(dates[0]))} - ${dateLabel(localISO(dates[6]))}`;
+      $("selectedWeekContext").textContent = selectedWeekIsLive() ? "Live week" : (weekIndex >= 0 ? `Week ${weekIndex + 1} of ${MONTHS[month]} ${year}` : `${MONTHS[month]} ${year}`);
+      const minimumDate = new Date(FIRST_VIEW_YEAR, FIRST_VIEW_MONTH, 1);
+      $("previousWeekBtn").disabled = parseISODate(dateOffsetISO(selectedWeekStartISO, -1)) < minimumDate;
+      $("monthCalendar").innerHTML = `<div class="month-week"><div class="timetable-wrap">${weekTableHtml(dates, { month })}</div></div>`;
     }
 
     function classEntries(fromISO, toISO) {
@@ -1531,12 +1603,33 @@
       renderVisibility();
     }
 
-    $("monthSelect").addEventListener("change", () => loadTimetable().catch(error => setStatus(error.message, "error")));
+    $("monthSelect").addEventListener("change", () => {
+      resetSelectedWeek(true);
+      loadTimetable().catch(error => setStatus(error.message, "error"));
+    });
     $("yearSelect").addEventListener("change", () => {
       fillMonthSelect(Number($("yearSelect").value), Number($("monthSelect").value));
+      resetSelectedWeek(true);
       loadTimetable().catch(error => setStatus(error.message, "error"));
     });
     $("refreshBtn").addEventListener("click", () => loadTimetable().catch(error => setStatus(error.message, "error")));
+    $("previousWeekBtn").addEventListener("click", () => navigateWeek(-1).catch(error => setStatus(error.message, "error")));
+    $("nextWeekBtn").addEventListener("click", () => navigateWeek(1).catch(error => setStatus(error.message, "error")));
+    $("monthCalendarSection").addEventListener("touchstart", event => {
+      if (event.touches.length !== 1 || event.target.closest(".timetable-wrap")) {
+        weekSwipeStart = null;
+        return;
+      }
+      weekSwipeStart = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+    }, { passive: true });
+    $("monthCalendarSection").addEventListener("touchend", event => {
+      if (!weekSwipeStart || !event.changedTouches.length) return;
+      const deltaX = event.changedTouches[0].clientX - weekSwipeStart.x;
+      const deltaY = event.changedTouches[0].clientY - weekSwipeStart.y;
+      weekSwipeStart = null;
+      if (Math.abs(deltaX) < 55 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.25) return;
+      navigateWeek(deltaX < 0 ? 1 : -1).catch(error => setStatus(error.message, "error"));
+    }, { passive: true });
     $("exportIncomePdfBtn").addEventListener("click", exportIncomePdf);
     $("claimYearSelect").addEventListener("change", () => {
       fillClaimMonthSelect(Number($("claimYearSelect").value), Number($("claimMonthSelect").value));
