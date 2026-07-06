@@ -1346,7 +1346,14 @@
       <div class="row spread"><h2>Reserve Regular Slot</h2><button class="btn ghost small" data-close>Close</button></div>
       <input id="reserveRegularSlotData" type="hidden">
       <div class="subtle" id="reserveRegularSlotInfo"></div>
-      <div style="margin-top:14px;"><label>Student</label><select id="reserveRegularStudent"></select></div>
+      <div class="grid two" style="margin-top:14px;">
+        <div><label>Search Student / Lead</label><input id="reserveRegularSearch" placeholder="Child, parent or phone number"></div>
+        <div><label>Reserve For</label><select id="reserveRegularPerson"></select></div>
+      </div>
+      <div class="grid two" style="margin-top:14px;">
+        <div><label>Reservation Name</label><input id="reserveRegularDisplayName" placeholder="Child's name"></div>
+        <div><label>Selected From</label><div id="reserveRegularPersonSource" class="subtle" style="padding-top:12px;">Choose a registered student or CRM lead.</div></div>
+      </div>
       <div style="margin-top:14px;">
         <label>Reservation Type</label>
         <div class="row view-toggle" id="reserveRegularModeButtons">
@@ -3555,10 +3562,72 @@
         .sort(byName);
     }
 
-    function reservationStudentOptions() {
-      return [...(state.students || [])]
+    function reservationPeople(query = "") {
+      const needle = String(query || "").trim().toLowerCase();
+      const students = [...(state.students || [])]
         .filter(student => student.status !== "archived" && (student.registeredStatus || "active") !== "drop")
-        .sort(byName);
+        .map(student => ({
+          value: `student:${student.id}`,
+          type: "student",
+          student,
+          name: cleanStudentName(student.name || ""),
+          search: [student.name, student.package, ...(student.subjects || [])].filter(Boolean).join(" ").toLowerCase(),
+          label: `${cleanStudentName(student.name || "Unnamed student")} - Registered${student.package ? ` - ${student.package}` : ""}`
+        }));
+      const leads = [...(state.leads || [])]
+        .filter(lead => !lead.archived && !["Enrolled", "Lost", "Not Interested"].includes(lead.status || ""))
+        .map(lead => {
+          const childName = cleanStudentName(lead.childName || "");
+          const fallback = cleanStudentName(lead.parentName || "") || String(lead.parentPhone || "").trim() || "Unnamed lead";
+          return {
+            value: `lead:${lead.id}`,
+            type: "lead",
+            lead,
+            name: childName,
+            search: [lead.childName, lead.parentName, lead.parentPhone, lead.status, ...(lead.subjects || [])].filter(Boolean).join(" ").toLowerCase(),
+            label: `${childName || fallback} - CRM Lead${lead.parentPhone ? ` - ${lead.parentPhone}` : ""}`
+          };
+        });
+      return [...students, ...leads]
+        .filter(person => !needle || person.search.includes(needle))
+        .sort((a, b) => a.label.localeCompare(b.label));
+    }
+
+    function reservationPerson(value = $("reserveRegularPerson")?.value || "") {
+      if (!value) return null;
+      const [type, id] = String(value).split(":");
+      if (type === "student") {
+        const student = studentById(id);
+        return student ? { value, type, student, name: cleanStudentName(student.name || ""), label: "Registered Student" } : null;
+      }
+      if (type === "lead") {
+        const lead = (state.leads || []).find(item => item.id === id && !item.archived);
+        return lead ? { value, type, lead, name: cleanStudentName(lead.childName || ""), label: "CRM Lead" } : null;
+      }
+      return null;
+    }
+
+    function renderReservationPeople(query = "", preferredValue) {
+      const people = reservationPeople(query);
+      const selectedValue = preferredValue === undefined ? ($("reserveRegularPerson")?.value || "") : preferredValue;
+      $("reserveRegularPerson").innerHTML = `<option value="">Choose registered student or CRM lead</option>${people.map(person => `<option value="${escapeHtml(person.value)}">${escapeHtml(person.label)}</option>`).join("")}`;
+      if (selectedValue && people.some(person => person.value === selectedValue)) $("reserveRegularPerson").value = selectedValue;
+      updateReservationPersonDetails(false);
+    }
+
+    function updateReservationPersonDetails(overwriteName = true) {
+      const person = reservationPerson();
+      if (!person) {
+        $("reserveRegularPersonSource").textContent = "Choose a registered student or CRM lead.";
+        if (overwriteName) $("reserveRegularDisplayName").value = "";
+        return;
+      }
+      const detail = person.type === "student"
+        ? [person.label, person.student.package].filter(Boolean).join(" | ")
+        : [person.label, person.lead.status, person.lead.parentName, person.lead.parentPhone].filter(Boolean).join(" | ");
+      $("reserveRegularPersonSource").textContent = detail;
+      if (overwriteName) $("reserveRegularDisplayName").value = person.name || "";
+      setReserveRegularMode($("reserveRegularMode").value);
     }
 
     function openTeacherOpenSlotChoiceModal(data) {
@@ -3601,21 +3670,29 @@
         button.classList.toggle("ghost", !active);
       });
       $("reserveRegularStartField").classList.toggle("hide", validMode !== "future_regular");
+      const person = reservationPerson();
       $("reserveRegularHelp").textContent = validMode === "tentative"
-        ? "This holds the slot for 14 days. It reopens automatically if enrollment is not confirmed."
-        : "Before the start date, this slot can only be used for Assessment, Exam, Trial Class, Extra Class, or Replacement Class.";
+        ? "This holds the slot for 14 days. It appears in Teacher Overview and Weekly Timetable, then reopens automatically if enrollment is not confirmed."
+        : person?.type === "lead"
+          ? "A CRM lead must be enrolled and added to Students before a future fixed regular class can be confirmed."
+          : "Before the start date, this slot can only be used for Assessment, Exam, Trial Class, Extra Class, or Replacement Class.";
     }
 
-    function openReserveRegularSlotModal(data) {
+    function openReserveRegularSlotModal(data, preset = {}) {
       const teacher = teacherById(data.teacherId);
       if (!teacher) return alert("Teacher not found.");
-      const students = reservationStudentOptions();
-      if (!students.length) return alert("Add the child to the Students list before reserving a regular slot.");
-      $("reserveRegularStudent").innerHTML = `<option value="">Choose student</option>${students.map(student => `<option value="${escapeHtml(student.id)}">${escapeHtml(student.name)}${student.package ? ` - ${escapeHtml(student.package)}` : ""}</option>`).join("")}`;
-      $("reserveRegularSlotData").value = JSON.stringify(data);
+      const openSlot = (teacher.regularSlots || []).find(slot => slot.id === data.slotId && !slot.locked)
+        || teacherOverviewActiveSlot(teacher, data.day, data.time);
+      if (!openSlot || openSlot.locked || openSlot.unavailable) return alert("A 14-day reservation needs an open fixed weekly slot. Open this time in Teacher Overview first.");
+      const normalizedData = { ...data, slotId: openSlot.id, subject: data.subject || openSlot.subject || (teacher.subjects || [])[0] || "" };
+      $("reserveRegularSlotData").value = JSON.stringify(normalizedData);
       $("reserveRegularSlotInfo").textContent = `${teacher.name} | ${data.day} ${timeLabel(data.time)} | ${data.subject || (teacher.subjects || [])[0] || "Teacher's subject"}`;
       $("reserveRegularStartDate").value = firstWeeklyDateOnOrAfter(dateOffsetISO(todayISO(), 1), data.day);
-      $("reserveRegularRemark").value = "";
+      $("reserveRegularSearch").value = "";
+      $("reserveRegularDisplayName").value = preset.displayName || "";
+      $("reserveRegularRemark").value = preset.remark || "";
+      renderReservationPeople("", preset.personValue || "");
+      if (preset.personValue) updateReservationPersonDetails(!preset.displayName);
       setReserveRegularMode("tentative");
       $("reserveRegularSlotModal").classList.remove("hide");
     }
@@ -3642,14 +3719,18 @@
       if (!data || !teacher) return alert("Open slot data is missing.");
       const openSlot = (teacher.regularSlots || []).find(slot => slot.id === data.slotId && !slot.locked);
       if (!openSlot) return alert("This slot is no longer open. Refresh the Teacher Overview and try again.");
-      const selectedStudent = studentById($("reserveRegularStudent").value);
-      if (!selectedStudent) return alert("Choose a student from the list.");
-      const reserveName = cleanStudentName(selectedStudent.name);
+      const person = reservationPerson();
+      if (!person) return alert("Choose a registered student or CRM lead.");
+      const selectedStudent = person.student || null;
+      const selectedLead = person.lead || null;
+      const reserveName = cleanStudentName($("reserveRegularDisplayName").value || person.name || "");
+      if (!reserveName) return alert("Enter the child's name for this reservation.");
       const mode = $("reserveRegularMode").value;
       const startDate = todayISO();
       const subject = data.subject || openSlot?.subject || (teacher.subjects || [])[0] || "";
       const now = new Date().toISOString();
       if (mode === "future_regular") {
+        if (!selectedStudent) return alert("This CRM lead must be enrolled and added to Students before booking a future fixed regular class.");
         const regularStartDate = dateOnly($("reserveRegularStartDate").value);
         if (!regularStartDate || regularStartDate <= todayISO()) return alert("Choose a future regular class start date.");
         if (dayFromISO(regularStartDate) !== data.day) return alert(`The start date must be a ${data.day}, matching this weekly slot.`);
@@ -3685,6 +3766,8 @@
       teacher.regularSlots.push({
         id: uid("slot"),
         studentId: selectedStudent?.id || "",
+        leadId: selectedLead?.id || "",
+        reservationPersonType: person.type,
         studentName: reserveName,
         reservationName: reserveName,
         reserved: true,
@@ -3702,7 +3785,7 @@
         updatedAt: now
       });
       teacher.updatedAt = now;
-      logAction("Regular Slot Reserved", `${reserveName} with ${teacher.name}`, "Open weekly slot", `${data.day} ${timeLabel(data.time)} | ${startDate} to ${endDate}`, "Reservation expires automatically after 14 days.");
+      logAction("Regular Slot Reserved", `${reserveName} with ${teacher.name}`, "Open weekly slot", `${data.day} ${timeLabel(data.time)} | ${startDate} to ${endDate}`, `${person.label}; reservation expires automatically after 14 days.`);
       $("reserveRegularSlotModal").classList.add("hide");
       save(false);
       setStatus(`${teacher.name}'s ${data.day} ${timeLabel(data.time)} slot is reserved for ${reserveName} for 14 days.`);
@@ -4494,7 +4577,7 @@
         return `<button class="slot fixed" draggable="true" title="Drag to an open slot to move this fixed regular class" data-drag-fixed-slot="${fixedData}" data-fixed-slot="${fixedData}">${escapeHtml(teacher.name)}<small>Fixed regular: ${escapeHtml(slot.studentName || "occupied")} | ${escapeHtml(subject)} | drag to move</small></button>`;
       }
       const futureReservation = futureRegularReservationForDate(slot.teacherId, slot.date, slot.time);
-      return `<button class="slot" data-slot="${escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject }))}">${escapeHtml(teacher.name)}<small>${futureReservation ? `Temporary classes only until ${escapeHtml(formatDateFromAny(futureReservation.startDate))} | reserved for ${escapeHtml(futureReservation.studentName || "student")}` : `Available | ${escapeHtml(subject)} | 30 min slot, 25 min class`}</small></button>`;
+      return `<button class="slot" data-slot="${escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, slotId: slot.id || "", source: slot.source || "" }))}">${escapeHtml(teacher.name)}<small>${futureReservation ? `Temporary classes only until ${escapeHtml(formatDateFromAny(futureReservation.startDate))} | reserved for ${escapeHtml(futureReservation.studentName || "student")}` : `Available | ${escapeHtml(subject)} | 30 min slot, 25 min class`}</small></button>`;
     }
 
     function renderTeachers() {
@@ -9487,10 +9570,19 @@
       const slot = JSON.parse($("bookingSlot").value);
       const student = studentById($("bookingStudent").value);
       const studentName = cleanStudentName($("bookingStudentName").value) || (student ? cleanStudentName(student.name) : "");
-      if (!studentName) return alert("Choose a student or type a student name.");
       const type = $("bookingType").value;
       const subject = $("bookingSubject").value;
       const remark = $("bookingRemark").value.trim();
+      if (type === "reserve") {
+        const matchingLead = !student && studentName
+          ? (state.leads || []).find(lead => !lead.archived && studentNameKey(lead.childName) === studentNameKey(studentName))
+          : null;
+        const personValue = student ? `student:${student.id}` : (matchingLead ? `lead:${matchingLead.id}` : "");
+        $("bookingModal").classList.add("hide");
+        openReserveRegularSlotModal(slot, { personValue, displayName: studentName, remark });
+        return;
+      }
+      if (!studentName) return alert("Choose a student or type a student name.");
       let period;
       try { period = bookingDatesFromForm(slot); } catch (err) { return alert(err.message); }
       const restrictedDate = period.dates.find(date => futureRegularReservationForDate(slot.teacherId, date, slot.time));
@@ -9889,6 +9981,8 @@
         alert(`Slot reservation failed: ${err.message}`);
       }
     };
+    $("reserveRegularSearch").addEventListener("input", () => renderReservationPeople($("reserveRegularSearch").value));
+    $("reserveRegularPerson").addEventListener("change", () => updateReservationPersonDetails(true));
     $("setFixedRegularSlotOffBtn").onclick = setFixedRegularSlotOff;
     $("confirmCancelFixedRegularBtn").onclick = () => {
       try { confirmCancelFixedRegular(); }
