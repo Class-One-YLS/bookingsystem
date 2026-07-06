@@ -217,6 +217,9 @@
     .bar-row { display: grid; grid-template-columns: 86px minmax(0, 1fr) 64px; gap: 8px; align-items: center; font-size: 12px; }
     .bar-track { height: 18px; background: #edf4f0; border-radius: 999px; overflow: hidden; }
     .bar-fill { height: 100%; background: var(--mint); min-width: 2px; }
+    .payout-chart { max-width: 880px; }
+    .payout-chart .bar-row { grid-template-columns: minmax(130px, 190px) minmax(180px, 560px) 96px; }
+    .payout-chart .bar-row strong { white-space: nowrap; }
     .check-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
     #crm > .grid.two:first-child { grid-template-columns: 1fr; }
     .filter-panel { display: grid; gap: 12px; margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: #fbfdfc; }
@@ -249,6 +252,7 @@
       .toolbar, .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }
       .template-grid { grid-template-columns: 1fr; }
       .topbar { align-items: flex-start; flex-direction: column; }
+      .payout-chart .bar-row { grid-template-columns: minmax(90px, 1fr) minmax(100px, 2fr) 82px; }
     }
   </style>
 </head>
@@ -915,7 +919,7 @@
             </div>
           </div>
           <div id="allTeacherPayoutSummary" class="sales-summary"></div>
-          <div id="allTeacherPayoutChart" class="chart"></div>
+          <div id="allTeacherPayoutChart" class="chart payout-chart"></div>
           <div id="allTeacherPayoutTable" style="margin-top:16px;"></div>
         </div>
       </section>
@@ -2551,7 +2555,7 @@
       const entry = revenueEntryFor(month, year);
       $("revenueEntryAmount").value = entry ? Number(entry.amount || 0).toFixed(2) : "";
       $("revenueEntryRemark").value = entry?.remark || "";
-      $("saveRevenueEntryBtn").textContent = entry ? "Update Revenue" : "Save Revenue";
+      setActionButtonLabel($("saveRevenueEntryBtn"), entry ? "Update Revenue" : "Save Revenue");
     }
 
     function includeRevenueEntryInRange(month, year) {
@@ -2771,9 +2775,18 @@
     function studentTeacherSlotReason(teacher, day, time, subject, startDate, endDate) {
       if (!teacher) return "Choose a valid teacher.";
       if (subject && !(teacher.subjects || []).map(normalizeSubject).includes(normalizeSubject(subject))) return `${teacher.name} does not teach ${subject}.`;
+      const ownTeacherSlotIds = new Set((teacher.regularSlots || [])
+        .filter(slot => slot.studentSlotId === studentRegularSlotEditId)
+        .map(slot => slot.id));
       const ownSlot = (teacher.regularSlots || []).find(slot =>
         slot.locked && slot.studentSlotId === studentRegularSlotEditId && slot.day === day && slot.time === time && regularSlotCoversRange(slot, startDate, endDate)
       );
+      const bookedClass = activeBookings().find(booking =>
+        booking.teacherId === teacher.id && booking.time === time &&
+        dayFromISO(booking.date) === day && booking.date >= startDate &&
+        (!endDate || booking.date <= endDate) && !ownTeacherSlotIds.has(booking.sourceSlotId)
+      );
+      if (bookedClass) return `${teacher.name} is already booked by ${bookedClass.studentName || "another student"} on ${formatClassDateTime(bookedClass.date, bookedClass.time)}.`;
       if (ownSlot) return "";
       const conflict = (teacher.regularSlots || []).find(slot =>
         slot.locked && slot.studentSlotId !== studentRegularSlotEditId && slot.day === day && slot.time === time &&
@@ -2783,10 +2796,7 @@
         if (conflict.reserved) return `${teacher.name}'s ${day} ${timeLabel(time)} slot is reserved for ${conflict.reservationName || conflict.studentName || "another student"}.`;
         return `${teacher.name} already has a fixed regular class for ${conflict.studentName || "another student"} on ${day} at ${timeLabel(time)}.`;
       }
-      const open = (teacher.regularSlots || []).find(slot =>
-        !slot.locked && !slot.unavailable && slot.day === day && slot.time === time && regularSlotCoversRange(slot, startDate, endDate)
-      );
-      return open ? "" : `${teacher.name} does not have an open ${day} ${timeLabel(time)} slot for the selected effective period.`;
+      return "";
     }
 
     function studentScheduleTimes() {
@@ -3223,7 +3233,7 @@
         configureTeacherSlotEditPanel(teacher);
       }
       $("teacherSlotEditPanel").classList.toggle("hide", !teacherSlotEditMode);
-      $("toggleTeacherSlotEditBtn").textContent = teacherSlotEditMode ? "Exit Slot Editing" : "Edit Slots";
+      setActionButtonLabel($("toggleTeacherSlotEditBtn"), teacherSlotEditMode ? "Exit Slot Editing" : "Edit Slots");
       $("toggleTeacherSlotEditBtn").classList.toggle("danger", teacherSlotEditMode);
       $("toggleTeacherSlotEditBtn").classList.toggle("mint", !teacherSlotEditMode);
       renderTeacherOverview();
@@ -3281,7 +3291,7 @@
         teacherSlotEditMode = false;
         teacherSlotEditTeacherId = "";
         $("teacherSlotEditPanel").classList.add("hide");
-        $("toggleTeacherSlotEditBtn").textContent = "Edit Slots";
+        setActionButtonLabel($("toggleTeacherSlotEditBtn"), "Edit Slots");
         $("toggleTeacherSlotEditBtn").classList.remove("danger");
         $("toggleTeacherSlotEditBtn").classList.add("mint");
       }
@@ -4825,7 +4835,7 @@
 
     function resetStudentRegularSlotEditor() {
       studentRegularSlotEditId = "";
-      $("addStudentRegularSlotBtn").textContent = "Add Regular Slot";
+      setActionButtonLabel($("addStudentRegularSlotBtn"), "Add Regular Slot");
       $("cancelStudentRegularEditBtn").classList.add("hide");
       $("studentTeacher").value = "";
       $("studentTime").value = "";
@@ -4891,7 +4901,8 @@
           subject: studentSlot.subject,
           startDate: studentSlot.startDate || "",
           endDate: studentSlot.endDate || "",
-          locked: true
+          locked: true,
+          unavailable: false
         });
       });
       const nextIds = new Set(nextSlots.map(slot => slot.id));
@@ -7078,17 +7089,31 @@
 
     function actionSymbol(label) {
       if (label === "Save" || label.startsWith("Save ")) return "\u2713";
+      if (label === "Update Revenue") return "\u2713";
       if (label === "New" || label.startsWith("Add ")) return "+";
-      if (label === "Close" || label === "Cancel") return "\u00d7";
+      if (label === "Close" || label === "Cancel" || label.startsWith("Exit ")) return "\u00d7";
       if (label.startsWith("Clear")) return "\u27f3";
       if (label === "Edit" || label.startsWith("Edit ")) return "\u270e";
+      if (label.startsWith("Update ")) return "\u270e";
       if (label === "Delete" || label.startsWith("Delete ")) return "\u232b";
       if (label.startsWith("Copy ")) return "\u29c9";
       if (label.startsWith("Remove ")) return "\u2212";
       if (label === "Previous") return "\u2039";
       if (label === "Next") return "\u203a";
       if (label === "Open View" || label === "Open Teacher View") return "\u2197";
+      if (label === "Export Excel") return "\u25a6";
+      if (label.includes("PDF") && label.startsWith("Export")) return "\u25a4";
+      if (label === "Generate" || label.startsWith("Generate ")) return "\u21bb";
       return "";
+    }
+
+    function setActionButtonLabel(button, label) {
+      if (!button) return;
+      delete button.dataset.symbolized;
+      button.classList.remove("icon-only");
+      button.removeAttribute("aria-label");
+      button.textContent = label;
+      symbolizeActionButtons(button);
     }
 
     function symbolizeActionButtons(root = document) {
@@ -8432,7 +8457,7 @@
           teacherSlotEditMode = false;
           teacherSlotEditTeacherId = "";
           $("teacherSlotEditPanel").classList.add("hide");
-          $("toggleTeacherSlotEditBtn").textContent = "Edit Slots";
+          setActionButtonLabel($("toggleTeacherSlotEditBtn"), "Edit Slots");
           $("toggleTeacherSlotEditBtn").classList.remove("danger");
           $("toggleTeacherSlotEditBtn").classList.add("mint");
         }
@@ -8709,7 +8734,7 @@
         updateStudentTeacherOptions(slot.teacherId);
         $("studentTime").value = slot.time || "";
         refreshStudentScheduleOptions(slot.teacherId);
-        $("addStudentRegularSlotBtn").textContent = "Update Regular Slot";
+        setActionButtonLabel($("addStudentRegularSlotBtn"), "Update Regular Slot");
         $("cancelStudentRegularEditBtn").classList.remove("hide");
       }
       const editLead = e.target.closest("[data-edit-lead]");
