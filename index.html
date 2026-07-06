@@ -124,6 +124,8 @@
     .slot.reserve { background: #dceafe; }
     .teacher-cell-reserved { background: #dceafe; color: #111; }
     .teacher-cell-reserved .teacher-cell-button { color: #111; font-weight: 900; }
+    .teacher-cell-open.has-admin-remark { background: #fff; }
+    .teacher-open-remark { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: #52635b; font-size: 11px; font-style: italic; font-weight: 800; line-height: 1.2; overflow-wrap: anywhere; }
     .slot.drop-target { outline: 3px solid var(--mint-dark); outline-offset: 2px; box-shadow: 0 0 0 4px rgba(114,208,161,.18); }
     .cell.drop-target { outline: 3px solid var(--mint-dark); outline-offset: -4px; background: #f4fbf7; }
     .slot small { display: block; color: #3d4b45; font-weight: 700; margin-top: 2px; }
@@ -1302,11 +1304,30 @@
       <div class="row" style="margin-top:16px;">
         <button class="btn ghost" id="chooseReserveSlotBtn">Reserve</button>
         <button class="btn mint" id="chooseBookRegularBtn">Book Regular Class</button>
+        <button class="btn ghost" id="chooseOpenSlotRemarkBtn">Add Remark</button>
         <button class="btn ghost hide" id="chooseOpenThisSlotBtn">Open This Slot</button>
         <button class="btn danger" id="chooseSetSlotOffBtn">Set To OFF</button>
         <button class="btn ghost" data-close>Cancel</button>
       </div>
       <div class="subtle" id="teacherOpenSlotChoiceHint" style="margin-top:10px;"></div>
+    </div>
+  </div>
+
+  <div id="teacherOpenSlotRemarkModal" class="modal hide">
+    <div class="modal-card">
+      <div class="row spread"><h2>Open Slot Remark</h2><button class="btn ghost small" data-close>Close</button></div>
+      <input id="teacherOpenSlotRemarkData" type="hidden">
+      <div class="subtle" id="teacherOpenSlotRemarkInfo"></div>
+      <div style="margin-top:14px;">
+        <label>Admin Remark</label>
+        <input id="teacherOpenSlotRemarkText" maxlength="80" placeholder="Short internal note for this open slot">
+      </div>
+      <div class="subtle" style="margin-top:10px;">Shown only in Teacher Overview. It does not book the slot and will not appear in the teacher view link.</div>
+      <div class="row" style="margin-top:14px;">
+        <button class="btn mint" id="saveTeacherOpenSlotRemarkBtn">Save Remark</button>
+        <button class="btn danger hide" id="deleteTeacherOpenSlotRemarkBtn">Delete Remark</button>
+        <button class="btn ghost" data-close>Cancel</button>
+      </div>
     </div>
   </div>
 
@@ -3486,7 +3507,9 @@
       }
       if (slot && !slot.unavailable) {
         const data = escapeHtml(JSON.stringify({ teacherId: teacher.id, day, time: slot.time, subject: slot.subject || (teacher.subjects || [])[0] || "", slotId: slot.id || "", source: slot.source || "", interactionSource: "teacher_overview" }));
-        return `<td class="teacher-cell-open"><button class="teacher-cell-button" data-open-slot-action="${data}" title="${teacherSlotEditMode ? "Click to set this open slot to OFF" : "Click to book a regular class"}"></button></td>`;
+        const adminRemark = String(slot.overviewRemark || "").trim();
+        const title = teacherSlotEditMode ? "Click to set this open slot to OFF" : (adminRemark ? `Open slot admin remark: ${adminRemark}` : "Click to book a regular class or add an admin remark");
+        return `<td class="teacher-cell-open${adminRemark ? " has-admin-remark" : ""}"><button class="teacher-cell-button" data-open-slot-action="${data}" title="${escapeHtml(title)}">${adminRemark ? `<span class="teacher-open-remark">${escapeHtml(adminRemark)}</span>` : ""}</button></td>`;
       }
       return teacherOffCellHtml(teacher, date, time);
     }
@@ -3634,15 +3657,50 @@
       const teacher = teacherById(data.teacherId);
       if (!teacher) return alert("Teacher not found.");
       const isOff = Boolean(data.slotWasOff);
+      const openSlot = !isOff ? (teacher.regularSlots || []).find(slot => slot.id === data.slotId && !slot.locked) : null;
       $("teacherOpenSlotChoiceData").value = JSON.stringify(data);
       $("teacherOpenSlotChoiceInfo").textContent = `${teacher.name} | ${data.day} ${timeLabel(data.time)} | ${data.subject || (teacher.subjects || [])[0] || "Teacher's subject"}`;
       $("teacherOpenSlotChoiceTitle").textContent = isOff ? "OFF Slot Action" : "Open Slot Action";
       $("chooseBookRegularBtn").textContent = isOff ? "Book Regular Student" : "Book Regular Class";
       $("chooseReserveSlotBtn").classList.toggle("hide", isOff);
+      $("chooseOpenSlotRemarkBtn").classList.toggle("hide", isOff);
+      $("chooseOpenSlotRemarkBtn").textContent = openSlot?.overviewRemark ? "Edit Remark" : "Add Remark";
       $("chooseSetSlotOffBtn").classList.toggle("hide", isOff);
       $("chooseOpenThisSlotBtn").classList.toggle("hide", !isOff);
       $("teacherOpenSlotChoiceHint").textContent = isOff ? "For bulk opening across several days or times, use Edit Slots at the top of Teacher Overview." : "";
       $("teacherOpenSlotChoiceModal").classList.remove("hide");
+    }
+
+    function openTeacherOpenSlotRemarkModal(data) {
+      const teacher = teacherById(data?.teacherId);
+      const slot = teacher?.regularSlots?.find(item => item.id === data?.slotId && !item.locked && !item.unavailable);
+      if (!teacher || !slot) return alert("This open slot is no longer available. Refresh Teacher Overview and try again.");
+      $("teacherOpenSlotRemarkData").value = JSON.stringify(data);
+      $("teacherOpenSlotRemarkInfo").textContent = `${teacher.name} | ${data.day} ${timeLabel(data.time)} | open slot`;
+      $("teacherOpenSlotRemarkText").value = slot.overviewRemark || "";
+      $("deleteTeacherOpenSlotRemarkBtn").classList.toggle("hide", !slot.overviewRemark);
+      $("teacherOpenSlotRemarkModal").classList.remove("hide");
+      $("teacherOpenSlotRemarkText").focus();
+    }
+
+    function saveTeacherOpenSlotRemark(remove = false) {
+      const data = JSON.parse($("teacherOpenSlotRemarkData").value || "null");
+      const teacher = data ? teacherById(data.teacherId) : null;
+      const slot = teacher?.regularSlots?.find(item => item.id === data?.slotId && !item.locked && !item.unavailable);
+      if (!data || !teacher || !slot) return alert("This open slot is no longer available. Refresh Teacher Overview and try again.");
+      const before = String(slot.overviewRemark || "").trim();
+      const after = remove ? "" : $("teacherOpenSlotRemarkText").value.trim();
+      if (!remove && !after) return alert("Write a short remark, or use Delete Remark to remove the existing note.");
+      if (after) slot.overviewRemark = after;
+      else delete slot.overviewRemark;
+      const now = new Date().toISOString();
+      slot.updatedAt = now;
+      teacher.updatedAt = now;
+      logAction(after ? (before ? "Open Slot Remark Updated" : "Open Slot Remark Added") : "Open Slot Remark Deleted", teacher.name, before || "No remark", after || "Remark removed", `${data.day} ${timeLabel(data.time)} | admin only`);
+      $("teacherOpenSlotRemarkModal").classList.add("hide");
+      save(false);
+      renderTeacherOverview();
+      setStatus(after ? "Open slot remark saved. It is visible only to admin." : "Open slot remark deleted.");
     }
 
     function openFixedRegularBookingModal(data) {
@@ -4638,7 +4696,8 @@
         teacher.email || "",
         teacher.phone || "",
         teacher.zoomMeetingId || "",
-        teacher.zoomLink || ""
+        teacher.zoomLink || "",
+        teacherTimetableLink(teacher) || "Not generated"
       ]);
     }
 
@@ -4652,6 +4711,7 @@
       const body = rows.map((teacher, index) => {
         const email = String(teacher.email || "").trim();
         const zoomUrl = safeHttpUrl(teacher.zoomLink);
+        const teacherViewUrl = teacherTimetableLink(teacher);
         const passcode = String(teacher.zoomPasscode || "");
         const passcodeVisible = revealedTeacherPasscodes.has(teacher.id);
         return `<tr>
@@ -4664,10 +4724,13 @@
           <td>${escapeHtml(teacher.zoomMeetingId || "-")}</td>
           <td>${passcode ? `<span>${escapeHtml(passcodeVisible ? passcode : "******")}</span><div class="row" style="margin-top:5px;"><button class="btn small ghost" data-reveal-teacher-passcode="${teacher.id}">${passcodeVisible ? "Hide" : "Show"}</button><button class="btn small ghost" data-copy-teacher-passcode="${teacher.id}">Copy</button></div>` : "-"}</td>
           <td>${zoomUrl ? `<a class="pill" href="${escapeHtml(zoomUrl)}" target="_blank" rel="noopener">Open Zoom</a>` : "-"}</td>
+          <td>${teacherViewUrl
+            ? `<input value="${escapeHtml(teacherViewUrl)}" readonly aria-label="${escapeHtml(`${teacher.name} teacher view link`)}" style="min-width:230px;"><div class="row" style="margin-top:5px;"><button class="btn small ghost" data-overview-copy-link="${teacher.id}" title="Copy teacher view link" aria-label="Copy ${escapeHtml(teacher.name)} teacher view link">&#10697;</button><a class="btn small ghost" href="${escapeHtml(teacherViewUrl)}" target="_blank" rel="noopener noreferrer" title="Open teacher view" aria-label="Open ${escapeHtml(teacher.name)} teacher view">&#8599;</a></div>`
+            : `<span class="subtle">Not generated</span><div style="margin-top:5px;"><button class="btn small mint" data-overview-generate-link="${teacher.id}">Generate</button></div>`}</td>
           <td><button class="btn small ghost" data-edit-teacher="${teacher.id}">Edit</button></td>
         </tr>`;
-      }).join("") || `<tr><td colspan="10">No teachers match this directory search.</td></tr>`;
-      $("teacherDirectoryList").innerHTML = `<table class="lead-table"><thead><tr><th>No.</th><th>Teacher Name</th><th>Subjects Covered</th><th>Internal Remark</th><th>Email</th><th>Contact</th><th>Zoom ID</th><th>Passcode</th><th>Zoom Link</th><th>Actions</th></tr></thead><tbody>${body}</tbody></table>`;
+      }).join("") || `<tr><td colspan="11">No teachers match this directory search.</td></tr>`;
+      $("teacherDirectoryList").innerHTML = `<table class="lead-table"><thead><tr><th>No.</th><th>Teacher Name</th><th>Subjects Covered</th><th>Internal Remark</th><th>Email</th><th>Contact</th><th>Zoom ID</th><th>Passcode</th><th>Zoom Link</th><th>Teacher View Link</th><th>Actions</th></tr></thead><tbody>${body}</tbody></table>`;
       const end = Math.min(start + TEACHER_DIRECTORY_PAGE_SIZE, allRows.length);
       $("teacherDirectoryPager").innerHTML = `<button class="btn small ghost" data-teacher-directory-page="prev" ${teacherDirectoryPage <= 1 ? "disabled" : ""}>Previous</button><span class="subtle">Showing ${allRows.length ? start + 1 : 0}-${end} of ${allRows.length} | Page ${teacherDirectoryPage} of ${totalPages}</span><button class="btn small ghost" data-teacher-directory-page="next" ${teacherDirectoryPage >= totalPages ? "disabled" : ""}>Next</button>`;
     }
@@ -9961,6 +10024,14 @@
       $("teacherOpenSlotChoiceModal").classList.add("hide");
       openFixedRegularBookingModal(data);
     };
+    $("chooseOpenSlotRemarkBtn").onclick = () => {
+      const data = JSON.parse($("teacherOpenSlotChoiceData").value || "null");
+      if (!data) return alert("Open slot data is missing.");
+      $("teacherOpenSlotChoiceModal").classList.add("hide");
+      openTeacherOpenSlotRemarkModal(data);
+    };
+    $("saveTeacherOpenSlotRemarkBtn").onclick = () => saveTeacherOpenSlotRemark(false);
+    $("deleteTeacherOpenSlotRemarkBtn").onclick = () => saveTeacherOpenSlotRemark(true);
     $("chooseOpenThisSlotBtn").onclick = () => {
       const data = JSON.parse($("teacherOpenSlotChoiceData").value || "null");
       if (!data) return alert("OFF slot data is missing.");
@@ -10034,8 +10105,8 @@
     $("exportStudentsPdfBtn").onclick = () => openPrintReport("Class One Students", ["No.", "Name", "Subjects", "Package", "Amount", "Total Classes", "Package Notes", "Status", "Regular Slots"], numbered(studentExportRows()));
     $("exportTeachersCsvBtn").onclick = () => downloadCsv("class-one-teachers.csv", ["No.", "Name", "Subjects", "Category", "Tier", "Rate", "Profit Share", "Regular Slots", "Date Slots", "Feedback Count", "Latest Feedback"], numbered(teacherExportRows()));
     $("exportTeachersPdfBtn").onclick = () => openPrintReport("Class One Teachers", ["No.", "Name", "Subjects", "Category", "Tier", "Rate", "Profit Share", "Regular Slots", "Date Slots", "Feedback Count", "Latest Feedback"], numbered(teacherExportRows()));
-    $("exportTeacherDirectoryCsvBtn").onclick = () => downloadCsv("class-one-teacher-directory.csv", ["No.", "Teacher Name", "Subjects Covered", "Internal Remark", "Email", "Contact Number", "Zoom ID", "Zoom Link"], numbered(teacherDirectoryExportRows()));
-    $("exportTeacherDirectoryPdfBtn").onclick = () => openPrintReport("Class One Teacher Directory", ["No.", "Teacher Name", "Subjects Covered", "Internal Remark", "Email", "Contact Number", "Zoom ID", "Zoom Link"], numbered(teacherDirectoryExportRows()));
+    $("exportTeacherDirectoryCsvBtn").onclick = () => downloadCsv("class-one-teacher-directory.csv", ["No.", "Teacher Name", "Subjects Covered", "Internal Remark", "Email", "Contact Number", "Zoom ID", "Zoom Link", "Teacher View Link"], numbered(teacherDirectoryExportRows()));
+    $("exportTeacherDirectoryPdfBtn").onclick = () => openPrintReport("Class One Teacher Directory", ["No.", "Teacher Name", "Subjects Covered", "Internal Remark", "Email", "Contact Number", "Zoom ID", "Zoom Link", "Teacher View Link"], numbered(teacherDirectoryExportRows()), true);
     $("exportLeadListPdfBtn").onclick = () => {
       try {
         const rows = crmLeadListExportRows();
