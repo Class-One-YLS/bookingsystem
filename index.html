@@ -2936,17 +2936,34 @@
       return byTime;
     }
 
+    function regularSlotRecency(a, b) {
+      if (Boolean(a?.locked) !== Boolean(b?.locked)) return a?.locked ? 1 : -1;
+      const startCompare = String(a?.startDate || "0000-01-01").localeCompare(String(b?.startDate || "0000-01-01"));
+      if (startCompare) return startCompare;
+      const updateCompare = activityTime(a?.updatedAt || a?.createdAt) - activityTime(b?.updatedAt || b?.createdAt);
+      return updateCompare || 0;
+    }
+
+    function latestRegularSlot(slots) {
+      return (slots || []).reduce((latest, slot) => !latest || regularSlotRecency(slot, latest) >= 0 ? slot : latest, null);
+    }
+
     function collectSlotsForDate(date) {
       const dateStr = localISO(date);
       const day = DAYS[(date.getDay() + 6) % 7];
       const slots = [];
       activeTeachers().forEach(t => {
         const latestOverrides = latestOverrideSlotsForDate(t, dateStr, day);
+        const regularByTime = new Map();
         (t.regularSlots || [])
           .filter(s => s.day === day)
           .filter(s => (!s.startDate || s.startDate <= dateStr) && (!s.endDate || s.endDate >= dateStr))
           .filter(s => !latestOverrides.has(s.time))
-          .forEach(s => slots.push({ ...s, id: s.id, teacherId: t.id, date: dateStr, source: s.source || "regular" }));
+          .forEach(s => {
+            const current = regularByTime.get(s.time);
+            if (!current || regularSlotRecency(s, current) >= 0) regularByTime.set(s.time, s);
+          });
+        [...regularByTime.values()].forEach(s => slots.push({ ...s, id: s.id, teacherId: t.id, date: dateStr, source: s.source || "regular" }));
         [...latestOverrides.values()]
           .filter(s => !s.unavailable)
           .forEach(s => slots.push({ ...s, id: s.id, teacherId: t.id, date: dateStr, day, source: "override" }));
@@ -3117,12 +3134,12 @@
     }
 
     function teacherOverviewActiveSlot(teacher, day, time, date = todayISO()) {
-      const matches = [...(teacher?.regularSlots || [])].reverse().filter(slot =>
+      const matches = [...(teacher?.regularSlots || [])].filter(slot =>
         slot.day === day && slot.time === time &&
         (!slot.startDate || slot.startDate <= date) &&
         (!slot.endDate || slot.endDate >= date)
       );
-      return matches.find(slot => slot.locked) || matches[0] || null;
+      return latestRegularSlot(matches);
     }
 
     function teacherOverviewDisplaySlot(teacher, day, time, date = todayISO()) {
@@ -3130,7 +3147,7 @@
       if (active?.locked) return { slot: active, upcoming: false };
       const upcoming = (teacher?.regularSlots || [])
         .filter(slot => slot.locked && slot.day === day && slot.time === time && slot.startDate && slot.startDate > date)
-        .sort((a, b) => String(a.startDate).localeCompare(String(b.startDate)))[0];
+        .sort((a, b) => String(a.startDate).localeCompare(String(b.startDate)) || regularSlotRecency(b, a))[0];
       return upcoming ? { slot: upcoming, upcoming: true } : { slot: active, upcoming: false };
     }
 
@@ -4873,20 +4890,23 @@
 
     function syncStudentProfileSlotsToTeachers(student, previousSlots = []) {
       const nextSlots = getStudentRegularSlots(student);
+      const nextIds = new Set(nextSlots.map(slot => slot.id).filter(Boolean));
+      const previousIds = new Set(previousSlots.map(slot => slot.id).filter(Boolean));
+      const now = new Date().toISOString();
       nextSlots.forEach(studentSlot => {
         const teacher = teacherById(studentSlot.teacherId);
         if (!teacher) return;
         teacher.regularSlots ||= [];
-        let teacherSlot = teacher.regularSlots.find(slot => slot.studentSlotId === studentSlot.id);
+        let teacherSlot = latestRegularSlot(teacher.regularSlots.filter(slot => slot.studentSlotId === studentSlot.id));
         if (!teacherSlot) {
-          teacherSlot = teacher.regularSlots.find(slot =>
+          teacherSlot = latestRegularSlot(teacher.regularSlots.filter(slot =>
             slot.locked &&
             studentNameKey(slot.studentName || "") === studentNameKey(student.name) &&
             slot.day === studentSlot.day &&
             slot.time === studentSlot.time &&
             normalizeSubject(slot.subject || "") === normalizeSubject(studentSlot.subject || "") &&
             regularSlotRangesOverlap(slot, studentSlot)
-          );
+          ));
         }
         if (!teacherSlot) {
           teacherSlot = { id: uid("slot"), locked: true, source: "student-profile" };
@@ -4902,14 +4922,32 @@
           startDate: studentSlot.startDate || "",
           endDate: studentSlot.endDate || "",
           locked: true,
-          unavailable: false
+          unavailable: false,
+          updatedAt: now
         });
       });
-      const nextIds = new Set(nextSlots.map(slot => slot.id));
-      previousSlots.filter(slot => slot.id && !nextIds.has(slot.id)).forEach(previousSlot => {
-        const teacher = teacherById(previousSlot.teacherId);
-        const teacherSlot = (teacher?.regularSlots || []).find(slot => slot.studentSlotId === previousSlot.id && slot.source === "student-profile");
-        if (teacherSlot && !teacherSlot.endDate) teacherSlot.endDate = dateOffsetISO(todayISO(), -1);
+      const today = todayISO();
+      const historicalEnd = dateOffsetISO(today, -1);
+      (state.teachers || []).forEach(teacher => {
+        teacher.regularSlots = (teacher.regularSlots || []).map(slot => {
+          if (!slot.locked) return slot;
+          const linkedById = slot.studentId === student.id || previousIds.has(slot.studentSlotId);
+          const linkedProfileSlot = studentNameKey(slot.studentName || "") === studentNameKey(student.name) && ["student-profile", "student-profile-repair", "teacher-overview"].includes(slot.source);
+          if (!linkedById && !linkedProfileSlot) return slot;
+          if (slot.studentSlotId && nextIds.has(slot.studentSlotId)) return slot;
+          if (slot.startDate && slot.startDate > today) return null;
+          if (!slot.endDate || slot.endDate >= today) slot.endDate = historicalEnd;
+          slot.updatedAt = now;
+          return slot;
+        }).filter(Boolean);
+
+        const latestByStudentSlot = new Map();
+        teacher.regularSlots.forEach(slot => {
+          if (!slot.locked || !slot.studentSlotId || !nextIds.has(slot.studentSlotId)) return;
+          const current = latestByStudentSlot.get(slot.studentSlotId);
+          if (!current || regularSlotRecency(slot, current) >= 0) latestByStudentSlot.set(slot.studentSlotId, slot);
+        });
+        teacher.regularSlots = teacher.regularSlots.filter(slot => !slot.studentSlotId || !nextIds.has(slot.studentSlotId) || latestByStudentSlot.get(slot.studentSlotId) === slot);
       });
     }
 
