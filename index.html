@@ -29,7 +29,7 @@
     button, input, select, textarea { font: inherit; }
     button { cursor: pointer; border: 0; }
     .app-shell { width: 100%; max-width: 100vw; min-width: 0; min-height: 100vh; display: grid; grid-template-columns: 260px minmax(0, 1fr); transition: grid-template-columns .2s ease; }
-    .app-shell.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr); }
+    .app-shell.sidebar-collapsed { grid-template-columns: 54px minmax(0, 1fr); }
     .tab.layout-stacked .grid.two,
     .tab.layout-stacked .grid.three,
     .tab.layout-stacked .grid.four,
@@ -43,9 +43,9 @@
     .brand strong { display: block; font-size: 16px; }
     .brand span { color: #b9c4c0; font-size: 12px; }
     .side-toggle { width: 42px; height: 42px; min-height: 42px; margin: 0 0 12px auto; padding: 0; display: grid; place-items: center; font-size: 28px; line-height: 1; }
-    .app-shell.sidebar-collapsed aside { width: 0; padding: 0; overflow: visible; }
+    .app-shell.sidebar-collapsed aside { width: 54px; padding: 12px 6px; overflow: hidden; background: var(--ink); }
     .app-shell.sidebar-collapsed .brand, .app-shell.sidebar-collapsed .nav-btn { display: none; }
-    .app-shell.sidebar-collapsed .side-toggle { position: fixed; left: 14px; bottom: 14px; z-index: 18; margin: 0; background: var(--mint); color: var(--ink); box-shadow: 0 8px 22px rgba(23,33,43,.22); }
+    .app-shell.sidebar-collapsed .side-toggle { position: fixed; left: 6px; bottom: 14px; z-index: 18; margin: 0; background: var(--mint); color: var(--ink); box-shadow: 0 8px 22px rgba(23,33,43,.22); }
     .nav-btn { width: 100%; text-align: left; color: #cbd5d1; background: transparent; padding: 12px 14px; border-radius: 8px; margin: 4px 0; font-weight: 800; font-size: 13px; }
     .nav-btn.active { color: var(--ink); background: var(--mint); }
     main { width: 100%; max-width: 100%; min-width: 0; padding: 24px; overflow-x: hidden; }
@@ -78,7 +78,7 @@
     textarea { min-height: 88px; resize: vertical; }
     .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     .row.spread { justify-content: space-between; }
-    .btn { background: var(--ink); color: #fff; border-radius: 8px; min-height: 40px; padding: 0 14px; font-weight: 900; font-size: 12px; transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; white-space: nowrap; }
+    .btn { width: auto; max-width: 100%; flex: 0 0 auto; background: var(--ink); color: #fff; border-radius: 8px; min-height: 44px; padding: 0 16px; font-weight: 900; font-size: 12px; line-height: 1.2; transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; white-space: nowrap; }
     .btn:focus-visible { outline: 2px solid var(--mint-dark); outline-offset: 2px; }
     .btn:active { transform: scale(.97); }
     .btn.syncing { animation: clickPulse .55s ease; opacity: .78; }
@@ -91,9 +91,9 @@
     .btn.mint { background: var(--mint); color: var(--ink); }
     .btn.ghost { background: #edf4f0; color: var(--ink); }
     .btn.danger { background: #e5484d; color: #fff; }
-    .btn.small { min-height: 32px; padding: 0 10px; font-size: 11px; }
-    .btn.icon-only { width: 40px; padding: 0; font-size: 18px; }
-    .btn.small.icon-only { width: 32px; padding: 0; font-size: 16px; }
+    .btn.small { min-height: 36px; padding: 0 11px; font-size: 11px; }
+    .btn.icon-only { width: 44px; min-width: 44px; height: 44px; padding: 0; font-size: 20px; line-height: 1; }
+    .btn.small.icon-only { width: 36px; min-width: 36px; height: 36px; padding: 0; font-size: 18px; }
     #overviewTeacherLinkActions { justify-content: flex-end; }
     #overviewTeacherLinkActions .btn { min-height: 36px; padding: 0 12px; flex: 0 0 auto; width: auto; }
     #overviewTeacherLinkActions a.btn, #overviewTeacherLinkActions a.btn:visited { color: var(--ink); text-decoration: none; }
@@ -128,6 +128,9 @@
     .teacher-cell-reserved .teacher-cell-button { color: #111; font-weight: 900; }
     .teacher-cell-open.has-admin-remark { background: #fff; }
     .teacher-open-remark { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: #52635b; font-size: 11px; font-style: italic; font-weight: 800; line-height: 1.2; overflow-wrap: anywhere; }
+    .overview-remark-card { border-left: 4px solid var(--mint); }
+    .overview-remark-card.archived { border-left-color: #98a2b3; background: #f8faf9; }
+    .overview-remark-text { white-space: pre-wrap; overflow-wrap: anywhere; }
     .slot.drop-target { outline: 3px solid var(--mint-dark); outline-offset: 2px; box-shadow: 0 0 0 4px rgba(114,208,161,.18); }
     .cell.drop-target { outline: 3px solid var(--mint-dark); outline-offset: -4px; background: #f4fbf7; }
     .slot small { display: block; color: #3d4b45; font-weight: 700; margin-top: 2px; }
@@ -264,6 +267,8 @@
     @media (max-width: 900px) {
       .app-shell { grid-template-columns: 1fr; }
       aside { position: static; height: auto; }
+      .app-shell.sidebar-collapsed { grid-template-columns: 54px minmax(0, 1fr); }
+      .app-shell.sidebar-collapsed aside { position: sticky; top: 0; height: 100vh; }
       .toolbar, .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }
       .template-grid { grid-template-columns: 1fr; }
       .topbar { align-items: flex-start; flex-direction: column; }
@@ -283,6 +288,17 @@
       <div class="row" style="margin-top:14px;">
         <button class="btn mint" id="goCrmActionBtn">Open CRM Leads</button>
         <button class="btn ghost" id="goReplacementActionBtn">Open Replacement Classes</button>
+      </div>
+    </div>
+  </div>
+  <div id="teacherOverviewRemarkDecisionModal" class="modal hide">
+    <div class="modal-card" style="max-width:620px;">
+      <div class="row spread"><h2>Keep Previous Remark?</h2><button class="btn ghost small" id="cancelTeacherOverviewRemarkDecisionBtn">Close</button></div>
+      <p class="subtle">This teacher already has an active remark. Choose what should happen to the existing remark before the new one is saved.</p>
+      <div class="row" style="margin-top:16px;">
+        <button class="btn mint" id="keepTeacherOverviewRemarkBtn">Keep Old Remark</button>
+        <button class="btn ghost" id="archiveTeacherOverviewRemarkBtn">Archive Old Remark</button>
+        <button class="btn ghost" id="cancelTeacherOverviewRemarkDecisionBtnBottom">Cancel</button>
       </div>
     </div>
   </div>
@@ -353,6 +369,19 @@
           </div>
         </div>
         <div id="teacherOverviewStats"></div>
+        <div class="panel hide" id="teacherOverviewRemarkPanel">
+          <div class="row spread">
+            <div><h2>Teacher Remarks</h2><div class="subtle" id="teacherOverviewRemarkTeacher"></div></div>
+          </div>
+          <input id="teacherOverviewRemarkEditId" type="hidden">
+          <label for="teacherOverviewRemarkInput">Remark</label>
+          <textarea id="teacherOverviewRemarkInput" placeholder="Add an admin remark for this teacher"></textarea>
+          <div class="row" style="margin-top:10px;">
+            <button class="btn mint" id="saveTeacherOverviewRemarkBtn">Save Remark</button>
+            <button class="btn ghost hide" id="cancelTeacherOverviewRemarkEditBtn">Cancel Edit</button>
+          </div>
+          <div id="teacherOverviewActiveRemarks" class="list" style="margin-top:14px;"></div>
+        </div>
         <div class="panel hide" id="teacherSlotEditPanel">
           <div class="row spread">
             <div><h2>Edit Teacher Slots</h2><div class="subtle" id="teacherSlotEditTeacherLabel"></div></div>
@@ -384,6 +413,10 @@
         </div>
         <div id="teacherLeaveSummary"></div>
         <div id="teacherOverviewGrid" class="overview-grid"></div>
+        <div class="panel hide" id="teacherOverviewRemarkArchivePanel" style="margin-top:16px;">
+          <div class="row spread"><h2>Archived Remarks</h2><span class="pill" id="teacherOverviewRemarkArchiveCount">0</span></div>
+          <div id="teacherOverviewArchivedRemarks" class="list"></div>
+        </div>
       </section>
 
       <section id="crm" class="tab hide">
@@ -1645,6 +1678,7 @@
     let teacherSlotEditMode = false;
     let teacherSlotEditTeacherId = "";
     let teacherSlotEditPeriods = [];
+    let pendingTeacherOverviewRemark = "";
     const $ = (id) => document.getElementById(id);
     const uid = (prefix) => prefix + "_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
     const localISO = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -2041,6 +2075,18 @@
         teacher.category ||= "freelance";
         teacher.profitShare = Number(teacher.profitShare || 0);
         teacher.status = teacher.status || (teacher.archived ? "archived" : "active");
+        teacher.overviewRemarks = Array.isArray(teacher.overviewRemarks) ? teacher.overviewRemarks : [];
+        teacher.overviewRemarkArchive = Array.isArray(teacher.overviewRemarkArchive) ? teacher.overviewRemarkArchive : [];
+        if (teacher.overviewRemark && !teacher.overviewRemarks.length && !teacher.overviewRemarkArchive.length) {
+          teacher.overviewRemarks.push({ id: uid("teacher_remark"), text: teacher.overviewRemark, createdAt: teacher.updatedAt || new Date().toISOString(), updatedAt: teacher.updatedAt || new Date().toISOString(), createdBy: "Admin" });
+        }
+        [...teacher.overviewRemarks, ...teacher.overviewRemarkArchive].forEach(remark => {
+          remark.id ||= uid("teacher_remark");
+          remark.text ||= "";
+          remark.createdAt ||= remark.updatedAt || new Date().toISOString();
+          remark.updatedAt ||= remark.createdAt;
+          remark.createdBy ||= "Admin";
+        });
       });
       state.teachers = mergeDuplicateTeachers(state.teachers).filter(teacher => !isImportedOnlyTeacher(teacher));
       state.students.forEach(student => {
@@ -2209,8 +2255,20 @@
         existing.status = !isTeacherArchived(existing) || !isTeacherArchived(teacher) ? "active" : "archived";
         existing.regularSlots = mergeSlots(existing.regularSlots || [], teacher.regularSlots || []);
         existing.overrideSlots = mergeSlots(existing.overrideSlots || [], teacher.overrideSlots || []);
+        existing.overviewRemarks = mergeTeacherRemarkRecords(existing.overviewRemarks || [], teacher.overviewRemarks || []);
+        existing.overviewRemarkArchive = mergeTeacherRemarkRecords(existing.overviewRemarkArchive || [], teacher.overviewRemarkArchive || []);
       });
       return result;
+    }
+
+    function mergeTeacherRemarkRecords(primary, secondary) {
+      const seen = new Set();
+      return [...primary, ...secondary].filter(remark => {
+        const key = remark.id || `${remark.text || ""}|${remark.createdAt || ""}|${remark.archivedAt || ""}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
     }
 
     function mergeSlots(primary, secondary) {
@@ -3232,6 +3290,7 @@
       }
       if (!teacherId || teacherId === "all") {
         renderTeacherOverviewLink(null);
+        renderTeacherOverviewRemarks(null);
         $("teacherOverviewStats").innerHTML = "";
         $("teacherLeaveSummary").innerHTML = "";
         $("teacherOverviewGrid").innerHTML = `<div class="empty">Choose one teacher to view their timetable overview.</div>`;
@@ -3240,6 +3299,7 @@
       const teacher = teacherById(teacherId);
       if (!teacher) {
         renderTeacherOverviewLink(null);
+        renderTeacherOverviewRemarks(null);
         $("teacherOverviewStats").innerHTML = "";
         $("teacherLeaveSummary").innerHTML = "";
         $("teacherOverviewGrid").innerHTML = `<div class="empty">Teacher not found.</div>`;
@@ -3247,6 +3307,7 @@
       }
       const dates = weekDates();
       renderTeacherOverviewLink(teacher);
+      renderTeacherOverviewRemarks(teacher);
       renderTeacherOverviewStats(teacher);
       renderTeacherLeaveSummary(teacher);
       if ($("overviewViewMode").value === "list") {
@@ -3256,6 +3317,102 @@
       }
       $("teacherOverviewGrid").className = "";
       $("teacherOverviewGrid").innerHTML = teacherOverviewTableHtml(teacher, dates);
+    }
+
+    function resetTeacherOverviewRemarkEditor() {
+      $("teacherOverviewRemarkEditId").value = "";
+      $("teacherOverviewRemarkInput").value = "";
+      $("cancelTeacherOverviewRemarkEditBtn").classList.add("hide");
+      setActionButtonLabel($("saveTeacherOverviewRemarkBtn"), "Save Remark");
+    }
+
+    function renderTeacherOverviewRemarks(teacher) {
+      const panel = $("teacherOverviewRemarkPanel");
+      const archivePanel = $("teacherOverviewRemarkArchivePanel");
+      panel.classList.toggle("hide", !teacher);
+      archivePanel.classList.toggle("hide", !teacher);
+      if (!teacher) {
+        panel.dataset.teacherId = "";
+        $("teacherOverviewActiveRemarks").innerHTML = "";
+        $("teacherOverviewArchivedRemarks").innerHTML = "";
+        resetTeacherOverviewRemarkEditor();
+        return;
+      }
+      teacher.overviewRemarks ||= [];
+      teacher.overviewRemarkArchive ||= [];
+      if (panel.dataset.teacherId !== teacher.id) resetTeacherOverviewRemarkEditor();
+      panel.dataset.teacherId = teacher.id;
+      $("teacherOverviewRemarkTeacher").textContent = `${teacher.name} | Admin remarks for timetable planning and follow-up.`;
+      const active = [...teacher.overviewRemarks].sort((a, b) => activityTime(b.updatedAt || b.createdAt) - activityTime(a.updatedAt || a.createdAt));
+      $("teacherOverviewActiveRemarks").innerHTML = active.map(remark => `
+        <div class="card overview-remark-card">
+          <div class="overview-remark-text">${escapeHtml(remark.text)}</div>
+          <div class="subtle" style="margin-top:8px;">Updated ${escapeHtml(formatDateTimeStamp(remark.updatedAt || remark.createdAt))}${remark.createdBy ? ` by ${escapeHtml(remark.createdBy)}` : ""}</div>
+          <div class="row" style="margin-top:8px;">
+            <button class="btn ghost small" data-edit-overview-remark="${teacher.id}|${remark.id}">Edit</button>
+            <button class="btn ghost small" data-archive-overview-remark="${teacher.id}|${remark.id}">Archive</button>
+          </div>
+        </div>
+      `).join("") || `<div class="empty">No active remark for this teacher.</div>`;
+      const archived = [...teacher.overviewRemarkArchive].sort((a, b) => activityTime(b.archivedAt || b.updatedAt || b.createdAt) - activityTime(a.archivedAt || a.updatedAt || a.createdAt));
+      $("teacherOverviewRemarkArchiveCount").textContent = String(archived.length);
+      $("teacherOverviewArchivedRemarks").innerHTML = archived.map(remark => `
+        <div class="card overview-remark-card archived">
+          <div class="overview-remark-text">${escapeHtml(remark.text)}</div>
+          <div class="subtle" style="margin-top:8px;">Archived ${escapeHtml(formatDateTimeStamp(remark.archivedAt || remark.updatedAt || remark.createdAt))}</div>
+        </div>
+      `).join("") || `<div class="empty">No archived remarks.</div>`;
+    }
+
+    function addTeacherOverviewRemark(archiveOld) {
+      const teacher = teacherById($("overviewTeacherFilter").value);
+      const text = String(pendingTeacherOverviewRemark || $("teacherOverviewRemarkInput").value || "").trim();
+      if (!teacher || !text) return;
+      teacher.overviewRemarks ||= [];
+      teacher.overviewRemarkArchive ||= [];
+      const now = new Date().toISOString();
+      if (archiveOld) {
+        teacher.overviewRemarkArchive.push(...teacher.overviewRemarks.map(remark => ({ ...remark, archivedAt: now })));
+        teacher.overviewRemarks = [];
+      }
+      teacher.overviewRemarks.push({ id: uid("teacher_remark"), text, createdAt: now, updatedAt: now, createdBy: safeStorageGet("classOneStaffName") || "Admin" });
+      teacher.updatedAt = now;
+      logAction("Teacher Overview Remark Added", teacher.name, archiveOld ? "Previous active remarks archived" : "Previous active remarks retained", text, "Updated from Teacher Overview.");
+      pendingTeacherOverviewRemark = "";
+      $("teacherOverviewRemarkDecisionModal").classList.add("hide");
+      resetTeacherOverviewRemarkEditor();
+      save(false);
+      setStatus(`${teacher.name}'s remark saved.`);
+    }
+
+    function requestTeacherOverviewRemarkSave() {
+      const teacher = teacherById($("overviewTeacherFilter").value);
+      const text = $("teacherOverviewRemarkInput").value.trim();
+      if (!teacher) return alert("Choose a teacher first.");
+      if (!text) return alert("Enter a remark first.");
+      teacher.overviewRemarks ||= [];
+      const editId = $("teacherOverviewRemarkEditId").value;
+      if (editId) {
+        const remark = teacher.overviewRemarks.find(item => item.id === editId);
+        if (!remark) return alert("This remark is no longer active. Refresh and try again.");
+        const before = remark.text || "";
+        remark.text = text;
+        remark.updatedAt = new Date().toISOString();
+        remark.createdBy = safeStorageGet("classOneStaffName") || remark.createdBy || "Admin";
+        teacher.updatedAt = remark.updatedAt;
+        logAction("Teacher Overview Remark Updated", teacher.name, before, text, "Updated from Teacher Overview.");
+        resetTeacherOverviewRemarkEditor();
+        save(false);
+        setStatus(`${teacher.name}'s remark updated.`);
+        return;
+      }
+      if (!teacher.overviewRemarks.length) {
+        pendingTeacherOverviewRemark = text;
+        addTeacherOverviewRemark(false);
+        return;
+      }
+      pendingTeacherOverviewRemark = text;
+      $("teacherOverviewRemarkDecisionModal").classList.remove("hide");
     }
 
     function teacherWeeklyFixedClassCount(teacher) {
@@ -3552,7 +3709,7 @@
       $("chooseBookRegularBtn").textContent = isOff ? "Book Regular Student" : "Book Regular Class";
       $("chooseReserveSlotBtn").classList.toggle("hide", isOff);
       $("chooseOpenSlotRemarkBtn").classList.toggle("hide", isOff);
-      $("chooseOpenSlotRemarkBtn").textContent = openSlot?.overviewRemark ? "Edit Remark" : "Add Remark";
+      setActionButtonLabel($("chooseOpenSlotRemarkBtn"), openSlot?.overviewRemark ? "Edit Remark" : "Add Remark");
       $("chooseSetSlotOffBtn").classList.toggle("hide", isOff);
       $("chooseOpenThisSlotBtn").classList.toggle("hide", !isOff);
       $("teacherOpenSlotChoiceHint").textContent = isOff ? "For bulk opening across several days or times, use Edit Slots at the top of Teacher Overview." : "";
@@ -8635,6 +8792,34 @@
       }
       const teacherSlotEditAction = e.target.closest("[data-teacher-slot-edit-action]");
       if (teacherSlotEditAction) setTeacherSlotEditAction(teacherSlotEditAction.dataset.teacherSlotEditAction);
+      const editOverviewRemark = e.target.closest("[data-edit-overview-remark]");
+      if (editOverviewRemark) {
+        const [teacherId, remarkId] = editOverviewRemark.dataset.editOverviewRemark.split("|");
+        const teacher = teacherById(teacherId);
+        const remark = (teacher?.overviewRemarks || []).find(item => item.id === remarkId);
+        if (!teacher || !remark) return alert("This remark is no longer available.");
+        $("teacherOverviewRemarkEditId").value = remark.id;
+        $("teacherOverviewRemarkInput").value = remark.text || "";
+        $("cancelTeacherOverviewRemarkEditBtn").classList.remove("hide");
+        setActionButtonLabel($("saveTeacherOverviewRemarkBtn"), "Update Remark");
+        $("teacherOverviewRemarkInput").focus();
+      }
+      const archiveOverviewRemark = e.target.closest("[data-archive-overview-remark]");
+      if (archiveOverviewRemark) {
+        const [teacherId, remarkId] = archiveOverviewRemark.dataset.archiveOverviewRemark.split("|");
+        const teacher = teacherById(teacherId);
+        const index = (teacher?.overviewRemarks || []).findIndex(item => item.id === remarkId);
+        if (!teacher || index < 0) return alert("This remark is no longer available.");
+        if (!confirm("Archive this teacher remark?")) return;
+        const [remark] = teacher.overviewRemarks.splice(index, 1);
+        teacher.overviewRemarkArchive ||= [];
+        teacher.overviewRemarkArchive.push({ ...remark, archivedAt: new Date().toISOString() });
+        teacher.updatedAt = new Date().toISOString();
+        logAction("Teacher Overview Remark Archived", teacher.name, remark.text || "", "Moved to Archived Remarks", "Archived from Teacher Overview.");
+        resetTeacherOverviewRemarkEditor();
+        save(false);
+        setStatus(`${teacher.name}'s remark archived.`);
+      }
       const removeTeacherSlotPeriod = e.target.closest("[data-remove-teacher-slot-period]");
       if (removeTeacherSlotPeriod) {
         if (teacherSlotEditPeriods.length <= 1) return alert("Keep at least one time period.");
@@ -9767,6 +9952,16 @@
     $("toggleTeacherSlotEditBtn").onclick = () => setTeacherSlotEditMode(!teacherSlotEditMode);
     $("exitTeacherSlotEditBtn").onclick = () => setTeacherSlotEditMode(false);
     $("applyTeacherSlotEditBtn").onclick = applyTeacherSlotEdits;
+    $("saveTeacherOverviewRemarkBtn").onclick = requestTeacherOverviewRemarkSave;
+    $("cancelTeacherOverviewRemarkEditBtn").onclick = resetTeacherOverviewRemarkEditor;
+    $("keepTeacherOverviewRemarkBtn").onclick = () => addTeacherOverviewRemark(false);
+    $("archiveTeacherOverviewRemarkBtn").onclick = () => addTeacherOverviewRemark(true);
+    ["cancelTeacherOverviewRemarkDecisionBtn", "cancelTeacherOverviewRemarkDecisionBtnBottom"].forEach(id => {
+      $(id).onclick = () => {
+        pendingTeacherOverviewRemark = "";
+        $("teacherOverviewRemarkDecisionModal").classList.add("hide");
+      };
+    });
     $("clearOverviewFiltersBtn").onclick = () => {
       $("overviewTeacherFilter").value = "all";
       $("overviewViewMode").value = "table";
