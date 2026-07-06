@@ -192,6 +192,16 @@
     .column-filter-panel { display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 12; min-width: 190px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; box-shadow: 0 12px 28px rgba(23,33,43,.18); }
     .column-filter.open .column-filter-panel { display: block; }
     .column-filter-panel input { width: 100%; }
+    .table-column-hidden { display: none !important; }
+    .table-column-controls { position: sticky; left: 0; z-index: 4; width: max-content; max-width: 100%; padding: 8px; }
+    .table-column-controls details { position: relative; }
+    .table-column-controls summary { list-style: none; }
+    .table-column-controls summary::-webkit-details-marker { display: none; }
+    .table-column-menu { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr)); gap: 7px; width: min(620px, calc(100vw - 96px)); max-width: 100%; margin-top: 7px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; box-shadow: 0 10px 24px rgba(23,33,43,.12); }
+    .table-column-option { display: flex; gap: 7px; align-items: center; min-width: 0; margin: 0; padding: 5px 7px; border-radius: 6px; background: #f7faf8; color: var(--ink); font-size: 11px; text-transform: none; }
+    .table-column-option input { flex: 0 0 auto; width: auto; min-height: 0; margin: 0; }
+    .table-column-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .table-column-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
     .crm-session-editor { display: grid; gap: 5px; min-width: 190px; }
     .crm-session-editor + .crm-session-editor { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line); }
     .crm-session-editor strong { font-size: 11px; color: var(--muted); }
@@ -856,29 +866,6 @@
       <section id="reports" class="tab hide">
         <div class="panel">
           <div class="row spread">
-            <h2>Yearly Revenue</h2>
-            <div class="row">
-              <button class="btn ghost small" id="exportRevenueCsvBtn">Export Excel</button>
-              <button class="btn ghost small" id="exportRevenuePdfBtn">Export PDF</button>
-            </div>
-          </div>
-          <div class="toolbar">
-            <div><label>From Month</label><select id="revenueFromMonth"></select></div>
-            <div><label>From Year</label><input id="revenueFromYear" type="number" min="2024" max="2035"></div>
-            <div><label>To Month</label><select id="revenueToMonth"></select></div>
-            <div><label>To Year</label><input id="revenueToYear" type="number" min="2024" max="2035"></div>
-            <div><label>Entry Month</label><select id="revenueEntryMonth"></select></div>
-            <div><label>Entry Year</label><input id="revenueEntryYear" type="number" min="2024" max="2035"></div>
-            <div><label>Revenue (RM)</label><input id="revenueEntryAmount" type="number" min="0" step="0.01" placeholder="0.00"></div>
-            <div><label>&nbsp;</label><button class="btn mint" id="saveRevenueEntryBtn">Save Revenue</button></div>
-          </div>
-          <div style="margin-top:12px;"><label>Remark</label><input id="revenueEntryRemark" placeholder="Optional note for this month"></div>
-          <div class="sales-summary" id="revenueSummary" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));"></div>
-          <div id="revenueChart" class="chart"></div>
-          <div id="revenueTable" style="margin-top:16px;"></div>
-        </div>
-        <div class="panel">
-          <div class="row spread">
             <h2>Main Business Dashboard</h2>
             <div class="row">
               <div><label>Month</label><select id="businessDashboardMonth"></select></div>
@@ -946,7 +933,6 @@
             <div><label>Search</label><input id="replacementSearch" placeholder="Student / teacher / subject"></div>
             <div><label>&nbsp;</label><button class="btn ghost" id="clearReplacementFiltersBtn">Clear Filters</button></div>
           </div>
-          <div id="replacementPriorityBoard" class="priority-board"></div>
           <div id="replacementSummary" class="sales-summary"></div>
           <div id="replacementList" style="margin-top:16px;"></div>
         </div>
@@ -2554,100 +2540,6 @@
       ].join("");
     }
 
-    function revenueKey(month, year) {
-      return `${Number(year)}-${String(Number(month) + 1).padStart(2, "0")}`;
-    }
-
-    function revenueMonthLabel(month, year) {
-      return new Date(Number(year), Number(month), 1).toLocaleString("en", { month: "short", year: "numeric" });
-    }
-
-    function revenueRangeMonths() {
-      const fromMonth = Number($("revenueFromMonth").value);
-      const fromYear = Number($("revenueFromYear").value || new Date().getFullYear());
-      const toMonth = Number($("revenueToMonth").value);
-      const toYear = Number($("revenueToYear").value || fromYear);
-      let cursor = new Date(fromYear, fromMonth, 1);
-      let end = new Date(toYear, toMonth, 1);
-      if (cursor > end) [cursor, end] = [end, cursor];
-      const months = [];
-      while (cursor <= end) {
-        months.push({ month: cursor.getMonth(), year: cursor.getFullYear() });
-        cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
-      }
-      return months;
-    }
-
-    function revenueEntryFor(month, year) {
-      return (state.revenueEntries || []).find(item => Number(item.month) === Number(month) && Number(item.year) === Number(year));
-    }
-
-    function loadRevenueEntryForm() {
-      const month = Number($("revenueEntryMonth").value);
-      const year = Number($("revenueEntryYear").value || new Date().getFullYear());
-      const entry = revenueEntryFor(month, year);
-      $("revenueEntryAmount").value = entry ? Number(entry.amount || 0).toFixed(2) : "";
-      $("revenueEntryRemark").value = entry?.remark || "";
-      setActionButtonLabel($("saveRevenueEntryBtn"), entry ? "Update Revenue" : "Save Revenue");
-    }
-
-    function includeRevenueEntryInRange(month, year) {
-      const entryDate = new Date(year, month, 1);
-      const fromDate = new Date(Number($("revenueFromYear").value), Number($("revenueFromMonth").value), 1);
-      const toDate = new Date(Number($("revenueToYear").value), Number($("revenueToMonth").value), 1);
-      const rangeStart = fromDate <= toDate ? fromDate : toDate;
-      const rangeEnd = fromDate <= toDate ? toDate : fromDate;
-      if (entryDate < rangeStart) {
-        $("revenueFromMonth").value = String(month);
-        $("revenueFromYear").value = String(year);
-      }
-      if (entryDate > rangeEnd) {
-        $("revenueToMonth").value = String(month);
-        $("revenueToYear").value = String(year);
-      }
-    }
-
-    function revenueRows() {
-      return revenueRangeMonths().map(({ month, year }) => {
-        const entry = revenueEntryFor(month, year);
-        return {
-          id: entry?.id || "",
-          month,
-          year,
-          label: revenueMonthLabel(month, year),
-          amount: Number(entry?.amount || 0),
-          remark: entry?.remark || "",
-          updatedAt: entry?.updatedAt || ""
-        };
-      });
-    }
-
-    function renderRevenueDashboard() {
-      const rows = revenueRows();
-      const enteredRows = rows.filter(row => row.id);
-      const total = rows.reduce((sum, row) => sum + row.amount, 0);
-      const average = rows.length ? total / rows.length : 0;
-      const highest = rows.reduce((best, row) => row.amount > (best?.amount || 0) ? row : best, null);
-      const card = (label, value, note = "") => `<div class="metric"><span class="subtle">${label}</span><strong>${escapeHtml(value)}</strong><span class="subtle">${escapeHtml(note)}</span></div>`;
-      $("revenueSummary").innerHTML = [
-        card("Selected Range Revenue", money(total), `${rows.length} month${rows.length === 1 ? "" : "s"}`),
-        card("Average Monthly Revenue", money(average), "Based on selected range"),
-        card("Highest Month", highest ? money(highest.amount) : money(0), highest ? highest.label : "-"),
-        card("Months Entered", enteredRows.length, `${rows.length - enteredRows.length} month${rows.length - enteredRows.length === 1 ? "" : "s"} empty`)
-      ].join("");
-      $("revenueChart").innerHTML = chartHtml(rows.map(row => ({ label: row.label, value: row.amount })));
-      $("revenueTable").innerHTML = tableHtml(["Month", "Revenue", "Remark", "Last Updated"], rows.map(row => [
-        row.label,
-        money(row.amount),
-        row.remark || "",
-        row.updatedAt ? formatDateTimeStamp(row.updatedAt) : "-"
-      ])) + `<div class="row" style="margin-top:10px;">${rows.filter(row => row.id).map(row => `<button class="btn small danger" data-delete-revenue="${row.id}">Delete ${escapeHtml(row.label)}</button>`).join("")}</div>`;
-    }
-
-    function revenueExportRows() {
-      return revenueRows().map(row => [row.label, money(row.amount), row.remark || "", row.updatedAt ? formatDateTimeStamp(row.updatedAt) : "-"]);
-    }
-
     function applyPulledPayload(payload) {
       const keepSettings = { ...(state.settings || {}) };
       Object.assign(state, payload || {});
@@ -2725,7 +2617,7 @@
       const reportTeacherOptions = [...state.teachers].filter(t => !isImportedOnlyTeacher(t)).sort(byName).map(t => ({ value: t.id, label: `${t.name}${isTeacherArchived(t) ? " (Archived)" : ""} (${(t.subjects || []).join(", ") || "No subject"})` }));
       const studentOptions = [...state.students].sort(byName).filter(s => (s.status || "registered") !== "archived").map(s => ({ value: s.id, label: `${s.name}${s.package ? " - " + s.package : ""}` }));
       const packageOptions = [...new Set(state.students.map(s => s.package).filter(Boolean))].sort();
-      ["monthSelect", "reportMonth", "businessDashboardMonth", "revenueFromMonth", "revenueToMonth", "revenueEntryMonth"].forEach(id => fillSelect($(id), Array.from({ length: 12 }, (_, i) => ({ value: i, label: new Date(2026, i, 1).toLocaleString("en", { month: "long" }) }))));
+      ["monthSelect", "reportMonth", "businessDashboardMonth"].forEach(id => fillSelect($(id), Array.from({ length: 12 }, (_, i) => ({ value: i, label: new Date(2026, i, 1).toLocaleString("en", { month: "long" }) }))));
       ["teacherFilter", "teacherStudentRecordTeacher"].forEach(id => fillSelect($(id), teacherOptions, "All Teachers"));
       ["overviewTeacherFilter"].forEach(id => fillSelect($(id), teacherOptions, "Choose Teacher"));
       ["slotTeacher", "bulkTeacher", "overrideTeacher", "editTimeSlotTeacher"].forEach(id => fillSelect($(id), teacherOptions));
@@ -2768,16 +2660,10 @@
       $("monthSelect").value = now.getMonth();
       $("reportMonth").value = now.getMonth();
       $("businessDashboardMonth").value = now.getMonth();
-      $("revenueFromMonth").value = 0;
-      $("revenueToMonth").value = now.getMonth();
-      $("revenueEntryMonth").value = now.getMonth();
       $("overviewViewMode").value = "table";
       $("yearInput").value = now.getFullYear();
       $("reportYear").value = now.getFullYear();
       $("businessDashboardYear").value = now.getFullYear();
-      $("revenueFromYear").value = now.getFullYear();
-      $("revenueToYear").value = now.getFullYear();
-      $("revenueEntryYear").value = now.getFullYear();
       $("overviewLeaveYear").value = now.getFullYear();
       $("crmReportYear").value = now.getFullYear();
       $("crmCompareYear").value = now.getFullYear() - 1;
@@ -2788,7 +2674,6 @@
       if ([...$("weekSelect").options].some(o => o.value === currentWeekValue)) $("weekSelect").value = currentWeekValue;
       $("weekDateInput").value = localISO(now);
       updateWeekRangeLabel();
-      loadRevenueEntryForm();
     }
 
     function studentScheduleRange() {
@@ -6875,7 +6760,6 @@
       const waiting = activeRows.filter(r => replacementTaskColumn(r) === "book").length;
       const done = activeRows.filter(r => replacementTaskColumn(r) === "done").length;
       const withdrawn = rows.filter(r => replacementTaskColumn(r) === "withdraw").length;
-      renderReplacementPriorityBoard(rows);
       $("replacementSummary").innerHTML = `
         <button class="metric" data-replacement-summary="contact"><span class="subtle">Contact parent</span><strong>${actionNeeded}</strong></button>
         <button class="metric" data-replacement-summary="book"><span class="subtle">Book replacement</span><strong>${waiting}</strong></button>
@@ -6895,9 +6779,9 @@
     }
 
     function renderReplacementTable(rows) {
-      const headers = ["Actions", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Latest Action", "Next Action", "Notes", "Last Updated"];
+      const headers = ["Actions", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Notes", "Last Updated"];
       const body = rows.map(item => `<tr>
-        <td><div class="row">${replacementNextActionsHtml(item)}</div></td>
+        <td><div class="row">${replacementTableActionsHtml(item)}</div></td>
         <td>${escapeHtml(item.status || "")}</td>
         <td>${escapeHtml(item.reason || "")}</td>
         <td>${escapeHtml(item.studentName || "")}</td>
@@ -6906,12 +6790,18 @@
         <td>${escapeHtml(replacementOriginalClassTime(item))}</td>
         <td>${escapeHtml(item.replacementTeacherName || "-")}</td>
         <td>${escapeHtml(item.replacementDate ? formatClassDateTime(item.replacementDate, item.replacementTime) : "-")}</td>
-        <td>${escapeHtml(item.latestAction || "-")}</td>
-        <td>${escapeHtml(replacementNextActionText(item))}</td>
         <td>${escapeHtml(item.notes || "")}</td>
         <td>${escapeHtml(formatDateTimeStamp(item.lastActionAt || item.updatedAt))}</td>
       </tr>`).join("") || `<tr><td colspan="${headers.length}">No data</td></tr>`;
       return `<div class="table-wrap"><table><thead><tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div>`;
+    }
+
+    function replacementTableActionsHtml(item) {
+      if (item.status === "Cancellation Withdrawn" || item.archived) return "";
+      const undo = `<button class="btn small danger" data-undo-cancellation="${item.id}">Undo Cancellation</button>`;
+      const completed = ["Replacement Booked", "Settled", "No Replacement Needed"].includes(item.status);
+      const book = completed ? "" : `<button class="btn small mint" data-book-replacement="${item.id}">Book Replacement</button>`;
+      return `${undo}${book}`;
     }
 
     function replacementTaskColumn(item) {
@@ -6986,17 +6876,7 @@
     }
 
     function replacementNextActionsHtml(item) {
-      if (item.status === "Cancellation Withdrawn" || item.archived) return "";
-      const undoButton = `<button class="btn small danger" data-undo-cancellation="${item.id}">Undo Cancellation</button>`;
-      if (item.status === "Action Needed") {
-        const publicHolidayNoReplacement = item.reason === "Public Holiday" ? `<button class="btn small ghost" data-replacement-status="${item.id}|No Replacement Needed|No replacement needed">No Replacement Needed</button>` : "";
-        return `${undoButton}<button class="btn small mint" data-replacement-status="${item.id}|Parent Contacted|Parent contacted">Parent Contacted</button>${publicHolidayNoReplacement}`;
-      }
-      if (item.status === "Parent Contacted") return `${undoButton}<button class="btn small mint" data-replacement-status="${item.id}|Parent Confirmed|Parent confirmed">Parent Confirmed</button><button class="btn small ghost" data-replacement-status="${item.id}|Waiting Parent Confirmation|Waiting parent confirmation">Waiting Reply</button>`;
-      if (item.status === "Waiting Parent Confirmation") return `${undoButton}<button class="btn small mint" data-replacement-status="${item.id}|Parent Confirmed|Parent confirmed">Parent Confirmed</button>`;
-      if (item.status === "Parent Confirmed") return `${undoButton}<button class="btn small mint" data-book-replacement="${item.id}">Book Replacement</button>`;
-      if (item.status === "Replacement Booked") return `${undoButton}<button class="btn small mint" data-replacement-status="${item.id}|Settled|Replacement settled">Mark Settled</button>`;
-      return undoButton;
+      return replacementTableActionsHtml(item);
     }
 
     function replacementPriorityGroup(item) {
@@ -7007,14 +6887,6 @@
       if (item.status === "Action Needed" && item.reason === "Public Holiday") return "urgentNotImportant";
       if (["Action Needed", "Parent Contacted", "Waiting Parent Confirmation"].includes(item.status)) return "notUrgentImportant";
       return "notUrgentNotImportant";
-    }
-
-    function renderReplacementPriorityBoard(rows) {
-      const groups = priorityGroups();
-      rows.forEach(item => groups[replacementPriorityGroup(item)].items.push(item));
-      $("replacementPriorityBoard").innerHTML = priorityBoardHtml(groups, item => `
-        <div class="priority-item"><strong>${escapeHtml(item.studentName || "-")}</strong><div class="subtle">${escapeHtml(item.reason || "-")} | ${replacementOriginalClassTime(item)}</div></div>
-      `);
     }
 
     function replacementOriginalBooking(item) {
@@ -7052,7 +6924,6 @@
         replacementOriginalClassTime(item),
         item.replacementTeacherName || "",
         item.replacementDate ? formatClassDateTime(item.replacementDate, item.replacementTime) : "",
-        item.latestAction || "",
         item.notes || "",
         formatDateTimeStamp(item.lastActionAt || item.updatedAt)
       ]);
@@ -7337,9 +7208,82 @@
       if (node.nodeType === 1) symbolizeActionButtons(node);
     })));
 
+    function tableColumnKey(table) {
+      const owner = table.closest("[id]");
+      const headings = [...(table.tHead?.rows?.[0]?.cells || [])].map(cell => cell.textContent.trim()).join("|");
+      const headingKey = headings.toLowerCase().replace(/[^a-z0-9|]+/g, "_").replace(/\|/g, "-").slice(0, 120);
+      return `${owner?.id || activeTabId()}::${headingKey || "table"}`;
+    }
+
+    function hiddenTableColumns(key) {
+      try {
+        const saved = JSON.parse(safeStorageGet(`classOneHiddenTableColumns.${key}`) || "[]");
+        return new Set(Array.isArray(saved) ? saved.map(Number).filter(Number.isInteger) : []);
+      } catch (err) {
+        return new Set();
+      }
+    }
+
+    function saveHiddenTableColumns(key, hidden) {
+      safeStorageSet(`classOneHiddenTableColumns.${key}`, JSON.stringify([...hidden].sort((a, b) => a - b)));
+    }
+
+    function findColumnControlledTable(key) {
+      return [...document.querySelectorAll("table[data-column-table-key]")].find(table => table.dataset.columnTableKey === key) || null;
+    }
+
+    function applyTableColumnVisibility(table, hidden = hiddenTableColumns(table.dataset.columnTableKey || tableColumnKey(table))) {
+      const headerCount = table.tHead?.rows?.[0]?.cells?.length || 0;
+      if (!headerCount) return;
+      [...table.rows].forEach(row => {
+        if (row.cells.length !== headerCount) return;
+        [...row.cells].forEach((cell, index) => cell.classList.toggle("table-column-hidden", hidden.has(index)));
+      });
+      const controls = table.parentElement?.querySelector(`:scope > .table-column-controls[data-table-column-controls-for="${CSS.escape(table.dataset.columnTableKey || "")}"]`);
+      controls?.querySelectorAll("[data-table-column-toggle]").forEach(input => {
+        input.checked = !hidden.has(Number(input.dataset.tableColumnIndex));
+      });
+    }
+
+    function enhanceTableColumnControls(root = document) {
+      const tables = root.matches?.("table") ? [root] : [...root.querySelectorAll?.("table") || []];
+      tables.filter(table => !table.classList.contains("teacher-timetable") && !table.hasAttribute("data-no-column-controls")).forEach(table => {
+        const headers = [...(table.tHead?.rows?.[0]?.cells || [])].map((cell, index) => cell.textContent.trim() || `Column ${index + 1}`);
+        if (headers.length < 2) return;
+        const key = tableColumnKey(table);
+        table.dataset.columnTableKey = key;
+        const parent = table.parentElement;
+        if (!parent) return;
+        let controls = [...parent.children].find(child => child.classList?.contains("table-column-controls") && child.dataset.tableColumnControlsFor === key);
+        if (!controls) {
+          controls = document.createElement("div");
+          controls.className = "table-column-controls";
+          controls.dataset.tableColumnControlsFor = key;
+          parent.insertBefore(controls, table);
+        }
+        const hidden = hiddenTableColumns(key);
+        controls.innerHTML = `<details><summary class="btn small ghost">Columns</summary><div class="table-column-menu">${headers.map((label, index) => `<label class="table-column-option" title="${escapeHtml(label)}"><input type="checkbox" data-table-column-toggle="${escapeHtml(key)}" data-table-column-index="${index}" ${hidden.has(index) ? "" : "checked"}><span>${escapeHtml(label)}</span></label>`).join("")}<div class="table-column-actions"><button type="button" class="btn small ghost" data-table-columns-show-all="${escapeHtml(key)}">Show All</button></div></div></details>`;
+        applyTableColumnVisibility(table, hidden);
+      });
+    }
+
+    let tableColumnEnhanceQueued = false;
+    function queueTableColumnEnhancement() {
+      if (tableColumnEnhanceQueued) return;
+      tableColumnEnhanceQueued = true;
+      requestAnimationFrame(() => {
+        tableColumnEnhanceQueued = false;
+        enhanceTableColumnControls();
+      });
+    }
+
+    const tableColumnObserver = new MutationObserver(mutations => {
+      if (mutations.some(mutation => [...mutation.addedNodes].some(node => node.nodeType === 1 && (node.matches?.("table") || node.querySelector?.("table"))))) queueTableColumnEnhancement();
+    });
+
     function renderAll() {
       if (initialDataLoadComplete) processExpiredReservations();
-      const old = Object.fromEntries(["monthSelect", "reportMonth", "businessDashboardMonth", "businessDashboardYear", "revenueFromMonth", "revenueFromYear", "revenueToMonth", "revenueToYear", "revenueEntryMonth", "revenueEntryYear", "weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "typeFilter", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear", "slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher", "teacherStudentRecordTeacher", "teacherStudentRecordStatus", "teacherStudentRecordSearch", "teacherDirectorySubject", "reportTeacher", "tutorLeadFilterStatus", "tutorLeadFilterCategory"].map(id => [id, $(id)?.value]));
+      const old = Object.fromEntries(["monthSelect", "reportMonth", "businessDashboardMonth", "businessDashboardYear", "weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "typeFilter", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear", "slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher", "teacherStudentRecordTeacher", "teacherStudentRecordStatus", "teacherStudentRecordSearch", "teacherDirectorySubject", "reportTeacher", "tutorLeadFilterStatus", "tutorLeadFilterCategory"].map(id => [id, $(id)?.value]));
       hydrateSelects();
       Object.entries(old).forEach(([id, value]) => { if ($(id) && value) $(id).value = value; });
       updateWeekRangeLabel();
@@ -7348,7 +7292,6 @@
       renderStudents();
       renderTeacherStudentRecords();
       renderArchive();
-      renderRevenueDashboard();
       renderBusinessDashboard();
       renderReport();
       renderCrmDashboard();
@@ -7364,6 +7307,7 @@
       renderSectionNav();
       updateActionPopup();
       symbolizeActionButtons();
+      enhanceTableColumnControls();
     }
 
     function clearTeacherForm() {
@@ -7604,7 +7548,6 @@
       suppressAutoPush = true;
       save(false);
       suppressAutoPush = false;
-      loadRevenueEntryForm();
       setStatus("Pulled latest data from Google Sheet.");
     }
 
@@ -7894,7 +7837,6 @@
       suppressAutoPush = true;
       save(false);
       suppressAutoPush = false;
-      loadRevenueEntryForm();
       if (logManual) logAction("Neon Loaded", "Neon Database", "", "Loaded latest app data", "Manual Neon load completed.");
       setStatus("Loaded latest data from Neon database.");
       return { empty: false, version: state.settings.neonVersion };
@@ -9077,14 +9019,6 @@
       }
       const deleteReplacementCredit = e.target.closest("[data-delete-replacement-credit]");
       if (deleteReplacementCredit) removeReplacementCredit(deleteReplacementCredit.dataset.deleteReplacementCredit);
-      const deleteRevenue = e.target.closest("[data-delete-revenue]");
-      if (deleteRevenue && confirm("Delete this monthly revenue entry?")) {
-        const entry = (state.revenueEntries || []).find(item => item.id === deleteRevenue.dataset.deleteRevenue);
-        state.revenueEntries = (state.revenueEntries || []).filter(item => item.id !== deleteRevenue.dataset.deleteRevenue);
-        logAction("Revenue Deleted", entry ? revenueMonthLabel(entry.month, entry.year) : deleteRevenue.dataset.deleteRevenue, entry ? money(entry.amount) : "", "", entry?.remark || "");
-        save();
-        setStatus("Revenue entry deleted.");
-      }
     });
 
     document.addEventListener("dragstart", (e) => {
@@ -9833,8 +9767,6 @@
     $("toggleTeacherSlotEditBtn").onclick = () => setTeacherSlotEditMode(!teacherSlotEditMode);
     $("exitTeacherSlotEditBtn").onclick = () => setTeacherSlotEditMode(false);
     $("applyTeacherSlotEditBtn").onclick = applyTeacherSlotEdits;
-    ["revenueFromMonth", "revenueFromYear", "revenueToMonth", "revenueToYear"].forEach(id => $(id).addEventListener("change", renderRevenueDashboard));
-    ["revenueEntryMonth", "revenueEntryYear"].forEach(id => $(id).addEventListener("change", loadRevenueEntryForm));
     $("clearOverviewFiltersBtn").onclick = () => {
       $("overviewTeacherFilter").value = "all";
       $("overviewViewMode").value = "table";
@@ -9859,30 +9791,6 @@
     });
     ["reportTeacher", "reportMonth", "reportYear"].forEach(id => $(id).addEventListener("change", renderReport));
     ["businessDashboardMonth", "businessDashboardYear"].forEach(id => $(id).addEventListener("change", renderBusinessDashboard));
-    $("saveRevenueEntryBtn").onclick = () => {
-      const month = Number($("revenueEntryMonth").value);
-      const year = Number($("revenueEntryYear").value || new Date().getFullYear());
-      const rawAmount = $("revenueEntryAmount").value.trim();
-      const amount = Number(rawAmount);
-      const remark = $("revenueEntryRemark").value.trim();
-      if (!Number.isInteger(month) || month < 0 || month > 11) return alert("Choose a valid entry month.");
-      if (!Number.isInteger(year) || year < 2024 || year > 2035) return alert("Enter a valid entry year from 2024 to 2035.");
-      if (!rawAmount || !Number.isFinite(amount) || amount < 0) return alert("Enter the monthly revenue amount first.");
-      let entry = revenueEntryFor(month, year);
-      const before = entry ? `${revenueMonthLabel(month, year)} | ${money(entry.amount)} | ${entry.remark || ""}` : "";
-      if (!entry) {
-        entry = { id: uid("revenue"), month, year, createdAt: new Date().toISOString() };
-        state.revenueEntries.push(entry);
-      }
-      entry.amount = amount;
-      entry.remark = remark;
-      entry.updatedAt = new Date().toISOString();
-      logAction(before ? "Revenue Updated" : "Revenue Added", revenueMonthLabel(month, year), before, `${money(amount)} | ${remark}`, "");
-      includeRevenueEntryInRange(month, year);
-      save();
-      loadRevenueEntryForm();
-      setStatus(`${revenueMonthLabel(month, year)} revenue saved: ${money(amount)}.`);
-    };
     $("studentSearch").addEventListener("input", renderStudents);
     $("teacherCardSearch").addEventListener("input", renderTeachers);
     $("teacherDirectorySearch").addEventListener("input", () => { teacherDirectoryPage = 1; renderTeacherDirectory(); });
@@ -9976,8 +9884,6 @@
       }
     };
     $("generateReportBtn").onclick = renderReport;
-    $("exportRevenueCsvBtn").onclick = () => downloadCsv("class-one-revenue.csv", ["No.", "Month", "Revenue", "Remark", "Last Updated"], numbered(revenueExportRows()));
-    $("exportRevenuePdfBtn").onclick = () => openPrintReport("Class One Revenue", ["No.", "Month", "Revenue", "Remark", "Last Updated"], numbered(revenueExportRows()));
     $("exportTeacherReportPdfBtn").onclick = () => openPrintReport("Teacher Monthly Payout Report", ["No.", "Date", "Time", "Student", "Subject", "Type", "Status", "Pay RM", "Remark"], numbered(currentTeacherReportRows()));
     $("saveOutcomeBtn").onclick = saveOutcome;
     $("bookAnotherStudentBtn").onclick = bookAnotherStudentFromCancelled;
@@ -10148,8 +10054,8 @@
       $("replacementSearch").value = "";
       renderReplacements();
     };
-    $("exportReplacementCsvBtn").onclick = () => downloadCsv("class-one-replacement-classes.csv", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Latest Action", "Notes", "Last Updated"], numbered(replacementExportRows()));
-    $("exportReplacementPdfBtn").onclick = () => openPrintReport("Replacement Classes", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Latest Action", "Notes", "Last Updated"], numbered(replacementExportRows()));
+    $("exportReplacementCsvBtn").onclick = () => downloadCsv("class-one-replacement-classes.csv", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Notes", "Last Updated"], numbered(replacementExportRows()));
+    $("exportReplacementPdfBtn").onclick = () => openPrintReport("Replacement Classes", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Notes", "Last Updated"], numbered(replacementExportRows()));
     ["activityFilterType", "activitySearch", "activityFromDate", "activityToDate"].forEach(id => $(id).addEventListener("input", renderActivityLog));
     $("activityFilterType").addEventListener("change", renderActivityLog);
     $("clearActivityFiltersBtn").onclick = () => {
@@ -10204,6 +10110,36 @@
       $("actionPopup").classList.add("hide");
       document.querySelector('[data-tab="replacements"]').click();
     };
+    document.addEventListener("change", event => {
+      const input = event.target.closest?.("[data-table-column-toggle]");
+      if (!input) return;
+      const key = input.dataset.tableColumnToggle;
+      const table = findColumnControlledTable(key);
+      if (!table) return;
+      const hidden = hiddenTableColumns(key);
+      const index = Number(input.dataset.tableColumnIndex);
+      if (input.checked) hidden.delete(index);
+      else {
+        const headerCount = table.tHead?.rows?.[0]?.cells?.length || 0;
+        if (hidden.size >= headerCount - 1) {
+          input.checked = true;
+          return alert("Keep at least one table column visible.");
+        }
+        hidden.add(index);
+      }
+      saveHiddenTableColumns(key, hidden);
+      applyTableColumnVisibility(table, hidden);
+    });
+    document.addEventListener("click", event => {
+      const button = event.target.closest?.("[data-table-columns-show-all]");
+      if (!button) return;
+      const key = button.dataset.tableColumnsShowAll;
+      const table = findColumnControlledTable(key);
+      if (!table) return;
+      const hidden = new Set();
+      saveHiddenTableColumns(key, hidden);
+      applyTableColumnVisibility(table, hidden);
+    });
     window.addEventListener("beforeunload", event => {
       if (!state.settings.pendingLocalSync) return;
       event.preventDefault();
@@ -10213,6 +10149,7 @@
     async function initApp() {
       try {
         symbolButtonObserver.observe(document.body, { childList: true, subtree: true });
+        tableColumnObserver.observe(document.body, { childList: true, subtree: true });
         load();
         setSidebarCollapsed(safeStorageGet("classOneSidebarCollapsed") === "1");
         initializeTabLayouts();
@@ -10223,7 +10160,6 @@
           .then(() => {
             hydrateSelects();
             renderAll();
-            loadRevenueEntryForm();
             setTimeout(() => autoPullOnStart(), 250);
           })
           .catch(err => {
