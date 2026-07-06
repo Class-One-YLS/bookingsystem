@@ -4633,11 +4633,11 @@
       const registeredCount = state.students.filter(s => statusOf(s) === "registered").length;
       const trialCount = state.students.filter(s => statusOf(s) === "trial").length;
       const archivedCount = state.students.filter(s => statusOf(s) === "archived").length;
-      if ($("studentCountTotal")) $("studentCountTotal").textContent = state.students.length;
+      if ($("studentCountTotal")) $("studentCountTotal").textContent = registeredCount + trialCount;
       if ($("studentCountActive")) $("studentCountActive").textContent = registeredCount;
       if ($("studentCountTrial")) $("studentCountTrial").textContent = trialCount;
       if ($("studentCountArchived")) $("studentCountArchived").textContent = archivedCount;
-      $("studentList").innerHTML = [...state.students].sort(byName).filter(s => !search || String(s.name || "").toLowerCase().includes(search)).map(s => {
+      $("studentList").innerHTML = [...state.students].sort(byName).filter(s => statusOf(s) !== "archived").filter(s => !search || String(s.name || "").toLowerCase().includes(search)).map(s => {
         const regularSlots = getStudentRegularSlots(s);
         const lines = regularSlots.map(slot => {
           const t = teacherById(slot.teacherId);
@@ -4647,7 +4647,7 @@
         const archived = studentStatus === "archived";
         const statusLabel = studentStatus === "trial" ? "trial / not enrolled" : studentStatus;
         const subjects = normalizeSubjects(s.subjects || [s.subject].filter(Boolean));
-        return `<div class="card"><div class="row spread"><strong>${escapeHtml(s.name)}</strong><span>${s.package ? `<span class="pill">${escapeHtml(s.package)}</span>` : ""}<span class="pill ${archived ? "archived" : ""}">${escapeHtml(statusLabel)}</span></span></div><div class="subtle">${subjects.length ? "Subjects: " + subjects.map(escapeHtml).join(", ") + "<br>" : ""}Package: ${money(s.packageAmount)} / ${Number(s.packageClasses || 0)} classes${s.packageNotes ? " | " + escapeHtml(s.packageNotes) : ""}<br>${lines.map(escapeHtml).join("<br>") || "No regular slots"}</div><div class="row" style="margin-top:8px;"><button class="btn small ghost" data-edit-student="${s.id}">Edit</button><button class="btn small ghost" data-archive-student="${s.id}">${archived ? "Restore" : "Archive"}</button><button class="btn small danger" data-delete-student="${s.id}">Delete</button></div></div>`;
+        return `<div class="card"><div class="row spread"><strong>${escapeHtml(s.name)}</strong><span>${s.package ? `<span class="pill">${escapeHtml(s.package)}</span>` : ""}<span class="pill ${archived ? "archived" : ""}">${escapeHtml(statusLabel)}</span></span></div><div class="subtle">${subjects.length ? "Subjects: " + subjects.map(escapeHtml).join(", ") + "<br>" : ""}Package: ${money(s.packageAmount)} / ${Number(s.packageClasses || 0)} classes${s.packageNotes ? " | " + escapeHtml(s.packageNotes) : ""}<br>${lines.map(escapeHtml).join("<br>") || "No regular slots"}</div><div class="row" style="margin-top:8px;"><button class="btn small ghost" data-edit-student="${s.id}">Edit</button></div></div>`;
       }).join("") || `<div class="empty">Add student names, subjects, and regular weekly slots.</div>`;
       renderRegisteredStudents();
     }
@@ -8754,11 +8754,15 @@
         renderArchive();
       }
       const delStudent = e.target.closest("[data-delete-student]");
-      if (delStudent && confirm("Delete this student?")) {
+      if (delStudent && confirm("Move this student to Archive?")) {
         const student = studentById(delStudent.dataset.deleteStudent);
-        logAction("Student Deleted", student?.name || delStudent.dataset.deleteStudent, studentLogSummary(student), "", "Student removed.");
-        state.students = state.students.filter(s => s.id !== delStudent.dataset.deleteStudent);
-        save();
+        if (student) {
+          const before = studentLogSummary(student);
+          student.status = "archived";
+          student.updatedAt = new Date().toISOString();
+          logAction("Student Archived", student.name, before, studentLogSummary(student), "Legacy delete action redirected to Archive; no student data was removed.");
+          save();
+        }
       }
       const delSlot = e.target.closest("[data-delete-slot]");
       if (delSlot) {
