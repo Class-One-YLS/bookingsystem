@@ -1296,15 +1296,17 @@
 
   <div id="teacherOpenSlotChoiceModal" class="modal hide">
     <div class="modal-card">
-      <div class="row spread"><h2>Open Slot Action</h2><button class="btn ghost small" data-close>Close</button></div>
+      <div class="row spread"><h2 id="teacherOpenSlotChoiceTitle">Open Slot Action</h2><button class="btn ghost small" data-close>Close</button></div>
       <input id="teacherOpenSlotChoiceData" type="hidden">
       <div class="subtle" id="teacherOpenSlotChoiceInfo"></div>
       <div class="row" style="margin-top:16px;">
         <button class="btn ghost" id="chooseReserveSlotBtn">Reserve</button>
         <button class="btn mint" id="chooseBookRegularBtn">Book Regular Class</button>
+        <button class="btn ghost hide" id="chooseOpenThisSlotBtn">Open This Slot</button>
         <button class="btn danger" id="chooseSetSlotOffBtn">Set To OFF</button>
         <button class="btn ghost" data-close>Cancel</button>
       </div>
+      <div class="subtle" id="teacherOpenSlotChoiceHint" style="margin-top:10px;"></div>
     </div>
   </div>
 
@@ -3484,8 +3486,8 @@
 
     function teacherOffCellHtml(teacher, date, time) {
       const day = DAYS[(date.getDay() + 6) % 7];
-      const data = escapeHtml(JSON.stringify({ teacherId: teacher.id, day, time, interactionSource: "teacher_overview" }));
-      return `<td class="teacher-cell-off"><button class="teacher-cell-button" data-open-off-slot="${data}" title="${teacherSlotEditMode ? "Click to open this slot" : "Use Edit Slots to change availability"}">OFF</button></td>`;
+      const data = escapeHtml(JSON.stringify({ teacherId: teacher.id, day, time, subject: (teacher.subjects || [])[0] || "", slotWasOff: true, interactionSource: "teacher_overview" }));
+      return `<td class="teacher-cell-off"><button class="teacher-cell-button" data-open-off-slot="${data}" title="${teacherSlotEditMode ? "Click to open this slot" : "Click for regular booking or single-slot opening"}">OFF</button></td>`;
     }
 
     function openTeacherOverviewRecurringSlot(data) {
@@ -3519,6 +3521,7 @@
       if (teacherSlotEditMode) setTeacherSlotEditMode(false);
       else renderTeacherOverview();
       setStatus(`${teacher.name}: ${data.day} ${timeLabel(data.time)} is now an open weekly slot.`);
+      return teacherOverviewActiveSlot(teacher, data.day, data.time);
     }
 
     function setTeacherOverviewSlotOffFromEditMode(data) {
@@ -3561,8 +3564,15 @@
     function openTeacherOpenSlotChoiceModal(data) {
       const teacher = teacherById(data.teacherId);
       if (!teacher) return alert("Teacher not found.");
+      const isOff = Boolean(data.slotWasOff);
       $("teacherOpenSlotChoiceData").value = JSON.stringify(data);
       $("teacherOpenSlotChoiceInfo").textContent = `${teacher.name} | ${data.day} ${timeLabel(data.time)} | ${data.subject || (teacher.subjects || [])[0] || "Teacher's subject"}`;
+      $("teacherOpenSlotChoiceTitle").textContent = isOff ? "OFF Slot Action" : "Open Slot Action";
+      $("chooseBookRegularBtn").textContent = isOff ? "Book Regular Student" : "Book Regular Class";
+      $("chooseReserveSlotBtn").classList.toggle("hide", isOff);
+      $("chooseSetSlotOffBtn").classList.toggle("hide", isOff);
+      $("chooseOpenThisSlotBtn").classList.toggle("hide", !isOff);
+      $("teacherOpenSlotChoiceHint").textContent = isOff ? "For bulk opening across several days or times, use Edit Slots at the top of Teacher Overview." : "";
       $("teacherOpenSlotChoiceModal").classList.remove("hide");
     }
 
@@ -3637,7 +3647,7 @@
       const reserveName = cleanStudentName(selectedStudent.name);
       const mode = $("reserveRegularMode").value;
       const startDate = todayISO();
-      const subject = data.subject || openSlot.subject || (teacher.subjects || [])[0] || "";
+      const subject = data.subject || openSlot?.subject || (teacher.subjects || [])[0] || "";
       const now = new Date().toISOString();
       if (mode === "future_regular") {
         const regularStartDate = dateOnly($("reserveRegularStartDate").value);
@@ -3786,8 +3796,8 @@
       const student = studentById($("fixedRegularStudent").value);
       if (!data || !teacher) return alert("Open slot data is missing.");
       if (!student) return alert("Choose a valid student.");
-      const openSlot = (teacher.regularSlots || []).find(slot => slot.id === data.slotId && !slot.locked);
-      if (!openSlot) return alert("This slot is no longer open. Refresh the Teacher Overview and try again.");
+      let openSlot = (teacher.regularSlots || []).find(slot => slot.id === data.slotId && !slot.locked);
+      if (!openSlot && !data.slotWasOff) return alert("This slot is no longer open. Refresh the Teacher Overview and try again.");
 
       const mode = $("fixedRegularMode").value;
       const startDate = mode === "start_now" ? todayISO() : dateOnly($("fixedRegularStartDate").value);
@@ -3798,6 +3808,11 @@
 
       const subject = data.subject || openSlot.subject || (teacher.subjects || [])[0] || "";
       const candidate = { teacherId: teacher.id, day: data.day, time: data.time, subject, startDate, endDate };
+      const bookedClass = activeBookings().find(booking =>
+        booking.teacherId === teacher.id && booking.time === data.time && dayFromISO(booking.date) === data.day &&
+        booking.date >= startDate && (!endDate || booking.date <= endDate)
+      );
+      if (bookedClass) return alert(`${teacher.name} is already booked by ${bookedClass.studentName || "another student"} on ${formatClassDateTime(bookedClass.date, bookedClass.time)}.`);
       const conflict = studentRegularSlotConflict(student.name, candidate);
       if (conflict) return alert(conflict);
       const duplicate = getStudentRegularSlots(student).find(slot =>
@@ -3805,7 +3820,7 @@
       );
       if (duplicate) return alert(`${student.name} already has this regular slot during the selected period.`);
 
-      splitOpenSlotForFixedBooking(teacher, openSlot, startDate, endDate);
+      if (openSlot) splitOpenSlotForFixedBooking(teacher, openSlot, startDate, endDate);
       const now = new Date().toISOString();
       const studentSlot = {
         id: uid("student_slot"),
@@ -8514,7 +8529,7 @@
       if (openOffSlot) {
         const data = JSON.parse(openOffSlot.dataset.openOffSlot);
         if (data.interactionSource === "teacher_overview" && !teacherSlotEditMode) {
-          alert("This slot is OFF. To change it to an open slot, click Edit Slots at the top of Teacher Overview.");
+          openTeacherOpenSlotChoiceModal(data);
         } else if (data.interactionSource === "teacher_overview") {
           if (confirm(`Open ${teacherById(data.teacherId)?.name || "this teacher"}'s ${data.day} ${timeLabel(data.time)} weekly slot?`)) openTeacherOverviewRecurringSlot(data);
         }
@@ -9183,6 +9198,12 @@
       if (!subjects.length) return alert("Choose at least one subject taken.");
       const packageName = $("studentPackage").value.trim();
       if (!packageName) return alert("Choose or type the student's package first.");
+      const hasPendingRegularEdit = Boolean(studentRegularSlotEditId || $("studentTeacher").value || $("studentTime").value || selectedStudentRegularDays().length);
+      if (hasPendingRegularEdit) {
+        $("addStudentRegularSlotBtn").click();
+        const regularEditStillPending = Boolean(studentRegularSlotEditId || $("studentTeacher").value || $("studentTime").value || selectedStudentRegularDays().length);
+        if (regularEditStillPending) return;
+      }
       if (pendingEnrollmentLeadId && !studentRegularSlotsDraft.length) return alert("Add at least one regular class teacher, day and time to complete enrollment.");
       const id = $("studentId").value || uid("student");
       const existing = studentById(id) || { id };
@@ -9843,6 +9864,12 @@
       if (!data) return alert("Open slot data is missing.");
       $("teacherOpenSlotChoiceModal").classList.add("hide");
       openFixedRegularBookingModal(data);
+    };
+    $("chooseOpenThisSlotBtn").onclick = () => {
+      const data = JSON.parse($("teacherOpenSlotChoiceData").value || "null");
+      if (!data) return alert("OFF slot data is missing.");
+      $("teacherOpenSlotChoiceModal").classList.add("hide");
+      openTeacherOverviewRecurringSlot(data);
     };
     $("chooseSetSlotOffBtn").onclick = () => {
       const data = JSON.parse($("teacherOpenSlotChoiceData").value || "null");
