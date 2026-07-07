@@ -106,17 +106,23 @@
     .pill.available { background: var(--ok); }
     .toolbar { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr)); gap: 12px; align-items: end; }
     .crm-dashboard-toolbar { grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr)); gap: 18px; }
-    .schedule-wrap { width: 100%; max-width: 100%; overflow-x: auto; overflow-y: visible; overscroll-behavior-inline: contain; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+    .schedule-wrap { width: 100%; max-width: 100%; max-height: calc(100vh - 190px); overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
     .schedule { min-width: 1040px; display: grid; grid-template-columns: 90px repeat(7, minmax(130px, 1fr)); }
     .cell { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 8px; min-height: 74px; }
-    .cell.head { background: var(--soft); min-height: 58px; font-weight: 900; text-align: center; }
-    .time-cell { color: var(--muted); font-size: 12px; font-weight: 900; background: #fbfdfc; display: grid; place-items: center; }
+    .cell.head { background: var(--soft); min-height: 58px; font-weight: 900; text-align: center; position: sticky; top: 0; z-index: 6; }
+    .cell.schedule-corner { left: 0; z-index: 8; }
+    .time-cell { color: var(--muted); font-size: 12px; font-weight: 900; background: #fbfdfc; display: grid; place-items: center; position: sticky; left: 0; z-index: 5; }
+    .time-cell.time-am { background: #FBE3AF; color: #111; }
+    .time-cell.time-pm { background: #E97E97; color: #fff; }
+    .schedule-corner, .time-cell { box-shadow: 1px 0 0 var(--line); }
     .slot { width: 100%; text-align: left; padding: 8px; border-radius: 8px; margin-bottom: 6px; background: var(--mint); color: var(--ink); font-weight: 900; font-size: 12px; }
     .slot.booked { background: #dcf8ea; }
     .slot.booked.type-assessment, .slot.booked.type-exam, .slot.booked.type-trial-class { background: #fff2a8; }
     .slot.booked.type-new, .slot.booked.type-new-students { background: #fff8cf; }
     .slot.booked.type-replacement-class { background: #dceafe; }
     .slot.booked.type-extra-class { background: #e8dcff; }
+    .slot.booked.type-practical-class { background: #9080AE; color: #fff; }
+    .slot.booked.type-practical-class small { color: #fff; }
     .slot.status-student-not-show { background: #d92d20; color: #fff; }
     .slot.status-student-not-show small { color: #fff; }
     .slot.status-cancelled, .slot.status-public-holiday, .slot.status-teacher-leave { background: #d0d5dd; color: #17212b; }
@@ -160,6 +166,7 @@
     .teacher-cell-booked.type-new, .teacher-cell-booked.type-new-students { background: #fff8cf; }
     .teacher-cell-booked.type-replacement-class { background: #dceafe; }
     .teacher-cell-booked.type-extra-class { background: #e8dcff; }
+    .teacher-cell-booked.type-practical-class { background: #9080AE; color: #fff; }
     .teacher-cell-booked.status-student-not-show { background: #d92d20; color: #fff; }
     .teacher-cell-booked.status-cancelled, .teacher-cell-booked.status-public-holiday, .teacher-cell-booked.status-teacher-leave { background: #d0d5dd; color: #111; }
     .teacher-cell-button { width: 100%; min-height: 100%; background: transparent; color: inherit; font: inherit; font-weight: inherit; padding: 0; }
@@ -1562,7 +1569,7 @@
     const SUBJECTS = ["CN", "BM", "PK", "SOK", "CREATIVE MATHS", "PHONICS"];
     const LEAD_SUBJECTS = ["BC", "BM", "PK", "SOK", "Phonics"];
     const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-    const BOOKING_TYPES = ["exam", "assessment", "trial class", "replacement class", "extra class", "reserve", "new students", "regular class"];
+    const BOOKING_TYPES = ["exam", "assessment", "trial class", "replacement class", "extra class", "practical class", "reserve", "new students", "regular class"];
     const BOOKING_STATUS_LABELS = {
       booked: "Booked",
       completed: "Completed",
@@ -1649,18 +1656,31 @@
     let studentRegularSlotsDraft = [];
     let studentRegularSlotEditId = "";
     let pendingEnrollmentLeadId = "";
-    const LEADS_PER_PAGE = 30;
+    const LIST_PAGE_SIZE = 10;
+    const LEADS_PER_PAGE = LIST_PAGE_SIZE;
     let leadPage = 1;
     let leadViewMode = "table";
     let tutorLeadPage = 1;
     let tutorLeadViewMode = "table";
+    let teacherListPage = 1;
+    let studentListPage = 1;
+    let registeredStudentPage = 1;
+    let teacherStudentRecordPage = 1;
+    let templatePage = 1;
+    let replacementCreditPage = 1;
+    let activityPage = 1;
+    let slotListPage = 1;
+    let allTeacherPayoutPage = 1;
+    let teacherFeedbackPage = 1;
     let leadColumnFilterTimer = null;
     let openColumnFilterId = "";
     let replacementViewMode = safeStorageGet("classOneReplacementViewMode") || "board";
+    let replacementPage = 1;
+    const REPLACEMENT_PAGE_SIZE = LIST_PAGE_SIZE;
     const teacherLinkSyncing = new Set();
     const teacherLinkFailed = new Set();
-    const ARCHIVE_PAGE_SIZE = 30;
-    const TEACHER_DIRECTORY_PAGE_SIZE = 30;
+    const ARCHIVE_PAGE_SIZE = LIST_PAGE_SIZE;
+    const TEACHER_DIRECTORY_PAGE_SIZE = LIST_PAGE_SIZE;
     let teacherDirectoryPage = 1;
     const revealedTeacherPasscodes = new Set();
     let archivedTeacherPage = 1;
@@ -2388,7 +2408,10 @@
 
     function renderTeacherFeedbackList(teacherId) {
       const rows = teacherFeedbackRows(teacherId, true);
-      $("teacherFeedbackList").innerHTML = rows.length ? rows.map(item => `
+      teacherFeedbackPage = clampPage(teacherFeedbackPage, rows.length);
+      const feedbackPageData = pageSlice(rows, teacherFeedbackPage);
+      teacherFeedbackPage = feedbackPageData.page;
+      $("teacherFeedbackList").innerHTML = rows.length ? feedbackPageData.items.map(item => `
         <div class="card">
           <div class="row spread">
             <strong>${escapeHtml(item.studentName || "General feedback")}</strong>
@@ -2400,12 +2423,13 @@
             <button class="btn small danger" data-archive-teacher-feedback="${item.id}">${item.archived ? "Restore" : "Archive"}</button>
           </div>
         </div>
-      `).join("") : `<div class="empty">No parent feedback recorded for this teacher yet.</div>`;
+      `).join("") + listPagerHtml("teacherFeedback", teacherFeedbackPage, rows.length) : `<div class="empty">No parent feedback recorded for this teacher yet.</div>`;
     }
 
     function openTeacherFeedbackModal(teacherId, feedbackId = "") {
       const teacher = teacherById(teacherId);
       if (!teacher) return alert("Teacher not found.");
+      teacherFeedbackPage = 1;
       $("feedbackTeacherId").value = teacher.id;
       $("feedbackContext").textContent = `${teacher.name} | Admin-only parent feedback. Not visible to teacher.`;
       const item = feedbackId ? (state.teacherFeedback || []).find(row => row.id === feedbackId) : null;
@@ -2527,6 +2551,7 @@
 
     function completedClassPayout(booking, teacher) {
       if (booking.status !== "completed") return 0;
+      if ((booking.type || "").toLowerCase() === "practical class") return 0;
       if ((teacher.category || "freelance") === "micro_franchisee") {
         const student = studentById(booking.studentId) || state.students.find(s => String(s.name || "").toLowerCase() === String(booking.studentName || "").toLowerCase());
         const amount = Number(student?.packageAmount || 0);
@@ -2537,10 +2562,14 @@
       return Number(teacher.rate || 0);
     }
 
+    function isPaidCompletedClass(booking) {
+      return booking?.status === "completed" && (booking.type || "").toLowerCase() !== "practical class";
+    }
+
     function teacherMonthlyPayoutRows(month = Number($("reportMonth").value), year = Number($("reportYear").value)) {
       return [...state.teachers].filter(t => !isImportedOnlyTeacher(t)).sort(byName).map(teacher => {
         const monthBookings = state.bookings.filter(b => b.teacherId === teacher.id && new Date(b.date + "T00:00:00").getMonth() === month && new Date(b.date + "T00:00:00").getFullYear() === year);
-        const completed = monthBookings.filter(b => b.status === "completed");
+        const completed = monthBookings.filter(isPaidCompletedClass);
         const notShows = monthBookings.filter(b => b.status === "student_not_show");
         const cancelled = monthBookings.filter(b => isCancelledStatus(b.status));
         const lessonPay = completed.reduce((sum, booking) => sum + completedClassPayout(booking, teacher), 0);
@@ -3079,9 +3108,9 @@
       });
       const sortedTimes = [...times].sort((a, b) => minutes(a) - minutes(b));
       const summary = { open: 0, booked: 0, fixed: 0, visibleTeachers: new Set() };
-      let html = `<div class="cell head"></div>${dates.map(d => `<div class="cell head">${DAYS[(d.getDay() + 6) % 7].slice(0, 3)}<br><span class="subtle">${d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span></div>`).join("")}`;
+      let html = `<div class="cell head schedule-corner"></div>${dates.map(d => `<div class="cell head">${DAYS[(d.getDay() + 6) % 7].slice(0, 3)}<br><span class="subtle">${d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span></div>`).join("")}`;
       sortedTimes.forEach(t => {
-        html += `<div class="cell time-cell">${timeLabel(t)}</div>`;
+        html += `<div class="cell time-cell ${minutes(t) < 720 ? "time-am" : "time-pm"}">${timeLabel(t)}</div>`;
         dates.forEach(d => {
           const teacherFilter = $("teacherFilter").value;
           const subjectFilter = $("subjectFilter").value;
@@ -4218,7 +4247,7 @@
       openBookingModalForSlot(data);
     }
 
-    const FUTURE_REGULAR_TEMPORARY_TYPES = ["assessment", "exam", "trial class", "extra class", "replacement class"];
+    const FUTURE_REGULAR_TEMPORARY_TYPES = ["assessment", "exam", "trial class", "extra class", "practical class", "replacement class"];
 
     function futureRegularReservationForDate(teacherId, date, time) {
       const teacher = teacherById(teacherId);
@@ -4711,7 +4740,10 @@
         (teacher.subjects || []).join(" "),
         teacher.category === "micro_franchisee" ? "micro franchisee" : "freelance tutor"
       ].some(value => String(value || "").toLowerCase().includes(search)));
-      $("teacherList").innerHTML = teachers.map(t => {
+      teacherListPage = clampPage(teacherListPage, teachers.length);
+      const teacherPageData = pageSlice(teachers, teacherListPage);
+      teacherListPage = teacherPageData.page;
+      $("teacherList").innerHTML = teacherPageData.items.map(t => {
         const linkSyncing = teacherLinkSyncing.has(t.id);
         const linkFailed = teacherLinkFailed.has(t.id);
         return `
@@ -4734,6 +4766,7 @@
           </div>
         </div>`;
       }).join("") || `<div class="empty">${search ? "No teachers match this search." : "Add your first tutor profile."}</div>`;
+      setAutoPager("teacherList", listPagerHtml("teachers", teacherListPage, teachers.length));
       renderTeacherDirectory();
       renderSlotList();
     }
@@ -4798,7 +4831,7 @@
       }).join("") || `<tr><td colspan="11">No teachers match this directory search.</td></tr>`;
       $("teacherDirectoryList").innerHTML = `<table class="lead-table"><thead><tr><th>No.</th><th>Teacher Name</th><th>Subjects Covered</th><th>Internal Remark</th><th>Email</th><th>Contact</th><th>Zoom ID</th><th>Passcode</th><th>Zoom Link</th><th>Teacher View Link</th><th>Actions</th></tr></thead><tbody>${body}</tbody></table>`;
       const end = Math.min(start + TEACHER_DIRECTORY_PAGE_SIZE, allRows.length);
-      $("teacherDirectoryPager").innerHTML = `<button class="btn small ghost" data-teacher-directory-page="prev" ${teacherDirectoryPage <= 1 ? "disabled" : ""}>Previous</button><span class="subtle">Showing ${allRows.length ? start + 1 : 0}-${end} of ${allRows.length} | Page ${teacherDirectoryPage} of ${totalPages}</span><button class="btn small ghost" data-teacher-directory-page="next" ${teacherDirectoryPage >= totalPages ? "disabled" : ""}>Next</button>`;
+      $("teacherDirectoryPager").innerHTML = `<button class="btn small ghost" data-teacher-directory-page="prev" ${teacherDirectoryPage <= 1 ? "disabled" : ""}>&lt;</button><span class="subtle">Showing ${allRows.length ? start + 1 : 0}-${end} of ${allRows.length} | Page ${teacherDirectoryPage} of ${totalPages}</span><button class="btn small ghost" data-teacher-directory-page="next" ${teacherDirectoryPage >= totalPages ? "disabled" : ""}>&gt;</button>`;
     }
 
     async function copyTeacherPasscode(teacherId) {
@@ -4836,7 +4869,11 @@
           .filter(s => !s.source || String(s.source).startsWith("manual"))
           .forEach(s => rows.push(`<div class="card"><strong>${escapeHtml(t.name)}</strong> <span class="pill">${s.unavailable ? "OFF" : "Open"}</span><div class="subtle">${escapeHtml(availabilitySlotLabel(s))} | ${escapeHtml(s.subject || "-")}${s.remark ? " | " + escapeHtml(s.remark) : ""}</div><button class="btn small danger" data-delete-slot="${t.id}|override|${s.id}">Delete</button></div>`));
       });
-      $("slotList").innerHTML = rows.join("") || `<div class="empty">No particular date slots added by admin yet.</div>`;
+      slotListPage = clampPage(slotListPage, rows.length);
+      const slotPageData = pageSlice(rows, slotListPage);
+      slotListPage = slotPageData.page;
+      $("slotList").innerHTML = slotPageData.items.join("") || `<div class="empty">No particular date slots added by admin yet.</div>`;
+      setAutoPager("slotList", listPagerHtml("slots", slotListPage, rows.length));
     }
 
     function renderStudents() {
@@ -4849,7 +4886,11 @@
       if ($("studentCountActive")) $("studentCountActive").textContent = registeredCount;
       if ($("studentCountTrial")) $("studentCountTrial").textContent = trialCount;
       if ($("studentCountArchived")) $("studentCountArchived").textContent = archivedCount;
-      $("studentList").innerHTML = [...state.students].sort(byName).filter(s => statusOf(s) !== "archived").filter(s => !search || String(s.name || "").toLowerCase().includes(search)).map(s => {
+      const students = [...state.students].sort(byName).filter(s => statusOf(s) !== "archived").filter(s => !search || String(s.name || "").toLowerCase().includes(search));
+      studentListPage = clampPage(studentListPage, students.length);
+      const studentPageData = pageSlice(students, studentListPage);
+      studentListPage = studentPageData.page;
+      $("studentList").innerHTML = studentPageData.items.map(s => {
         const regularSlots = getStudentRegularSlots(s);
         const lines = regularSlots.map(slot => {
           const t = teacherById(slot.teacherId);
@@ -4861,6 +4902,7 @@
         const subjects = normalizeSubjects(s.subjects || [s.subject].filter(Boolean));
         return `<div class="card"><div class="row spread"><strong>${escapeHtml(s.name)}</strong><span>${s.package ? `<span class="pill">${escapeHtml(s.package)}</span>` : ""}<span class="pill ${archived ? "archived" : ""}">${escapeHtml(statusLabel)}</span></span></div><div class="subtle">${subjects.length ? "Subjects: " + subjects.map(escapeHtml).join(", ") + "<br>" : ""}Package: ${money(s.packageAmount)} / ${Number(s.packageClasses || 0)} classes${s.packageNotes ? " | " + escapeHtml(s.packageNotes) : ""}<br>${lines.map(escapeHtml).join("<br>") || "No regular slots"}</div><div class="row" style="margin-top:8px;"><button class="btn small ghost" data-edit-student="${s.id}">Edit</button></div></div>`;
       }).join("") || `<div class="empty">Add student names, subjects, and regular weekly slots.</div>`;
+      setAutoPager("studentList", listPagerHtml("students", studentListPage, students.length));
       renderRegisteredStudents();
     }
 
@@ -4872,10 +4914,13 @@
         .filter(s => filter === "all" || (s.registeredStatus || "active") === filter)
         .filter(s => !search || String(s.name || "").toLowerCase().includes(search))
         .sort(byName);
+      registeredStudentPage = clampPage(registeredStudentPage, students.length);
+      const studentPageData = pageSlice(students, registeredStudentPage);
+      registeredStudentPage = studentPageData.page;
       const statusOptions = ["active", "new", "drop"].map(status => `<option value="${status}">${status}</option>`).join("");
-      const rows = students.map((s, index) => `
+      const rows = studentPageData.items.map((s, index) => `
         <tr>
-          <td>${index + 1}</td>
+          <td>${studentPageData.start + index + 1}</td>
           <td><button class="btn small ghost" data-edit-student="${s.id}">${escapeHtml(s.name || "")}</button></td>
           <td>${escapeHtml(s.package || "-")}</td>
           <td><select data-registered-student="${s.id}|registeredStatus">${statusOptions}</select></td>
@@ -4883,6 +4928,7 @@
         </tr>
       `).join("") || `<tr><td colspan="5">No registered students found.</td></tr>`;
       $("registeredStudentList").innerHTML = `<table><thead><tr><th>No.</th><th>Student Name</th><th>Package</th><th>Status</th><th>Remark</th></tr></thead><tbody>${rows}</tbody></table>`;
+      setAutoPager("registeredStudentList", listPagerHtml("registeredStudents", registeredStudentPage, students.length));
       document.querySelectorAll("[data-registered-student$='|registeredStatus']").forEach(select => {
         const [id] = select.dataset.registeredStudent.split("|");
         const student = studentById(id);
@@ -5040,11 +5086,14 @@
         .filter(row => statusFilter === "all" || (statusFilter === "archived" ? row.archived : !row.archived))
         .filter(row => !search || [row.teacherName, row.studentName, row.currentLevel, row.remark].some(value => String(value || "").toLowerCase().includes(search)));
       $("teacherStudentRecordCount").textContent = `${rows.length} student${rows.length === 1 ? "" : "s"}`;
-      const body = rows.map((row, index) => {
+      teacherStudentRecordPage = clampPage(teacherStudentRecordPage, rows.length);
+      const recordPageData = pageSlice(rows, teacherStudentRecordPage);
+      teacherStudentRecordPage = recordPageData.page;
+      const body = recordPageData.items.map((row, index) => {
         const attrs = `data-teacher-id="${escapeHtml(row.teacherId)}" data-student-id="${escapeHtml(row.studentId)}" data-student-name="${escapeHtml(row.studentName)}"`;
         return `
           <tr>
-            <td>${index + 1}</td>
+            <td>${recordPageData.start + index + 1}</td>
             <td>${escapeHtml(row.teacherName || "-")}</td>
             <td>${escapeHtml(row.studentName || "-")}</td>
             <td><input data-teacher-student-record="currentLevel" ${attrs} value="${escapeHtml(row.currentLevel || "")}" placeholder="Current level"></td>
@@ -5054,6 +5103,7 @@
           </tr>`;
       }).join("") || `<tr><td colspan="7">No teacher student records found.</td></tr>`;
       $("teacherStudentRecordList").innerHTML = `<table><thead><tr><th>No.</th><th>Teacher</th><th>Student</th><th>Current Level</th><th>Remarks</th><th>Status</th><th>Last Updated</th></tr></thead><tbody>${body}</tbody></table>`;
+      setAutoPager("teacherStudentRecordList", listPagerHtml("teacherStudentRecords", teacherStudentRecordPage, rows.length));
     }
 
     function renderStudentRegularSlotDraft() {
@@ -6006,9 +6056,9 @@
       $("leadPagination").innerHTML = `
         <div class="subtle">Showing ${shownStart}-${shownEnd} of ${allLeads.length} leads</div>
         <div class="row">
-          <button class="btn small ghost" id="leadPrevPageBtn" ${leadPage <= 1 ? "disabled" : ""}>Previous</button>
+          <button class="btn small ghost" id="leadPrevPageBtn" ${leadPage <= 1 ? "disabled" : ""}>&lt;</button>
           <span class="pill">Page ${leadPage} / ${totalPages}</span>
-          <button class="btn small ghost" id="leadNextPageBtn" ${leadPage >= totalPages ? "disabled" : ""}>Next</button>
+          <button class="btn small ghost" id="leadNextPageBtn" ${leadPage >= totalPages ? "disabled" : ""}>&gt;</button>
         </div>
       `;
       $("leadPrevPageBtn").onclick = () => { leadPage -= 1; renderLeads(); };
@@ -6067,9 +6117,9 @@
       $("tutorLeadPagination").innerHTML = `
         <div class="subtle">Showing ${shownStart}-${shownEnd} of ${allLeads.length} tutor leads</div>
         <div class="row">
-          <button class="btn small ghost" id="tutorLeadPrevPageBtn" ${tutorLeadPage <= 1 ? "disabled" : ""}>Previous</button>
+          <button class="btn small ghost" id="tutorLeadPrevPageBtn" ${tutorLeadPage <= 1 ? "disabled" : ""}>&lt;</button>
           <span class="pill">Page ${tutorLeadPage} / ${totalPages}</span>
-          <button class="btn small ghost" id="tutorLeadNextPageBtn" ${tutorLeadPage >= totalPages ? "disabled" : ""}>Next</button>
+          <button class="btn small ghost" id="tutorLeadNextPageBtn" ${tutorLeadPage >= totalPages ? "disabled" : ""}>&gt;</button>
         </div>
       `;
       $("tutorLeadPrevPageBtn").onclick = () => { tutorLeadPage -= 1; renderTutorCrm(); };
@@ -6245,11 +6295,15 @@
       const templates = state.settings.replyTemplates || [];
       const selectedId = $("templateId")?.value || templates[0]?.id || "";
       const selected = templates.find(template => template.id === selectedId) || templates[0];
-      $("templateList").innerHTML = templates.map(template => `
+      templatePage = clampPage(templatePage, templates.length);
+      const templatePageData = pageSlice(templates, templatePage);
+      templatePage = templatePageData.page;
+      $("templateList").innerHTML = templatePageData.items.map(template => `
         <button class="template-item ${template.id === selected?.id ? "active" : ""}" data-template-id="${template.id}">
           <strong>${escapeHtml(template.title)}</strong>
           <div class="subtle">${escapeHtml(template.category || "General")}</div>
         </button>`).join("") || `<div class="empty">No templates yet.</div>`;
+      setAutoPager("templateList", listPagerHtml("templates", templatePage, templates.length));
       if (selected) {
         $("templateId").value = selected.id;
         $("templateTitle").value = selected.title || "";
@@ -6331,7 +6385,7 @@
       const pages = Math.max(1, Math.ceil(total / ARCHIVE_PAGE_SIZE));
       const start = total ? (page - 1) * ARCHIVE_PAGE_SIZE + 1 : 0;
       const end = Math.min(total, page * ARCHIVE_PAGE_SIZE);
-      return `<button class="btn ghost small" data-archive-page="${kind}|prev" ${page <= 1 ? "disabled" : ""}>Previous</button><span class="subtle">Showing ${start}-${end} of ${total} | Page ${page} of ${pages}</span><button class="btn ghost small" data-archive-page="${kind}|next" ${page >= pages ? "disabled" : ""}>Next</button>`;
+      return `<button class="btn ghost small" data-archive-page="${kind}|prev" ${page <= 1 ? "disabled" : ""}>&lt;</button><span class="subtle">Showing ${start}-${end} of ${total} | Page ${page} of ${pages}</span><button class="btn ghost small" data-archive-page="${kind}|next" ${page >= pages ? "disabled" : ""}>&gt;</button>`;
     }
 
     function activityTypes() {
@@ -6363,7 +6417,10 @@
         <div class="metric"><span class="subtle">Total stored</span><strong>${(state.activityLogs || []).length}</strong></div>
         <div class="metric"><span class="subtle">Latest</span><strong style="font-size:14px;">${logs[0] ? formatDateTimeStamp(logs[0].createdAt) : "-"}</strong></div>
       `;
-      $("activityList").innerHTML = tableHtml(["Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], logs.slice(0, 300).map(log => [
+      activityPage = clampPage(activityPage, logs.length);
+      const activityPageData = pageSlice(logs, activityPage);
+      activityPage = activityPageData.page;
+      $("activityList").innerHTML = tableHtml(["Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], activityPageData.items.map(log => [
         formatDateTimeStamp(log.createdAt),
         log.user || "This browser / Admin",
         log.type || "",
@@ -6372,6 +6429,7 @@
         log.afterValue || "",
         log.notes || ""
       ]));
+      setAutoPager("activityList", listPagerHtml("activity", activityPage, logs.length));
     }
 
     function activityExportRows() {
@@ -6400,7 +6458,7 @@
       const end = new Date(year, month + 1, 0, 23, 59, 59);
       finalizePassedClassesForRange(start, end);
       const monthBookings = state.bookings.filter(b => b.teacherId === teacherId && new Date(b.date + "T00:00:00").getMonth() === month && new Date(b.date + "T00:00:00").getFullYear() === year);
-      const completed = monthBookings.filter(b => b.status === "completed");
+      const completed = monthBookings.filter(isPaidCompletedClass);
       const notShows = monthBookings.filter(b => b.status === "student_not_show");
       const cancelled = monthBookings.filter(b => isCancelledStatus(b.status));
       const lessonCount = completed.length;
@@ -6454,7 +6512,11 @@
         <div class="metric"><span class="subtle">Total payout</span><strong>${money(totals.payout)}</strong></div>
       `;
       $("allTeacherPayoutChart").innerHTML = chartHtml(rows.filter(row => Number(row[10]) > 0).slice(0, 12).map(row => ({ label: row[0], value: Number(row[10]), display: money(row[10]) })));
-      $("allTeacherPayoutTable").innerHTML = tableHtml(["No.", "Teacher", "Category", "Tier", "Rate", "Share", "Completed", "Not Show", "Cancelled", "Lesson Pay", "Not Show Pay", "Total Pay"], numbered(rows));
+      allTeacherPayoutPage = clampPage(allTeacherPayoutPage, rows.length);
+      const payoutPageData = pageSlice(rows, allTeacherPayoutPage);
+      allTeacherPayoutPage = payoutPageData.page;
+      $("allTeacherPayoutTable").innerHTML = tableHtml(["No.", "Teacher", "Category", "Tier", "Rate", "Share", "Completed", "Not Show", "Cancelled", "Lesson Pay", "Not Show Pay", "Total Pay"], payoutPageData.items.map((row, index) => [payoutPageData.start + index + 1, ...row]));
+      setAutoPager("allTeacherPayoutTable", listPagerHtml("allTeacherPayout", allTeacherPayoutPage, rows.length));
     }
 
     function filteredReplacements() {
@@ -6575,7 +6637,10 @@
         .filter(item => item.status !== "void")
         .filter(item => Number(item.amount || 0) - Number(item.used || 0) > 0)
         .sort((a, b) => cleanStudentName(a.studentName).localeCompare(cleanStudentName(b.studentName)));
-      $("replacementCreditSummary").innerHTML = rows.map(item => `
+      replacementCreditPage = clampPage(replacementCreditPage, rows.length);
+      const creditPageData = pageSlice(rows, replacementCreditPage);
+      replacementCreditPage = creditPageData.page;
+      $("replacementCreditSummary").innerHTML = creditPageData.items.map(item => `
         <div class="card">
           <div class="row spread"><strong>${escapeHtml(item.studentName || "-")}</strong><span class="pill">${Number(item.amount || 0) - Number(item.used || 0)} credit</span></div>
           <div class="subtle">${escapeHtml(item.reason || "-")} | ${escapeHtml(item.remark || "")}<br>Added: ${escapeHtml(formatDateTimeStamp(item.createdAt))}</div>
@@ -6585,6 +6650,7 @@
           </div>
         </div>
       `).join("") || `<div class="empty">No available replacement credits.</div>`;
+      setAutoPager("replacementCreditSummary", listPagerHtml("replacementCredits", replacementCreditPage, rows.length));
     }
 
     function renderPublicHolidayCalendar() {
@@ -6933,6 +6999,10 @@
 
     function renderReplacements() {
       const rows = filteredReplacements();
+      const totalPages = Math.max(1, Math.ceil(rows.length / REPLACEMENT_PAGE_SIZE));
+      replacementPage = Math.min(Math.max(1, replacementPage), totalPages);
+      const startIndex = (replacementPage - 1) * REPLACEMENT_PAGE_SIZE;
+      const pageRows = rows.slice(startIndex, startIndex + REPLACEMENT_PAGE_SIZE);
       const activeRows = rows.filter(item => item.status !== "Cancellation Withdrawn" && !item.archived);
       const actionNeeded = activeRows.filter(r => replacementTaskColumn(r) === "contact").length;
       const waiting = activeRows.filter(r => replacementTaskColumn(r) === "book").length;
@@ -6946,14 +7016,29 @@
       `;
       $("replacementBoardViewBtn").classList.toggle("active", replacementViewMode === "board");
       $("replacementTableViewBtn").classList.toggle("active", replacementViewMode === "table");
-      $("replacementList").innerHTML = replacementViewMode === "table" ? renderReplacementTable(rows) : `
+      const pageControls = replacementPaginationHtml(rows.length, startIndex, pageRows.length, totalPages);
+      $("replacementList").innerHTML = `${pageControls}${replacementViewMode === "table" ? renderReplacementTable(pageRows) : `
         <div class="replacement-board">
-          ${replacementColumnHtml("Contact Parent", "Who needs parent liaison now?", rows.filter(item => replacementTaskColumn(item) === "contact"))}
-          ${replacementColumnHtml("Book Replacement", "Parent contacted/confirmed, now arrange teacher slot.", rows.filter(item => replacementTaskColumn(item) === "book"))}
-          ${replacementColumnHtml("Replacement Done", "Arranged, settled, or no replacement needed.", rows.filter(item => replacementTaskColumn(item) === "done"))}
-          ${replacementColumnHtml("Withdraw Cancel", "Cancellation withdrawn and archived from active tasks.", rows.filter(item => replacementTaskColumn(item) === "withdraw"))}
+          ${replacementColumnHtml("Contact Parent", "Who needs parent liaison now?", pageRows.filter(item => replacementTaskColumn(item) === "contact"))}
+          ${replacementColumnHtml("Book Replacement", "Parent contacted/confirmed, now arrange teacher slot.", pageRows.filter(item => replacementTaskColumn(item) === "book"))}
+          ${replacementColumnHtml("Replacement Done", "Arranged, settled, or no replacement needed.", pageRows.filter(item => replacementTaskColumn(item) === "done"))}
+          ${replacementColumnHtml("Withdraw Cancel", "Cancellation withdrawn and archived from active tasks.", pageRows.filter(item => replacementTaskColumn(item) === "withdraw"))}
         </div>
-      `;
+      `}${pageControls}`;
+    }
+
+    function replacementPaginationHtml(total, startIndex, shownCount, totalPages) {
+      if (total <= REPLACEMENT_PAGE_SIZE) return "";
+      const from = shownCount ? startIndex + 1 : 0;
+      const to = startIndex + shownCount;
+      return `<div class="row spread" style="margin:10px 0;">
+        <div class="subtle">Showing ${from}-${to} of ${total} replacement records</div>
+        <div class="row">
+          <button class="btn ghost small" data-replacement-page="prev" ${replacementPage <= 1 ? "disabled" : ""}>&lt;</button>
+          <span class="pill">${replacementPage} / ${totalPages}</span>
+          <button class="btn ghost small" data-replacement-page="next" ${replacementPage >= totalPages ? "disabled" : ""}>&gt;</button>
+        </div>
+      </div>`;
     }
 
     function renderReplacementTable(rows) {
@@ -7003,8 +7088,8 @@
         .filter(item => replacementTaskColumn(item) === column)
         .sort((a, b) => activityTime(b.lastActionAt || b.updatedAt || b.createdAt) - activityTime(a.lastActionAt || a.updatedAt || a.createdAt));
       $("replacementActionTitle").textContent = replacementColumnLabel(column);
-      $("replacementActionSubtitle").textContent = `${items.length} case${items.length === 1 ? "" : "s"} matched current replacement filters. Latest actions are shown first.`;
-      $("replacementActionList").innerHTML = items.slice(0, 30).map(item => `
+      $("replacementActionSubtitle").textContent = `${items.length} case${items.length === 1 ? "" : "s"} matched current replacement filters. Showing latest ${Math.min(LIST_PAGE_SIZE, items.length)} first.`;
+      $("replacementActionList").innerHTML = items.slice(0, LIST_PAGE_SIZE).map(item => `
         <div class="replacement-task">
           <div class="row spread"><strong>${escapeHtml(item.studentName || "-")}</strong><span class="pill">${escapeHtml(item.status || "-")}</span></div>
           <div class="subtle">
@@ -7288,6 +7373,42 @@
 
     function tableHtml(headers, rows) {
       return `<table><thead><tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("") || `<tr><td colspan="${headers.length}">No data</td></tr>`}</tbody></table>`;
+    }
+
+    function clampPage(page, total, pageSize = LIST_PAGE_SIZE) {
+      return Math.min(Math.max(1, page), Math.max(1, Math.ceil(total / pageSize)));
+    }
+
+    function pageSlice(items, page, pageSize = LIST_PAGE_SIZE) {
+      const safePage = clampPage(page, items.length, pageSize);
+      const start = (safePage - 1) * pageSize;
+      return { page: safePage, start, items: items.slice(start, start + pageSize), pages: Math.max(1, Math.ceil(items.length / pageSize)) };
+    }
+
+    function listPagerHtml(key, page, total, pageSize = LIST_PAGE_SIZE) {
+      if (total <= pageSize) return "";
+      const pages = Math.max(1, Math.ceil(total / pageSize));
+      const start = total ? (page - 1) * pageSize + 1 : 0;
+      const end = Math.min(total, page * pageSize);
+      return `<div class="row spread list-pager" style="margin-top:10px;">
+        <span class="subtle">Showing ${start}-${end} of ${total} | Page ${page} of ${pages}</span>
+        <div class="row">
+          <button class="btn ghost small" data-list-page="${escapeHtml(key)}|prev" ${page <= 1 ? "disabled" : ""}>&lt;</button>
+          <button class="btn ghost small" data-list-page="${escapeHtml(key)}|next" ${page >= pages ? "disabled" : ""}>&gt;</button>
+        </div>
+      </div>`;
+    }
+
+    function setAutoPager(anchorId, html) {
+      const anchor = $(anchorId);
+      if (!anchor) return;
+      let pager = document.getElementById(`${anchorId}AutoPager`);
+      if (!pager) {
+        pager = document.createElement("div");
+        pager.id = `${anchorId}AutoPager`;
+        anchor.insertAdjacentElement("afterend", pager);
+      }
+      pager.innerHTML = html || "";
     }
 
     function downloadCsv(filename, headers, rows) {
@@ -8285,7 +8406,7 @@
       $("outcomeScopeEndField").classList.toggle("hide", !cancellable || !recurring || $("outcomeScope").value !== "temporary");
     }
 
-    function applyOutcomeToBooking(booking, nextStatus, remark, replacementNeeded) {
+    function applyOutcomeToBooking(booking, nextStatus, remark, replacementNeeded, options = {}) {
       const before = bookingLogSummary(booking);
       booking.status = nextStatus;
       booking.remark = remark;
@@ -8297,7 +8418,8 @@
       }
       booking.updatedAt = new Date().toISOString();
       if (replacementReasonForStatus(nextStatus)) handleReplacementForOutcome(booking, replacementNeeded);
-      else withdrawReplacementForBooking(booking);
+      else if (nextStatus === "student_not_show" && options.createStudentNotShowReplacement) handleReplacementForOutcome(booking, "yes", "Student Not Show");
+      else if (options.withdrawExistingReplacement) withdrawReplacementForBooking(booking);
       if (replacementReasonForStatus(nextStatus)) restoreAutoOpenedSlotIfUnused(booking);
       logAction("Class Outcome Updated", booking.studentName || booking.id, before, bookingLogSummary(booking), booking.remark || "");
     }
@@ -8365,7 +8487,16 @@
       const nextStatus = $("outcomeStatus").value;
       if (nextStatus === "public_holiday" && !$("outcomeReplacementNeeded").value) return alert("For public holiday, choose whether replacement is needed.");
       const remark = $("outcomeRemark").value.trim();
-      const replacementNeeded = $("outcomeReplacementNeeded").value;
+      let replacementNeeded = $("outcomeReplacementNeeded").value;
+      const outcomeOptions = { createStudentNotShowReplacement: false, withdrawExistingReplacement: false };
+      const existingActiveReplacement = (state.replacements || []).some(item => item.bookingId === booking.id && !item.archived && item.status !== "Cancellation Withdrawn");
+      if (nextStatus === "student_not_show") {
+        outcomeOptions.createStudentNotShowReplacement = confirm("Does this Student Not Show class need a replacement class?");
+        replacementNeeded = outcomeOptions.createStudentNotShowReplacement ? "yes" : "no";
+        outcomeOptions.withdrawExistingReplacement = !outcomeOptions.createStudentNotShowReplacement && existingActiveReplacement;
+      } else if (!replacementReasonForStatus(nextStatus) && existingActiveReplacement) {
+        outcomeOptions.withdrawExistingReplacement = confirm("This class already has a replacement record. Do you want to remove/archive the replacement record?");
+      }
       const recurringSlot = recurringSlotForBooking(booking);
       const scope = recurringSlot && replacementReasonForStatus(nextStatus) ? $("outcomeScope").value : "one_date";
       let feedbackBooking = booking;
@@ -8381,7 +8512,7 @@
         const affected = [];
         try { dates.forEach(date => affected.push(recurringBookingForDate(booking, recurringSlot, date))); }
         catch (err) { return alert(`Cannot cancel this period. ${err.message}`); }
-        affected.forEach(item => applyOutcomeToBooking(item, nextStatus, remark, replacementNeeded));
+        affected.forEach(item => applyOutcomeToBooking(item, nextStatus, remark, replacementNeeded, outcomeOptions));
       } else {
         let affectedBooking = booking;
         if (recurringSlot && outcomeInteractionSource === "teacher_overview") {
@@ -8395,7 +8526,7 @@
           const occupied = activeBookings().find(item => item.id !== affectedBooking.id && item.teacherId === affectedBooking.teacherId && item.date === affectedBooking.date && item.time === affectedBooking.time);
           if (occupied) return alert(`Cannot restore this class because the slot is now booked for ${occupied.studentName || "another student"}.`);
         }
-        applyOutcomeToBooking(affectedBooking, nextStatus, remark, replacementNeeded);
+        applyOutcomeToBooking(affectedBooking, nextStatus, remark, replacementNeeded, outcomeOptions);
         feedbackBooking = affectedBooking;
       }
       upsertFeedbackFromOutcome(feedbackBooking);
@@ -8602,10 +8733,10 @@
       return "";
     }
 
-    function handleReplacementForOutcome(booking, publicHolidayChoice) {
-      const reason = replacementReasonForStatus(booking.status);
+    function handleReplacementForOutcome(booking, publicHolidayChoice, forcedReason = "") {
+      const reason = forcedReason || replacementReasonForStatus(booking.status);
       if (!reason) return;
-      const compulsory = booking.status === "cancelled" || booking.status === "teacher_leave";
+      const compulsory = !forcedReason && (booking.status === "cancelled" || booking.status === "teacher_leave");
       const needed = compulsory || publicHolidayChoice === "yes";
       const existing = (state.replacements || []).find(item => item.bookingId === booking.id);
       const teacher = teacherById(booking.teacherId);
@@ -8654,7 +8785,7 @@
           sourceBookingId: booking.id
         });
       }
-      setStatus(needed ? "Replacement record created." : "Public holiday recorded as no replacement needed.");
+      setStatus(needed ? "Replacement record created." : "Class recorded as no replacement needed.");
     }
 
     async function createCrmBooking(kind) {
@@ -9191,6 +9322,26 @@
       const replacementSummary = e.target.closest("[data-replacement-summary]");
       if (replacementSummary) {
         showReplacementActionModal(replacementSummary.dataset.replacementSummary);
+      }
+      const replacementPageBtn = e.target.closest("[data-replacement-page]");
+      if (replacementPageBtn) {
+        replacementPage += replacementPageBtn.dataset.replacementPage === "next" ? 1 : -1;
+        renderReplacements();
+      }
+      const listPageBtn = e.target.closest("[data-list-page]");
+      if (listPageBtn) {
+        const [kind, direction] = listPageBtn.dataset.listPage.split("|");
+        const delta = direction === "next" ? 1 : -1;
+        if (kind === "teachers") { teacherListPage += delta; renderTeachers(); }
+        if (kind === "students") { studentListPage += delta; renderStudents(); }
+        if (kind === "registeredStudents") { registeredStudentPage += delta; renderRegisteredStudents(); }
+        if (kind === "teacherStudentRecords") { teacherStudentRecordPage += delta; renderTeacherStudentRecords(); }
+        if (kind === "templates") { templatePage += delta; renderTemplates(); }
+        if (kind === "replacementCredits") { replacementCreditPage += delta; renderReplacementCredits(); }
+        if (kind === "activity") { activityPage += delta; renderActivityLog(); }
+        if (kind === "slots") { slotListPage += delta; renderSlotList(); }
+        if (kind === "allTeacherPayout") { allTeacherPayoutPage += delta; renderAllTeacherPayoutSummary(); }
+        if (kind === "teacherFeedback") { teacherFeedbackPage += delta; renderTeacherFeedbackList($("feedbackTeacherId").value); }
       }
       const undoCancellation = e.target.closest("[data-undo-cancellation]");
       if (undoCancellation) {
@@ -10007,14 +10158,14 @@
     });
     ["reportTeacher", "reportMonth", "reportYear"].forEach(id => $(id).addEventListener("change", renderReport));
     ["businessDashboardMonth", "businessDashboardYear"].forEach(id => $(id).addEventListener("change", renderBusinessDashboard));
-    $("studentSearch").addEventListener("input", renderStudents);
-    $("teacherCardSearch").addEventListener("input", renderTeachers);
+    $("studentSearch").addEventListener("input", () => { studentListPage = 1; renderStudents(); });
+    $("teacherCardSearch").addEventListener("input", () => { teacherListPage = 1; renderTeachers(); });
     $("teacherDirectorySearch").addEventListener("input", () => { teacherDirectoryPage = 1; renderTeacherDirectory(); });
     $("teacherDirectorySubject").addEventListener("change", () => { teacherDirectoryPage = 1; renderTeacherDirectory(); });
-    $("registeredStudentFilter").addEventListener("change", renderRegisteredStudents);
-    $("registeredStudentSearch").addEventListener("input", renderRegisteredStudents);
-    ["teacherStudentRecordTeacher", "teacherStudentRecordStatus"].forEach(id => $(id).addEventListener("change", renderTeacherStudentRecords));
-    $("teacherStudentRecordSearch").addEventListener("input", renderTeacherStudentRecords);
+    $("registeredStudentFilter").addEventListener("change", () => { registeredStudentPage = 1; renderRegisteredStudents(); });
+    $("registeredStudentSearch").addEventListener("input", () => { registeredStudentPage = 1; renderRegisteredStudents(); });
+    ["teacherStudentRecordTeacher", "teacherStudentRecordStatus"].forEach(id => $(id).addEventListener("change", () => { teacherStudentRecordPage = 1; renderTeacherStudentRecords(); }));
+    $("teacherStudentRecordSearch").addEventListener("input", () => { teacherStudentRecordPage = 1; renderTeacherStudentRecords(); });
     const resetLeadPageAndRender = () => {
       leadPage = 1;
       renderLeads();
@@ -10260,20 +10411,22 @@
     $("exportCrmPdfBtn").onclick = () => openPrintReport("CRM Leads Monthly Dashboard", ["No.", ...crmDashboardExportHeaders()], numbered(crmDashboardExportRows()));
     $("exportAllTeacherPayoutCsvBtn").onclick = () => downloadCsv("class-one-all-teacher-payout.csv", ["No.", "Teacher", "Category", "Tier", "Rate", "Share", "Completed", "Not Show", "Cancelled", "Lesson Pay", "Not Show Pay", "Total Pay"], numbered(teacherMonthlyPayoutRows()));
     $("exportAllTeacherPayoutPdfBtn").onclick = () => openPrintReport("All Teachers Monthly Payout", ["No.", "Teacher", "Category", "Tier", "Rate", "Share", "Completed", "Not Show", "Cancelled", "Lesson Pay", "Not Show Pay", "Total Pay"], numbered(teacherMonthlyPayoutRows()));
-    ["replacementFilterStatus", "replacementFilterReason"].forEach(id => $(id).addEventListener("change", renderReplacements));
-    $("replacementSearch").addEventListener("input", renderReplacements);
-    $("replacementBoardViewBtn").onclick = () => { replacementViewMode = "board"; safeStorageSet("classOneReplacementViewMode", replacementViewMode); renderReplacements(); };
-    $("replacementTableViewBtn").onclick = () => { replacementViewMode = "table"; safeStorageSet("classOneReplacementViewMode", replacementViewMode); renderReplacements(); };
+    ["replacementFilterStatus", "replacementFilterReason"].forEach(id => $(id).addEventListener("change", () => { replacementPage = 1; renderReplacements(); }));
+    $("replacementSearch").addEventListener("input", () => { replacementPage = 1; renderReplacements(); });
+    $("replacementBoardViewBtn").onclick = () => { replacementViewMode = "board"; replacementPage = 1; safeStorageSet("classOneReplacementViewMode", replacementViewMode); renderReplacements(); };
+    $("replacementTableViewBtn").onclick = () => { replacementViewMode = "table"; replacementPage = 1; safeStorageSet("classOneReplacementViewMode", replacementViewMode); renderReplacements(); };
     $("clearReplacementFiltersBtn").onclick = () => {
       $("replacementFilterStatus").value = "all";
       $("replacementFilterReason").value = "all";
       $("replacementSearch").value = "";
+      replacementPage = 1;
       renderReplacements();
     };
     $("exportReplacementCsvBtn").onclick = () => downloadCsv("class-one-replacement-classes.csv", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Notes", "Last Updated"], numbered(replacementExportRows()));
     $("exportReplacementPdfBtn").onclick = () => openPrintReport("Replacement Classes", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Notes", "Last Updated"], numbered(replacementExportRows()));
-    ["activityFilterType", "activitySearch", "activityFromDate", "activityToDate"].forEach(id => $(id).addEventListener("input", renderActivityLog));
-    $("activityFilterType").addEventListener("change", renderActivityLog);
+    const resetActivityPageAndRender = () => { activityPage = 1; renderActivityLog(); };
+    ["activityFilterType", "activitySearch", "activityFromDate", "activityToDate"].forEach(id => $(id).addEventListener("input", resetActivityPageAndRender));
+    $("activityFilterType").addEventListener("change", resetActivityPageAndRender);
     $("clearActivityFiltersBtn").onclick = () => {
       $("activityFilterType").value = "all";
       $("activitySearch").value = "";

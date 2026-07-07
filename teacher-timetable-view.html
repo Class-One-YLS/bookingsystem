@@ -254,6 +254,7 @@
     .type-new, .type-new-students { background: var(--new-yellow); }
     .type-replacement-class { background: var(--blue); }
     .type-extra-class { background: var(--purple); }
+    .type-practical-class { background: #9080AE; color: #fff; }
     .type-reserve { background: var(--blue); }
     .status-completed { background: #dcf8ea; color: #111; }
     .status-student-not-show { background: var(--danger); color: #fff; }
@@ -531,6 +532,7 @@
     const API_BASE = "https://classone-booking-api-yiit.vercel.app";
     const STATE_KEY = "production";
     const AUTO_SYNC_MS = 120000;
+    const LIST_PAGE_SIZE = 10;
     const FIRST_VIEW_YEAR = 2026;
     const FIRST_VIEW_MONTH = 5;
     const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -555,6 +557,10 @@
     let selectedWeekStartISO = "";
     let weekSwipeStart = null;
     let studentSaveTimer = null;
+    let teacherStudentPage = 1;
+    let monthListPage = 1;
+    let leaveListPage = 1;
+    let incomeListPage = 1;
     let incentiveClaimLoadedKey = "";
     let incentiveClaimLoading = false;
 
@@ -1109,8 +1115,14 @@
     function incomePayForEntry(entry) {
       const meta = entryMeta(entry);
       if (meta.status === "student_not_show") return 5;
+      if ((meta.type || "").toLowerCase() === "practical class") return 0;
       if (meta.status === "completed") return Number(meta.estimatedPay || 0);
       return 0;
+    }
+
+    function isPaidCompletedEntry(entry) {
+      const meta = entryMeta(entry);
+      return meta.status === "completed" && (meta.type || "").toLowerCase() !== "practical class";
     }
 
     function selectedClaimMonthKey() {
@@ -1123,7 +1135,7 @@
       const from = localISO(new Date(year, month, 1));
       const to = localISO(new Date(year, month + 1, 0));
       const entries = timetableData ? classEntries(from, to) : [];
-      const completed = entries.filter(entry => entryMeta(entry).status === "completed");
+      const completed = entries.filter(isPaidCompletedEntry);
       const notShows = entries.filter(entry => entryMeta(entry).status === "student_not_show");
       const teacherLeaveCount = entries.filter(entry => entryMeta(entry).status === "teacher_leave").length;
       const lessonPay = completed.reduce((sum, entry) => sum + Number(entryMeta(entry).estimatedPay || 0), 0);
@@ -1395,15 +1407,36 @@
       return `<table class="simple-table"><thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
     }
 
+    function clampPage(page, total) {
+      return Math.min(Math.max(1, page), Math.max(1, Math.ceil(total / LIST_PAGE_SIZE)));
+    }
+
+    function pageSlice(items, page) {
+      const safePage = clampPage(page, items.length);
+      const start = (safePage - 1) * LIST_PAGE_SIZE;
+      return { page: safePage, start, items: items.slice(start, start + LIST_PAGE_SIZE), pages: Math.max(1, Math.ceil(items.length / LIST_PAGE_SIZE)) };
+    }
+
+    function pagerHtml(key, page, total) {
+      if (total <= LIST_PAGE_SIZE) return "";
+      const pages = Math.max(1, Math.ceil(total / LIST_PAGE_SIZE));
+      const start = total ? (page - 1) * LIST_PAGE_SIZE + 1 : 0;
+      const end = Math.min(total, page * LIST_PAGE_SIZE);
+      return `<div class="row spread" style="margin-top:10px;"><span class="subtle">Showing ${start}-${end} of ${total} | Page ${page} of ${pages}</span><div class="row"><button class="btn ghost" data-page="${key}|prev" ${page <= 1 ? "disabled" : ""}>&lt;</button><button class="btn ghost" data-page="${key}|next" ${page >= pages ? "disabled" : ""}>&gt;</button></div></div>`;
+    }
+
     function renderTeacherStudents() {
       const students = timetableData?.students || [];
+      teacherStudentPage = clampPage(teacherStudentPage, students.length);
+      const studentPageData = pageSlice(students, teacherStudentPage);
+      teacherStudentPage = studentPageData.page;
       $("studentListTable").innerHTML = students.length ? `
         <table class="simple-table student-table">
           <thead><tr><th>No.</th><th>Student Name</th><th>Current Level</th><th>Remarks</th><th>Last Updated</th></tr></thead>
           <tbody>
-            ${students.map((student, index) => `
+            ${studentPageData.items.map((student, index) => `
               <tr>
-                <td>${index + 1}</td>
+                <td>${studentPageData.start + index + 1}</td>
                 <td><strong>${escapeHtml(student.studentName || "")}</strong>${student.subjects?.length ? `<div class="subtle">${student.subjects.map(escapeHtml).join(", ")}</div>` : ""}</td>
                 <td><input data-student-note="${escapeHtml(student.id)}" data-field="currentLevel" value="${escapeHtml(student.currentLevel || "")}" placeholder="Level"></td>
                 <td><textarea data-student-note="${escapeHtml(student.id)}" data-field="remark" placeholder="Remarks">${escapeHtml(student.remark || "")}</textarea></td>
@@ -1412,6 +1445,7 @@
             `).join("")}
           </tbody>
         </table>
+        ${pagerHtml("teacherStudents", teacherStudentPage, students.length)}
       ` : `<div class="subtle" style="padding:12px;">No active students assigned to this teacher yet.</div>`;
     }
 
@@ -1460,10 +1494,13 @@
       const { from, month, year } = selectedMonthRange();
       const monthEnd = localISO(new Date(year, month + 1, 0));
       const entries = classEntries(from, monthEnd);
-      const rows = entries.map((entry, index) => {
+      monthListPage = clampPage(monthListPage, entries.length);
+      const monthPageData = pageSlice(entries, monthListPage);
+      monthListPage = monthPageData.page;
+      const rows = monthPageData.items.map((entry, index) => {
         const meta = entryMeta(entry);
         return [
-          String(index + 1),
+          String(monthPageData.start + index + 1),
           escapeHtml(dateLabel(entry.date)),
           escapeHtml(timeLabel(entry.time)),
           escapeHtml(meta.studentName),
@@ -1473,21 +1510,24 @@
           escapeHtml(meta.remark)
         ];
       });
-      $("monthList").innerHTML = rows.length ? tableHtml(["No.", "Date", "Time", "Student", "Subject", "Type", "Status", "Remark"], rows) : `<div class="subtle" style="padding:12px;">No classes in selected month.</div>`;
+      $("monthList").innerHTML = rows.length ? tableHtml(["No.", "Date", "Time", "Student", "Subject", "Type", "Status", "Remark"], rows) + pagerHtml("monthList", monthListPage, entries.length) : `<div class="subtle" style="padding:12px;">No classes in selected month.</div>`;
       $("metricTotal").textContent = entries.length;
-      $("metricCompleted").textContent = entries.filter(entry => entryMeta(entry).status === "completed").length;
+      $("metricCompleted").textContent = entries.filter(isPaidCompletedEntry).length;
       $("metricCancelled").textContent = entries.filter(entry => CANCELLED.includes(entryMeta(entry).status)).length;
     }
 
     function renderLeaveList() {
       const { from, month, year } = selectedMonthRange();
       const monthEnd = localISO(new Date(year, month + 1, 0));
-      const rows = classEntries(from, monthEnd)
-        .filter(entry => CANCELLED.includes(entryMeta(entry).status) || entryMeta(entry).status === "student_not_show")
-        .map((entry, index) => {
+      const leaveEntries = classEntries(from, monthEnd)
+        .filter(entry => CANCELLED.includes(entryMeta(entry).status) || entryMeta(entry).status === "student_not_show");
+      leaveListPage = clampPage(leaveListPage, leaveEntries.length);
+      const leavePageData = pageSlice(leaveEntries, leaveListPage);
+      leaveListPage = leavePageData.page;
+      const rows = leavePageData.items.map((entry, index) => {
           const meta = entryMeta(entry);
           return [
-            String(index + 1),
+            String(leavePageData.start + index + 1),
             escapeHtml(dateLabel(entry.date)),
             escapeHtml(timeLabel(entry.time)),
             escapeHtml(meta.studentName),
@@ -1496,7 +1536,7 @@
             escapeHtml(meta.remark)
           ];
         });
-      $("leaveList").innerHTML = rows.length ? tableHtml(["No.", "Date", "Time", "Student", "Subject", "Status", "Remark"], rows) : `<div class="subtle" style="padding:12px;">No cancelled, leave, public holiday, or not-show records in selected month.</div>`;
+      $("leaveList").innerHTML = rows.length ? tableHtml(["No.", "Date", "Time", "Student", "Subject", "Status", "Remark"], rows) + pagerHtml("leaveList", leaveListPage, leaveEntries.length) : `<div class="subtle" style="padding:12px;">No cancelled, leave, public holiday, or not-show records in selected month.</div>`;
     }
 
     function renderIncomeHistory() {
@@ -1507,10 +1547,13 @@
       const entries = to ? classEntries(from, to).filter(entry => incomePayForEntry(entry) > 0) : [];
       const total = entries.reduce((sum, entry) => sum + incomePayForEntry(entry), 0);
       $("metricIncome").textContent = money(total);
-      const rows = entries.map((entry, index) => {
+      incomeListPage = clampPage(incomeListPage, entries.length);
+      const incomePageData = pageSlice(entries, incomeListPage);
+      incomeListPage = incomePageData.page;
+      const rows = incomePageData.items.map((entry, index) => {
         const meta = entryMeta(entry);
         return [
-          String(index + 1),
+          String(incomePageData.start + index + 1),
           escapeHtml(dateLabel(entry.date)),
           escapeHtml(timeLabel(entry.time)),
           escapeHtml(meta.studentName),
@@ -1520,7 +1563,7 @@
           escapeHtml(money(incomePayForEntry(entry)))
         ];
       });
-      $("incomeList").innerHTML = rows.length ? tableHtml(["No.", "Date", "Time", "Student", "Subject", "Type", "Status", "Pay"], rows) : `<div class="subtle" style="padding:12px;">No income counted yet for the selected month.</div>`;
+      $("incomeList").innerHTML = rows.length ? tableHtml(["No.", "Date", "Time", "Student", "Subject", "Type", "Status", "Pay"], rows) + pagerHtml("incomeList", incomeListPage, entries.length) : `<div class="subtle" style="padding:12px;">No income counted yet for the selected month.</div>`;
     }
 
     function selectedIncomeReportEntries() {
@@ -1538,7 +1581,7 @@
       const monthLabel = `${MONTHS[month]} ${year}`;
       const teacherName = timetableData?.teacher?.name || "Teacher";
       const entries = selectedIncomeReportEntries();
-      const completedCount = entries.filter(entry => entryMeta(entry).status === "completed").length;
+      const completedCount = entries.filter(isPaidCompletedEntry).length;
       const notShowCount = entries.filter(entry => entryMeta(entry).status === "student_not_show").length;
       const total = entries.reduce((sum, entry) => sum + incomePayForEntry(entry), 0);
       const rows = entries.map((entry, index) => {
@@ -1604,10 +1647,16 @@
     }
 
     $("monthSelect").addEventListener("change", () => {
+      monthListPage = 1;
+      leaveListPage = 1;
+      incomeListPage = 1;
       resetSelectedWeek(true);
       loadTimetable().catch(error => setStatus(error.message, "error"));
     });
     $("yearSelect").addEventListener("change", () => {
+      monthListPage = 1;
+      leaveListPage = 1;
+      incomeListPage = 1;
       fillMonthSelect(Number($("yearSelect").value), Number($("monthSelect").value));
       resetSelectedWeek(true);
       loadTimetable().catch(error => setStatus(error.message, "error"));
@@ -1660,6 +1709,16 @@
     });
     $("claimsView").addEventListener("input", event => {
       if (event.target.matches("input")) renderIncentiveClaim();
+    });
+    document.addEventListener("click", event => {
+      const pageButton = event.target.closest("[data-page]");
+      if (!pageButton) return;
+      const [kind, direction] = pageButton.dataset.page.split("|");
+      const delta = direction === "next" ? 1 : -1;
+      if (kind === "teacherStudents") { teacherStudentPage += delta; renderTeacherStudents(); }
+      if (kind === "monthList") { monthListPage += delta; renderMonthList(); }
+      if (kind === "leaveList") { leaveListPage += delta; renderLeaveList(); }
+      if (kind === "incomeList") { incomeListPage += delta; renderIncomeHistory(); }
     });
     document.querySelectorAll("[data-view-tab]").forEach(button => {
       button.addEventListener("click", () => {
