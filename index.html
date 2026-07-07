@@ -2708,7 +2708,7 @@
       if (!neonConfigured()) return;
       clearTimeout(autoPushTimer);
       setStatus("Saved locally. Waiting to sync to Neon...", "warn");
-      autoPushTimer = setTimeout(() => enqueueNeonPush("Saved."), AUTO_SAVE_DEBOUNCE_MS);
+      autoPushTimer = setTimeout(() => enqueueNeonPush("Saved.", true), AUTO_SAVE_DEBOUNCE_MS);
     }
 
     function isNeonVersionConflict(error) {
@@ -8413,7 +8413,7 @@
       return neonPushQueue;
     }
 
-    async function autoPushIfConfigured(successMessage, allowConflictPull = false) {
+    async function autoPushIfConfigured(successMessage, allowConflictPull = true) {
       clearTimeout(autoPushTimer);
       return enqueueNeonPush(successMessage, allowConflictPull);
     }
