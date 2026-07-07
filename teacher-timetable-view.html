@@ -969,6 +969,12 @@
       return bookingRank(candidate) > bookingRank(existing);
     }
 
+    function visibleTeacherViewBooking(booking) {
+      if (!booking || booking.status === "deleted" || booking.deleted === true) return false;
+      if ((booking.source || "") === "fixed_regular_snapshot" && booking.archived === true) return false;
+      return true;
+    }
+
     function collectSlotsForDate(date) {
       if (!timetableData) return [];
       const dateStr = localISO(date);
@@ -999,7 +1005,7 @@
     function scheduleBookings() {
       const byTime = new Map();
       (timetableData?.bookings || [])
-        .filter(booking => booking.status !== "deleted")
+        .filter(visibleTeacherViewBooking)
         .forEach(booking => {
           const key = `${booking.date || ""}|${booking.time || ""}`;
           const existing = byTime.get(key);
@@ -1482,7 +1488,16 @@
 
     function scrollToListStart(id) {
       const target = $(id);
-      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (!target) return;
+      const scroller = target.matches(".timetable-wrap")
+        ? target
+        : target.querySelector(".timetable-wrap");
+      const node = scroller || target;
+      if (typeof node.scrollTo === "function") node.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+      else {
+        node.scrollTop = 0;
+        node.scrollLeft = 0;
+      }
     }
 
     function renderTeacherStudents() {

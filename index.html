@@ -2329,8 +2329,40 @@
       return result;
     }
 
-    function logAction(type, target, beforeValue = "", afterValue = "", notes = "") {
+    function cloneForUndo(value) {
+      try { return JSON.parse(JSON.stringify(value)); } catch (err) { return value; }
+    }
+
+    function snapshotCollectionRecords(collectionName, ids = []) {
+      const wanted = new Set((ids || []).filter(Boolean).map(String));
+      if (!wanted.size) return [];
+      return (state[collectionName] || [])
+        .filter(record => wanted.has(String(record.id || "")))
+        .map(cloneForUndo);
+    }
+
+    function snapshotCollections(spec = {}) {
+      return Object.fromEntries(Object.entries(spec).map(([collectionName, ids]) => [
+        collectionName,
+        snapshotCollectionRecords(collectionName, ids)
+      ]));
+    }
+
+    function makeUndoSnapshot(before = {}, after = {}) {
+      return {
+        before: cloneForUndo(before),
+        after: cloneForUndo(after),
+        createdAt: new Date().toISOString()
+      };
+    }
+
+    function undoBlockedActionType(type = "") {
+      return /sync|import|reset|pull|push|neon|google sheet/i.test(String(type || ""));
+    }
+
+    function logAction(type, target, beforeValue = "", afterValue = "", notes = "", options = {}) {
       state.activityLogs ||= [];
+      const undo = options.undo && !undoBlockedActionType(type) ? cloneForUndo(options.undo) : null;
       state.activityLogs.unshift({
         id: uid("log"),
         createdAt: new Date().toISOString(),
@@ -2339,7 +2371,8 @@
         target: String(target || ""),
         beforeValue: compactLogValue(beforeValue),
         afterValue: compactLogValue(afterValue),
-        notes: String(notes || "")
+        notes: String(notes || ""),
+        ...(undo ? { undo } : {})
       });
       state.activityLogs = state.activityLogs.slice(0, 2500);
     }
@@ -3017,7 +3050,7 @@
     }
 
     function activeBookings() {
-      return scheduleBookings().filter(b => !isCancelledStatus(b.status));
+      return scheduleBookings().filter(b => !b.archived && !b.deleted && !isCancelledStatus(b.status));
     }
 
     function findBooking(slot) {
@@ -3307,6 +3340,7 @@
       const actionLabel = action === "off" ? "set to OFF" : "open";
       if (!confirm(`${actionLabel === "open" ? "Open" : "Set to OFF"} ${total} selected weekly slot${total === 1 ? "" : "s"} for ${teacher.name}? Booked slots will be skipped.`)) return;
 
+      const undoBefore = snapshotCollections({ teachers: [teacher.id] });
       let changed = 0;
       let skipped = 0;
       let unchanged = 0;
@@ -3337,7 +3371,10 @@
       });
       teacher.updatedAt = new Date().toISOString();
       const periodLabel = periods.map(period => `${period.days.map(day => day.slice(0, 3)).join("/")} ${timeLabel(period.from)}-${timeLabel(period.to)}`).join(", ");
-      logAction("Teacher Slots Bulk Edited", teacher.name, periodLabel, `${changed} ${actionLabel}; ${skipped} booked skipped; ${unchanged} unchanged`, "Updated from Teacher Overview Edit Slots.");
+      const undoAfter = snapshotCollections({ teachers: [teacher.id] });
+      logAction("Teacher Slots Bulk Edited", teacher.name, periodLabel, `${changed} ${actionLabel}; ${skipped} booked skipped; ${unchanged} unchanged`, "Updated from Teacher Overview Edit Slots.", {
+        undo: makeUndoSnapshot(undoBefore, undoAfter)
+      });
       save(false);
       setTeacherSlotEditMode(false);
       setStatus(`${teacher.name}: ${changed} slot${changed === 1 ? "" : "s"} updated, ${skipped} booked skipped, ${unchanged} unchanged.`);
@@ -3648,6 +3685,7 @@
     function openTeacherOverviewRecurringSlot(data) {
       const teacher = teacherById(data.teacherId);
       if (!teacher) return alert("Teacher not found.");
+      const undoBefore = snapshotCollections({ teachers: [teacher.id] });
       teacher.regularSlots ||= [];
       const existing = teacherOverviewActiveSlot(teacher, data.day, data.time);
       if (existing) {
@@ -3671,7 +3709,10 @@
         });
       }
       teacher.updatedAt = new Date().toISOString();
-      logAction("Teacher Regular Slot Opened", teacher.name, "OFF", `${data.day} ${timeLabel(data.time)} open`, "Opened directly from Teacher Overview.");
+      const undoAfter = snapshotCollections({ teachers: [teacher.id] });
+      logAction("Teacher Regular Slot Opened", teacher.name, "OFF", `${data.day} ${timeLabel(data.time)} open`, "Opened directly from Teacher Overview.", {
+        undo: makeUndoSnapshot(undoBefore, undoAfter)
+      });
       save(false);
       if (teacherSlotEditMode) setTeacherSlotEditMode(false);
       else renderTeacherOverview();
@@ -3684,9 +3725,13 @@
       const slot = teacher?.regularSlots?.find(item => item.id === data.slotId && !item.locked);
       if (!teacher || !slot) return alert("This open slot is no longer available. Refresh the Teacher Overview and try again.");
       if (!confirm(`Set ${teacher.name}'s ${data.day} ${timeLabel(data.time)} slot to OFF?`)) return;
+      const undoBefore = snapshotCollections({ teachers: [teacher.id] });
       teacher.regularSlots = endSlotFromToday(teacher.regularSlots, slot);
       teacher.updatedAt = new Date().toISOString();
-      logAction("Teacher Slot Set To OFF", teacher.name, `${data.day} ${timeLabel(data.time)} open`, "OFF", "Changed in Teacher Overview Edit Slots mode.");
+      const undoAfter = snapshotCollections({ teachers: [teacher.id] });
+      logAction("Teacher Slot Set To OFF", teacher.name, `${data.day} ${timeLabel(data.time)} open`, "OFF", "Changed in Teacher Overview Edit Slots mode.", {
+        undo: makeUndoSnapshot(undoBefore, undoAfter)
+      });
       save(false);
       setTeacherSlotEditMode(false);
       setStatus(`${teacher.name}: ${data.day} ${timeLabel(data.time)} is now OFF.`);
@@ -4086,6 +4131,7 @@
       );
       if (duplicate) return alert(`${student.name} already has this regular slot during the selected period.`);
 
+      const undoBefore = snapshotCollections({ students: [student.id], teachers: [teacher.id] });
       if (openSlot) splitOpenSlotForFixedBooking(teacher, openSlot, startDate, endDate);
       const now = new Date().toISOString();
       const studentSlot = {
@@ -4121,7 +4167,10 @@
       student.updatedAt = now;
       teacher.updatedAt = now;
       const period = endDate ? `${startDate} to ${endDate}` : `${startDate} onward`;
-      logAction("Fixed Regular Class Booked", `${student.name} with ${teacher.name}`, "Open weekly slot", `${data.day} ${timeLabel(data.time)} | ${period}`, $("fixedRegularRemark").value.trim() || "Booked from Teacher Overview.");
+      const undoAfter = snapshotCollections({ students: [student.id], teachers: [teacher.id] });
+      logAction("Fixed Regular Class Booked", `${student.name} with ${teacher.name}`, "Open weekly slot", `${data.day} ${timeLabel(data.time)} | ${period}`, $("fixedRegularRemark").value.trim() || "Booked from Teacher Overview.", {
+        undo: makeUndoSnapshot(undoBefore, undoAfter)
+      });
       $("fixedRegularBookingModal").classList.add("hide");
       save(false);
       renderTeacherOverview();
@@ -4137,6 +4186,7 @@
       if (!openSlot) return alert("This slot is no longer open. Refresh the Teacher Overview and try again.");
       if (!confirm(`Set ${teacher.name}'s ${data.day} ${timeLabel(data.time)} slot to OFF?`)) return;
 
+      const undoBefore = snapshotCollections({ teachers: [teacher.id] });
       const today = todayISO();
       const historicalEnd = dateOffsetISO(today, -1);
       if (openSlot.startDate && openSlot.startDate > historicalEnd) {
@@ -4146,7 +4196,10 @@
         openSlot.updatedAt = new Date().toISOString();
       }
       teacher.updatedAt = new Date().toISOString();
-      logAction("Teacher Regular Slot Set To OFF", teacher.name, `${data.day} ${timeLabel(data.time)} open`, "OFF from today", "Changed from Teacher Overview.");
+      const undoAfter = snapshotCollections({ teachers: [teacher.id] });
+      logAction("Teacher Regular Slot Set To OFF", teacher.name, `${data.day} ${timeLabel(data.time)} open`, "OFF from today", "Changed from Teacher Overview.", {
+        undo: makeUndoSnapshot(undoBefore, undoAfter)
+      });
       $("fixedRegularBookingModal").classList.add("hide");
       save(false);
       renderTeacherOverview();
@@ -4188,6 +4241,13 @@
       const now = new Date().toISOString();
       const originalEndDate = recurringSlot.endDate || "";
       const student = studentById(recurringSlot.studentId) || (state.students || []).find(item => studentNameKey(item.name) === studentNameKey(recurringSlot.studentName || data.studentName));
+      const futureBookingIds = scheduleBookings().filter(booking =>
+        booking.teacherId === teacher.id && booking.date >= today && !slotHasPassed(booking.date, booking.time) &&
+        booking.time === recurringSlot.time && dayFromISO(booking.date) === recurringSlot.day &&
+        studentNameKey(booking.studentName) === studentNameKey(recurringSlot.studentName || data.studentName) &&
+        (booking.type || "regular class") === "regular class"
+      ).map(booking => booking.id);
+      const undoBefore = snapshotCollections({ students: student ? [student.id] : [], teachers: [teacher.id], bookings: futureBookingIds });
       let studentSlot = null;
       if (student) {
         student.regularSlots ||= [];
@@ -4233,7 +4293,10 @@
       });
 
       const studentName = recurringSlot.studentName || data.studentName || "Student";
-      logAction("Fixed Regular Slot Cancelled", studentName, `${teacher.name} | ${recurringSlot.day} ${timeLabel(recurringSlot.time)}`, "Regular assignment ended; slot open", "Cancelled from Teacher Overview. Previous history retained.");
+      const undoAfter = snapshotCollections({ students: student ? [student.id] : [], teachers: [teacher.id], bookings: futureBookingIds });
+      logAction("Fixed Regular Slot Cancelled", studentName, `${teacher.name} | ${recurringSlot.day} ${timeLabel(recurringSlot.time)}`, "Regular assignment ended; slot open", "Cancelled from Teacher Overview. Previous history retained.", {
+        undo: makeUndoSnapshot(undoBefore, undoAfter)
+      });
       $("cancelFixedRegularModal").classList.add("hide");
       save(false);
       renderTeacherOverview();
@@ -4528,6 +4591,14 @@
       if (confirmAndOpenOffBookingSlots(target, { mode: changeType === "temporary" ? "temporary" : "permanent", startDate, endDate, day: target.day }, validation, sourceSlot.subject || target.subject || "") === false) return;
 
       const sourceBefore = teacherLogSummary(sourceTeacher);
+      const changedStudent = studentById(sourceSlot.studentId) || (state.students || []).find(item => studentNameKey(item.name) === studentNameKey(sourceSlot.studentName));
+      const affectedBookingIdsBefore = scheduleBookings().filter(booking =>
+        [sourceTeacher.id, targetTeacher.id].includes(booking.teacherId) &&
+        booking.date >= startDate &&
+        (changeType !== "temporary" || booking.date <= endDate) &&
+        studentNameKey(booking.studentName) === studentNameKey(sourceSlot.studentName)
+      ).map(booking => booking.id);
+      const regularChangeUndoBefore = snapshotCollections({ teachers: [sourceTeacher.id, targetTeacher.id], students: changedStudent ? [changedStudent.id] : [], bookings: affectedBookingIdsBefore });
       const originalEndDate = sourceSlot.endDate || "";
       const sourceSlotSnapshot = { ...sourceSlot };
       if (sourceSlot.startDate && sourceSlot.startDate >= startDate) {
@@ -4595,12 +4666,14 @@
           booking.updatedAt = now;
         });
       }
+      const undoAfter = snapshotCollections({ teachers: [sourceTeacher.id, targetTeacher.id], students: changedStudent ? [changedStudent.id] : [], bookings: affectedBookingIdsBefore });
       logAction(
         changeType === "temporary" ? "Temporary Regular Slot Change" : "Long Term Regular Slot Change",
         sourceSlot.studentName || "Regular class",
         sourceBefore,
         `${teacherLogSummary(sourceTeacher)}${sourceTeacher.id !== targetTeacher.id ? ` | ${teacherLogSummary(targetTeacher)}` : ""}`,
-        `${sourceTeacher.name} ${sourceSlot.day} ${timeLabel(sourceSlot.time)} to ${targetTeacher.name} ${target.day} ${timeLabel(target.time)} from ${formatDateFromAny(startDate)}${changeType === "temporary" ? ` to ${formatDateFromAny(endDate)}` : ""}`
+        `${sourceTeacher.name} ${sourceSlot.day} ${timeLabel(sourceSlot.time)} to ${targetTeacher.name} ${target.day} ${timeLabel(target.time)} from ${formatDateFromAny(startDate)}${changeType === "temporary" ? ` to ${formatDateFromAny(endDate)}` : ""}`,
+        { undo: makeUndoSnapshot(regularChangeUndoBefore, undoAfter) }
       );
       $("regularChangeModal").classList.add("hide");
       save(false);
@@ -4653,9 +4726,12 @@
         updatedAt: new Date().toISOString()
       });
       const before = teacherLogSummary(teacher);
+      const undoBefore = snapshotCollections({ teachers: [teacher.id] });
       teacher.overrideSlots ||= [];
       teacher.overrideSlots.push(offRule);
-      logAction("Open Slot Set To OFF", teacher.name, before, teacherLogSummary(teacher), `${availabilityScopeLabel(mode, offRule)} | ${timeLabel(offRule.time)}`);
+      logAction("Open Slot Set To OFF", teacher.name, before, teacherLogSummary(teacher), `${availabilityScopeLabel(mode, offRule)} | ${timeLabel(offRule.time)}`, {
+        undo: makeUndoSnapshot(undoBefore, snapshotCollections({ teachers: [teacher.id] }))
+      });
       $("offSlotModal").classList.add("hide");
       save(false);
       renderAll();
@@ -4688,8 +4764,11 @@
       }
       teacher.overrideSlots ||= [];
       const before = teacherLogSummary(teacher);
+      const undoBefore = snapshotCollections({ teachers: [teacher.id] });
       teacher.overrideSlots.push(openRule);
-      logAction("Open Slot Added", teacher.name, before, teacherLogSummary(teacher), `${availabilityScopeLabel(mode, openRule)} | ${timeLabel(openRule.time)} | ${subject}`);
+      logAction("Open Slot Added", teacher.name, before, teacherLogSummary(teacher), `${availabilityScopeLabel(mode, openRule)} | ${timeLabel(openRule.time)} | ${subject}`, {
+        undo: makeUndoSnapshot(undoBefore, snapshotCollections({ teachers: [teacher.id] }))
+      });
       $("openSlotModal").classList.add("hide");
       save(false);
       renderAll();
@@ -5304,6 +5383,92 @@
       return ["completed", "student_not_show"].includes(booking.status);
     }
 
+    function cleanupDroppedStudentClasses(studentName, lastLessonDate) {
+      const cleanName = cleanStudentName(studentName || "");
+      const nameKey = studentNameKey(cleanName);
+      const dropDate = normalizeDropDate(lastLessonDate);
+      if (!nameKey) return alert("Student name is required.");
+      if (!dropDate) return alert("Use a valid last lesson date in YYYY-MM-DD format.");
+
+      const student = (state.students || []).find(item => studentNameKey(item.name || "") === nameKey);
+      const now = new Date().toISOString();
+      const affectedBookingIds = (state.bookings || [])
+        .filter(booking => {
+          const matchesStudent = (student?.id && booking.studentId === student.id) || studentNameKey(booking.studentName || "") === nameKey;
+          return matchesStudent && dateOnly(booking.date) > dropDate;
+        })
+        .map(booking => booking.id);
+      const affectedTeacherIds = (state.teachers || [])
+        .filter(teacher => (teacher.regularSlots || []).some(slot =>
+          (student?.id && slot.studentId === student.id) || studentNameKey(slot.studentName || "") === nameKey
+        ))
+        .map(teacher => teacher.id);
+      const undoBefore = snapshotCollections({
+        students: student ? [student.id] : [],
+        teachers: affectedTeacherIds,
+        bookings: affectedBookingIds
+      });
+
+      let bookingCount = 0;
+      let teacherSlotCount = 0;
+      let studentSlotCount = 0;
+
+      (state.bookings || []).forEach(booking => {
+        const matchesStudent = (student?.id && booking.studentId === student.id) || studentNameKey(booking.studentName || "") === nameKey;
+        if (!matchesStudent || dateOnly(booking.date) <= dropDate) return;
+        booking.status = "deleted";
+        booking.archived = true;
+        booking.deleted = true;
+        booking.deletedAt = now;
+        booking.updatedAt = now;
+        booking.remark = [booking.remark, `Cleanup: dropped student future class deleted after ${dropDate}.`].filter(Boolean).join("\n");
+        bookingCount += 1;
+      });
+
+      (state.teachers || []).forEach(teacher => {
+        (teacher.regularSlots || []).forEach(slot => {
+          const matchesStudent = (student?.id && slot.studentId === student.id) || studentNameKey(slot.studentName || "") === nameKey;
+          if (!matchesStudent) return;
+          slot.endDate = dropDate;
+          slot.dropDate = dropDate;
+          slot.updatedAt = now;
+          teacherSlotCount += 1;
+        });
+        if (teacherSlotCount && affectedTeacherIds.includes(teacher.id)) teacher.updatedAt = now;
+      });
+
+      if (student) {
+        student.regularSlots = getStudentRegularSlots(student).map(slot => {
+          studentSlotCount += 1;
+          return { ...slot, endDate: dropDate, dropDate, updatedAt: now };
+        });
+        student.dropDate = student.dropDate || dropDate;
+        student.lastLessonDate = student.lastLessonDate || dropDate;
+        student.status = "archived";
+        student.archived = true;
+        student.registeredStatus = "drop";
+        student.updatedAt = now;
+      }
+
+      const undoAfter = snapshotCollections({
+        students: student ? [student.id] : [],
+        teachers: affectedTeacherIds,
+        bookings: affectedBookingIds
+      });
+      logAction("Dropped Student Cleanup", cleanName, "", "", `Deleted future classes after ${dropDate} and ended recurring slots. Bookings: ${bookingCount}, teacher slots: ${teacherSlotCount}, student slots: ${studentSlotCount}.`, {
+        undo: makeUndoSnapshot(undoBefore, undoAfter)
+      });
+      save(false);
+      renderSchedule();
+      renderTeacherOverview();
+      renderActivityLog();
+      scheduleAutoPush();
+      setStatus(`${cleanName} cleanup complete. Deleted ${bookingCount} future booking${bookingCount === 1 ? "" : "s"} after ${formatDateFromAny(dropDate)}.`);
+      return { ok: true, studentName: cleanName, lastLessonDate: dropDate, bookingCount, teacherSlotCount, studentSlotCount };
+    }
+
+    window.cleanupDroppedStudentClasses = cleanupDroppedStudentClasses;
+
     function dropStudentFromSystem(student, lastLessonDate = "") {
       if (!student) return false;
       const dropDate = normalizeDropDate(lastLessonDate) || promptStudentLastLessonDate(student);
@@ -5313,6 +5478,23 @@
       const previousIds = new Set(previousSlots.map(slot => slot.id).filter(Boolean));
       const nameKey = studentNameKey(student.name || "");
       const now = new Date().toISOString();
+      const affectedTeacherIds = (state.teachers || [])
+        .filter(teacher => ["regularSlots", "overrideSlots"].some(listName => (teacher[listName] || []).some(slot => slotBelongsToStudent(slot, student, previousIds, nameKey))))
+        .map(teacher => teacher.id);
+      const affectedBookingIds = (state.bookings || [])
+        .filter(booking => bookingBelongsToStudent(booking, student, nameKey))
+        .filter(booking => {
+          const bookingDate = dateOnly(booking.date);
+          return bookingDate && bookingDate > dropDate && !isProtectedCompletedHistory(booking);
+        })
+        .map(booking => booking.id);
+      const affectedNoteIds = (state.teacherStudentNotes || [])
+        .filter(note => note.studentId === student.id || (nameKey && studentNameKey(note.studentName || "") === nameKey))
+        .map(note => note.id);
+      const affectedCreditIds = (state.replacementCredits || [])
+        .filter(credit => credit.studentId === student.id || (nameKey && studentNameKey(credit.studentName || "") === nameKey))
+        .map(credit => credit.id);
+      const undoBefore = snapshotCollections({ students: [student.id], teachers: affectedTeacherIds, bookings: affectedBookingIds, teacherStudentNotes: affectedNoteIds, replacementCredits: affectedCreditIds });
 
       student.regularSlots = previousSlots.map(slot => capRecurringSlotAtDropDate({ ...slot }, dropDate, now));
       student.dropDate = dropDate;
@@ -5348,7 +5530,10 @@
       });
       state.teacherStudentNotes = (state.teacherStudentNotes || []).filter(note => note.studentId !== student.id && (!nameKey || studentNameKey(note.studentName || "") !== nameKey));
       state.replacementCredits = (state.replacementCredits || []).filter(credit => credit.studentId !== student.id && (!nameKey || studentNameKey(credit.studentName || "") !== nameKey));
-      logAction("Student Dropped And Removed", student.name, before, studentLogSummary(student), `Last lesson date: ${formatDateFromAny(dropDate)}. Future linked classes deleted; completed history remains.`);
+      const undoAfter = snapshotCollections({ students: [student.id], teachers: affectedTeacherIds, bookings: affectedBookingIds, teacherStudentNotes: affectedNoteIds, replacementCredits: affectedCreditIds });
+      logAction("Student Dropped And Removed", student.name, before, studentLogSummary(student), `Last lesson date: ${formatDateFromAny(dropDate)}. Future linked classes deleted; completed history remains.`, {
+        undo: makeUndoSnapshot(undoBefore, undoAfter)
+      });
       return true;
     }
 
@@ -6530,6 +6715,92 @@
         .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
     }
 
+    function activityLogCanUndo(log) {
+      return Boolean(log?.undo?.before && log?.undo?.after && !log.undoneAt && !undoBlockedActionType(log.type));
+    }
+
+    function activityUndoStatusHtml(log) {
+      if (log.undoneAt) return `<span class="pill archived">Undone</span>`;
+      if (!activityLogCanUndo(log)) return `<span class="subtle">-</span>`;
+      return `<button class="btn small ghost" data-undo-activity="${escapeHtml(log.id)}">Undo</button>`;
+    }
+
+    function activityLogTableHtml(logs) {
+      const headers = ["Date/Time", "User", "Action", "Record", "Before", "After", "Notes", "Undo"];
+      return `<table><thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${logs.map(log => `
+        <tr class="${log.undoneAt ? "archived-row" : ""}">
+          <td>${escapeHtml(formatDateTimeStamp(log.createdAt))}</td>
+          <td>${escapeHtml(log.user || "This browser / Admin")}</td>
+          <td>${escapeHtml(log.type || "")}</td>
+          <td>${escapeHtml(log.target || "")}</td>
+          <td>${escapeHtml(log.beforeValue || "")}</td>
+          <td>${escapeHtml(log.afterValue || "")}</td>
+          <td>${escapeHtml(log.notes || "")}</td>
+          <td>${activityUndoStatusHtml(log)}</td>
+        </tr>
+      `).join("") || `<tr><td colspan="${headers.length}">No data</td></tr>`}</tbody></table>`;
+    }
+
+    function recordsDifferForUndo(log) {
+      const before = log?.undo?.before || {};
+      const after = log?.undo?.after || {};
+      const afterDiffers = Object.entries(after).some(([collectionName, afterRecords]) => {
+        const beforeIds = new Set((before[collectionName] || []).map(record => String(record.id || "")));
+        return (afterRecords || []).some(afterRecord => {
+          const id = String(afterRecord.id || "");
+          const current = (state[collectionName] || []).find(record => String(record.id || "") === id);
+          if (!current) return beforeIds.has(id);
+          return JSON.stringify(cloneForUndo(current)) !== JSON.stringify(afterRecord);
+        });
+      });
+      if (afterDiffers) return true;
+      return Object.entries(before).some(([collectionName, beforeRecords]) => {
+        const afterIds = new Set((after[collectionName] || []).map(record => String(record.id || "")));
+        return (beforeRecords || []).some(beforeRecord => {
+          const id = String(beforeRecord.id || "");
+          if (!id || afterIds.has(id)) return false;
+          return (state[collectionName] || []).some(record => String(record.id || "") === id);
+        });
+      });
+    }
+
+    function restoreUndoCollection(collectionName, beforeRecords = [], afterRecords = []) {
+      const beforeById = new Map((beforeRecords || []).filter(record => record?.id).map(record => [String(record.id), cloneForUndo(record)]));
+      const afterIds = new Set((afterRecords || []).filter(record => record?.id).map(record => String(record.id)));
+      const beforeIds = new Set(beforeById.keys());
+      const createdByAction = new Set([...afterIds].filter(id => !beforeIds.has(id)));
+      let collection = [...(state[collectionName] || [])].filter(record => !createdByAction.has(String(record.id || "")));
+      beforeById.forEach((record, id) => {
+        const index = collection.findIndex(item => String(item.id || "") === id);
+        if (index >= 0) collection[index] = record;
+        else collection.push(record);
+      });
+      state[collectionName] = collection;
+    }
+
+    function undoActivityLog(logId) {
+      const log = (state.activityLogs || []).find(item => item.id === logId);
+      if (!log) return alert("Activity log entry not found.");
+      if (!activityLogCanUndo(log)) return alert("This activity log entry cannot be undone.");
+      if (!confirm("Undo this action? This will restore the previous state for this record.")) return;
+      if (recordsDifferForUndo(log) && !confirm("This record has changed after this log entry. Undo may overwrite newer changes. Continue?")) return;
+
+      const before = log.undo.before || {};
+      const after = log.undo.after || {};
+      [...new Set([...Object.keys(before), ...Object.keys(after)])].forEach(collectionName => {
+        restoreUndoCollection(collectionName, before[collectionName] || [], after[collectionName] || []);
+      });
+      log.undoneAt = new Date().toISOString();
+      log.undoneBy = safeStorageGet("classOneStaffName") || "This browser / Admin";
+      log.notes = [log.notes, `Undone at ${formatDateTimeStamp(log.undoneAt)}`].filter(Boolean).join("\n");
+      logAction("Undo", log.target || "", "", "", `Undid activity log entry ${log.id}/${log.type}.`);
+      save(false);
+      renderAll();
+      renderActivityLog();
+      scheduleAutoPush();
+      setStatus("Undo completed and queued for Neon sync.");
+    }
+
     function renderActivityLog() {
       const currentType = $("activityFilterType")?.value || "all";
       fillSelect($("activityFilterType"), activityTypes(), "All Types");
@@ -6545,15 +6816,7 @@
       activityPage = clampPage(activityPage, logs.length);
       const activityPageData = pageSlice(logs, activityPage);
       activityPage = activityPageData.page;
-      $("activityList").innerHTML = tableHtml(["Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], activityPageData.items.map(log => [
-        formatDateTimeStamp(log.createdAt),
-        log.user || "This browser / Admin",
-        log.type || "",
-        log.target || "",
-        log.beforeValue || "",
-        log.afterValue || "",
-        log.notes || ""
-      ]));
+      $("activityList").innerHTML = activityLogTableHtml(activityPageData.items);
       setAutoPager("activityList", listPagerHtml("activity", activityPage, logs.length));
     }
 
@@ -7908,6 +8171,7 @@
       const normalizedName = name.toLowerCase().replace(/\s+/g, " ").trim();
       const existing = teacherById(formId) || state.teachers.find(t => String(t.name || "").toLowerCase().replace(/\s+/g, " ").trim() === normalizedName) || { id: formId || uid("teacher"), regularSlots: [], overrideSlots: [] };
       const before = teacherLogSummary(existing);
+      const undoBefore = snapshotCollections({ teachers: [existing.id] });
       existing.name = name;
       existing.tier = $("teacherTier").value;
       existing.category = $("teacherCategory").value;
@@ -7924,7 +8188,10 @@
       existing.status = existing.status || "active";
       existing.updatedAt = new Date().toISOString();
       if (!state.teachers.some(t => t.id === existing.id)) state.teachers.push(existing);
-      logAction(before ? "Teacher Updated" : "Teacher Added", existing.name, before, teacherLogSummary(existing), "Teacher profile saved.");
+      const undoAfter = snapshotCollections({ teachers: [existing.id] });
+      logAction(before ? "Teacher Updated" : "Teacher Added", existing.name, before, teacherLogSummary(existing), "Teacher profile saved.", {
+        undo: makeUndoSnapshot(undoBefore, undoAfter)
+      });
       save();
       clearTeacherForm();
       $("teacherProfileModal").classList.add("hide");
@@ -8609,6 +8876,10 @@
 
     function applyOutcomeToBooking(booking, nextStatus, remark, replacementNeeded, options = {}) {
       const before = bookingLogSummary(booking);
+      const replacementIdsBefore = (state.replacements || [])
+        .filter(item => item.originalBookingId === booking.id || item.replacementBookingId === booking.id)
+        .map(item => item.id);
+      const undoBefore = snapshotCollections({ bookings: [booking.id], replacements: replacementIdsBefore });
       booking.status = nextStatus;
       booking.remark = remark;
       if (nextStatus === "booked") booking.publicHolidayOverride = true;
@@ -8622,7 +8893,12 @@
       else if (nextStatus === "student_not_show" && options.createStudentNotShowReplacement) handleReplacementForOutcome(booking, "yes", "Student Not Show");
       else if (options.withdrawExistingReplacement) withdrawReplacementForBooking(booking);
       if (replacementReasonForStatus(nextStatus)) restoreAutoOpenedSlotIfUnused(booking);
-      logAction("Class Outcome Updated", booking.studentName || booking.id, before, bookingLogSummary(booking), booking.remark || "");
+      const replacementIdsAfter = (state.replacements || [])
+        .filter(item => item.originalBookingId === booking.id || item.replacementBookingId === booking.id)
+        .map(item => item.id);
+      logAction("Class Outcome Updated", booking.studentName || booking.id, before, bookingLogSummary(booking), booking.remark || "", {
+        undo: makeUndoSnapshot(undoBefore, snapshotCollections({ bookings: [booking.id], replacements: [...new Set([...replacementIdsBefore, ...replacementIdsAfter])] }))
+      });
     }
 
     function restoreAutoOpenedSlotIfUnused(booking) {
@@ -8789,6 +9065,13 @@
 
     function markBookingDeleted(booking, remark = "") {
       const before = bookingLogSummary(booking);
+      const replacementIdsBefore = (state.replacements || [])
+        .filter(item => item.originalBookingId === booking.id || item.replacementBookingId === booking.id)
+        .map(item => item.id);
+      const creditIdsBefore = (state.replacementCredits || [])
+        .filter(item => item.bookingId === booking.id || item.usedBookingId === booking.id)
+        .map(item => item.id);
+      const undoBefore = snapshotCollections({ bookings: [booking.id], replacements: replacementIdsBefore, replacementCredits: creditIdsBefore });
       const refundedCredit = refundReplacementCreditForBooking(booking);
       const restoredOff = restoreAutoOpenedSlotIfUnused(booking);
       booking.status = "deleted";
@@ -8796,8 +9079,20 @@
       booking.deletedAt = new Date().toISOString();
       booking.updatedAt = booking.deletedAt;
       if (remark) booking.remark = [booking.remark, remark].filter(Boolean).join("\n");
-      logAction("Booking Deleted", booking.studentName || booking.id, before, "Deleted", `${refundedCredit ? "Replacement credit refunded. " : ""}${restoredOff ? "Date-specific slot returned to OFF. " : ""}${booking.remark || "Deleted from class outcome."}`);
       withdrawReplacementForBooking(booking);
+      const replacementIdsAfter = (state.replacements || [])
+        .filter(item => item.originalBookingId === booking.id || item.replacementBookingId === booking.id)
+        .map(item => item.id);
+      const creditIdsAfter = (state.replacementCredits || [])
+        .filter(item => item.bookingId === booking.id || item.usedBookingId === booking.id)
+        .map(item => item.id);
+      logAction("Booking Deleted", booking.studentName || booking.id, before, "Deleted", `${refundedCredit ? "Replacement credit refunded. " : ""}${restoredOff ? "Date-specific slot returned to OFF. " : ""}${booking.remark || "Deleted from class outcome."}`, {
+        undo: makeUndoSnapshot(undoBefore, snapshotCollections({
+          bookings: [booking.id],
+          replacements: [...new Set([...replacementIdsBefore, ...replacementIdsAfter])],
+          replacementCredits: [...new Set([...creditIdsBefore, ...creditIdsAfter])]
+        }))
+      });
     }
 
     async function confirmDeleteRecurringBooking() {
@@ -9367,9 +9662,12 @@
         const teacher = teacherById(archiveTeacher.dataset.archiveTeacher);
         if (teacher) {
           const before = teacherLogSummary(teacher);
+          const undoBefore = snapshotCollections({ teachers: [teacher.id] });
           teacher.status = "archived";
           teacher.archivedAt = new Date().toISOString();
-          logAction("Teacher Archived", teacher.name, before, teacherLogSummary(teacher), "Teacher moved to archive.");
+          logAction("Teacher Archived", teacher.name, before, teacherLogSummary(teacher), "Teacher moved to archive.", {
+            undo: makeUndoSnapshot(undoBefore, snapshotCollections({ teachers: [teacher.id] }))
+          });
           save();
         }
       }
@@ -9378,18 +9676,24 @@
         const teacher = teacherById(restoreTeacher.dataset.restoreTeacher);
         if (teacher) {
           const before = teacherLogSummary(teacher);
+          const undoBefore = snapshotCollections({ teachers: [teacher.id] });
           teacher.status = "active";
           teacher.archived = false;
           teacher.restoredAt = new Date().toISOString();
-          logAction("Teacher Restored", teacher.name, before, teacherLogSummary(teacher), "Teacher restored from archive.");
+          logAction("Teacher Restored", teacher.name, before, teacherLogSummary(teacher), "Teacher restored from archive.", {
+            undo: makeUndoSnapshot(undoBefore, snapshotCollections({ teachers: [teacher.id] }))
+          });
           save();
         }
       }
       const delTeacher = e.target.closest("[data-delete-teacher]");
       if (delTeacher && confirm("Delete this teacher profile and slots?")) {
         const teacher = teacherById(delTeacher.dataset.deleteTeacher);
-        logAction("Teacher Deleted", teacher?.name || delTeacher.dataset.deleteTeacher, teacherLogSummary(teacher), "", "Teacher removed.");
+        const undoBefore = snapshotCollections({ teachers: [delTeacher.dataset.deleteTeacher] });
         state.teachers = state.teachers.filter(t => t.id !== delTeacher.dataset.deleteTeacher);
+        logAction("Teacher Deleted", teacher?.name || delTeacher.dataset.deleteTeacher, teacherLogSummary(teacher), "", "Teacher removed.", {
+          undo: makeUndoSnapshot(undoBefore, snapshotCollections({ teachers: [delTeacher.dataset.deleteTeacher] }))
+        });
         save();
       }
       const editStudent = e.target.closest("[data-edit-student]");
@@ -9409,8 +9713,11 @@
         const student = studentById(archiveStudent.dataset.archiveStudent);
         if (student) {
           const before = studentLogSummary(student);
+          const undoBefore = snapshotCollections({ students: [student.id] });
           student.status = student.status === "archived" ? "registered" : "archived";
-          logAction(student.status === "archived" ? "Student Archived" : "Student Restored", student.name, before, studentLogSummary(student), "");
+          logAction(student.status === "archived" ? "Student Archived" : "Student Restored", student.name, before, studentLogSummary(student), "", {
+            undo: makeUndoSnapshot(undoBefore, snapshotCollections({ students: [student.id] }))
+          });
           save();
         }
       }
@@ -9419,8 +9726,11 @@
         const student = studentById(restoreStudent.dataset.restoreStudent);
         if (student) {
           const before = studentLogSummary(student);
+          const undoBefore = snapshotCollections({ students: [student.id] });
           student.status = "registered";
-          logAction("Student Restored", student.name, before, studentLogSummary(student), "Student restored from archive.");
+          logAction("Student Restored", student.name, before, studentLogSummary(student), "Student restored from archive.", {
+            undo: makeUndoSnapshot(undoBefore, snapshotCollections({ students: [student.id] }))
+          });
           save();
         }
       }
@@ -9444,9 +9754,12 @@
         const student = studentById(delStudent.dataset.deleteStudent);
         if (student) {
           const before = studentLogSummary(student);
+          const undoBefore = snapshotCollections({ students: [student.id] });
           student.status = "archived";
           student.updatedAt = new Date().toISOString();
-          logAction("Student Archived", student.name, before, studentLogSummary(student), "Legacy delete action redirected to Archive; no student data was removed.");
+          logAction("Student Archived", student.name, before, studentLogSummary(student), "Legacy delete action redirected to Archive; no student data was removed.", {
+            undo: makeUndoSnapshot(undoBefore, snapshotCollections({ students: [student.id] }))
+          });
           save();
         }
       }
@@ -9455,7 +9768,13 @@
         const [teacherId, type, slotId] = delSlot.dataset.deleteSlot.split("|");
         const teacher = teacherById(teacherId);
         const key = type === "regular" ? "regularSlots" : "overrideSlots";
+        const before = teacherLogSummary(teacher);
+        const undoBefore = snapshotCollections({ teachers: [teacherId] });
         teacher[key] = (teacher[key] || []).filter(s => s.id !== slotId);
+        teacher.updatedAt = new Date().toISOString();
+        logAction("Teacher Slot Deleted", teacher?.name || teacherId, before, teacherLogSummary(teacher), `${type} slot removed.`, {
+          undo: makeUndoSnapshot(undoBefore, snapshotCollections({ teachers: [teacherId] }))
+        });
         save();
       }
       const removeStudentRegular = e.target.closest("[data-remove-student-regular]");
@@ -9614,6 +9933,11 @@
         const link = teacherTimetableLink(teacher);
         if (!link) return setStatus("Teacher view link not generated yet. Generate it in Teacher Overview or Teachers tab.", "warn");
         window.open(link, "_blank", "noopener,noreferrer");
+      }
+      const undoActivity = e.target.closest("[data-undo-activity]");
+      if (undoActivity) {
+        undoActivityLog(undoActivity.dataset.undoActivity);
+        return;
       }
       const replacementPageBtn = e.target.closest("[data-replacement-page]");
       if (replacementPageBtn) {
@@ -9971,6 +10295,9 @@
       const existing = studentById(id) || { id };
       const before = studentLogSummary(existing);
       const previousRegularSlots = getStudentRegularSlots(existing).map(slot => ({ ...slot }));
+      const plannedRegularSlots = studentRegularSlotsDraft.map(slot => ({ ...slot }));
+      const affectedTeacherIds = [...new Set([...previousRegularSlots, ...plannedRegularSlots].map(slot => slot.teacherId).filter(Boolean))];
+      const undoBefore = snapshotCollections({ students: [existing.id], teachers: affectedTeacherIds });
       if (existing.id && $("studentRegisteredStatus").value === "drop") {
         const lastLessonDate = promptStudentLastLessonDate(existing);
         if (!lastLessonDate || !confirm(`Drop ${existing.name || name} after ${formatDateFromAny(lastLessonDate)}?\n\nFuture regular classes after this date will stop. Completed lesson history will remain.`)) return;
@@ -9982,13 +10309,16 @@
         setStatus(`${existing.name || name} dropped from ${formatDateFromAny(lastLessonDate)}. Future recurring classes stopped.`);
         return;
       }
-      Object.assign(existing, { name, subjects, subject: subjects[0] || "", package: packageName, packageAmount: Number($("studentPackageAmount").value || 0), packageClasses: Number($("studentPackageClasses").value || 0), packageNotes: $("studentPackageNotes").value.trim(), registeredStatus: $("studentRegisteredStatus").value || "active", registeredRemark: $("studentRegisteredRemark").value.trim(), status: $("studentStatus").value || "registered", regularSlots: studentRegularSlotsDraft.map(slot => ({ ...slot })), updatedAt: new Date().toISOString() });
+      Object.assign(existing, { name, subjects, subject: subjects[0] || "", package: packageName, packageAmount: Number($("studentPackageAmount").value || 0), packageClasses: Number($("studentPackageClasses").value || 0), packageNotes: $("studentPackageNotes").value.trim(), registeredStatus: $("studentRegisteredStatus").value || "active", registeredRemark: $("studentRegisteredRemark").value.trim(), status: $("studentStatus").value || "registered", regularSlots: plannedRegularSlots, updatedAt: new Date().toISOString() });
       delete existing.teacherId;
       delete existing.day;
       delete existing.time;
       if (!state.students.some(s => s.id === id)) state.students.push(existing);
       syncStudentProfileSlotsToTeachers(existing, previousRegularSlots);
-      logAction(before ? "Student Updated" : "Student Added", existing.name, before, studentLogSummary(existing), "Student profile saved.");
+      const undoAfter = snapshotCollections({ students: [existing.id], teachers: affectedTeacherIds });
+      logAction(before ? "Student Updated" : "Student Added", existing.name, before, studentLogSummary(existing), "Student profile saved.", {
+        undo: makeUndoSnapshot(undoBefore, undoAfter)
+      });
       if (pendingEnrollmentLeadId) {
         const lead = state.leads.find(item => item.id === pendingEnrollmentLeadId);
         if (lead) {
@@ -10299,6 +10629,7 @@
       const createdBookings = [];
       if (period.mode === "permanent") {
         const teacher = teacherById(slot.teacherId);
+        const undoBefore = snapshotCollections({ teachers: [teacher?.id], students: student ? [student.id] : [] });
         const recurringSlot = {
           id: uid("slot"), teacherId: slot.teacherId, day: period.day, time: slot.time, subject, studentName,
           locked: true, source: "ongoing_booking", startDate: period.startDate, remark,
@@ -10310,7 +10641,9 @@
           student.regularSlots ||= [];
           student.regularSlots.push({ id: uid("student_slot"), teacherId: slot.teacherId, day: period.day, time: slot.time, subject, startDate: period.startDate });
         }
-        logAction("Ongoing Regular Class Added", studentName, "", `${teacher.name} | ${period.day} ${timeLabel(slot.time)} | from ${formatDateFromAny(period.startDate)}`, remark);
+        logAction("Ongoing Regular Class Added", studentName, "", `${teacher.name} | ${period.day} ${timeLabel(slot.time)} | from ${formatDateFromAny(period.startDate)}`, remark, {
+          undo: makeUndoSnapshot(undoBefore, snapshotCollections({ teachers: [teacher?.id], students: student ? [student.id] : [] }))
+        });
       } else {
         const recurrenceGroupId = period.mode === "temporary" ? uid("series") : "";
         period.dates.forEach(date => {
@@ -10324,21 +10657,27 @@
             recurrenceMode: period.mode, recurrenceStartDate: period.startDate, recurrenceEndDate: period.endDate,
             openedAvailabilityRuleId: openedRule?.id || "", createdAt: new Date().toISOString()
           };
+          const undoBefore = snapshotCollections({ bookings: [booking.id] });
           state.bookings.push(booking);
           createdBookings.push(booking);
-          logAction("Booking Created", studentName, "", bookingLogSummary(booking), type || "");
+          logAction("Booking Created", studentName, "", bookingLogSummary(booking), type || "", {
+            undo: makeUndoSnapshot(undoBefore, snapshotCollections({ bookings: [booking.id] }))
+          });
         });
       }
       const booking = createdBookings[0] || null;
       if (booking && slot.reuseCancelledBookingId) {
         const cancelledBooking = state.bookings.find(item => item.id === slot.reuseCancelledBookingId);
         if (cancelledBooking) {
+          const undoBefore = snapshotCollections({ bookings: [cancelledBooking.id, booking.id] });
           cancelledBooking.rebookedByBookingId = booking.id;
           cancelledBooking.rebookedStudentName = booking.studentName;
           cancelledBooking.rebookedAt = new Date().toISOString();
           cancelledBooking.updatedAt = cancelledBooking.rebookedAt;
           cancelledBooking.remark = [cancelledBooking.remark, `Slot reused by ${booking.studentName}.`].filter(Boolean).join("\n");
-          logAction("Cancelled Slot Rebooked", cancelledBooking.studentName || cancelledBooking.id, bookingLogSummary(cancelledBooking), bookingLogSummary(booking), `New student: ${booking.studentName}`);
+          logAction("Cancelled Slot Rebooked", cancelledBooking.studentName || cancelledBooking.id, bookingLogSummary(cancelledBooking), bookingLogSummary(booking), `New student: ${booking.studentName}`, {
+            undo: makeUndoSnapshot(undoBefore, snapshotCollections({ bookings: [cancelledBooking.id, booking.id] }))
+          });
         }
       }
       if (booking?.type === "replacement class") {
@@ -10358,6 +10697,7 @@
         const replacement = (state.replacements || []).find(item => item.id === pendingReplacementId);
         const teacher = teacherById(booking.teacherId);
         if (replacement) {
+          const undoBefore = snapshotCollections({ replacements: [replacement.id], bookings: [booking.id] });
           const before = `${replacement.status || "-"} | ${replacement.latestAction || "-"}`;
           const now = new Date().toISOString();
           replacement.status = "Replacement Booked";
@@ -10369,7 +10709,9 @@
           replacement.latestAction = "Replacement booked";
           replacement.lastActionAt = now;
           replacement.updatedAt = now;
-          logAction("Replacement Booked", replacement.studentName || studentName, before, `${replacement.status} | ${teacher ? teacher.name : ""} ${booking.date} ${timeLabel(booking.time)}`, "Booked from replacement task.");
+          logAction("Replacement Booked", replacement.studentName || studentName, before, `${replacement.status} | ${teacher ? teacher.name : ""} ${booking.date} ${timeLabel(booking.time)}`, "Booked from replacement task.", {
+            undo: makeUndoSnapshot(undoBefore, snapshotCollections({ replacements: [replacement.id], bookings: [booking.id] }))
+          });
         }
         pendingReplacementId = "";
       }
@@ -10412,8 +10754,10 @@
       const studentId = student ? student.id : "";
       const studentName = student ? student.name : typedName;
       const before = `${studentName}: ${replacementCreditBalance(studentId, studentName)} credit`;
-      addReplacementCredit({ studentId, studentName, amount, reason: $("creditReason").value.trim(), remark: $("creditRemark").value.trim() });
-      logAction("Replacement Credit Added", studentName, before, `${studentName}: ${replacementCreditBalance(studentId, studentName)} credit`, $("creditReason").value.trim());
+      const credit = addReplacementCredit({ studentId, studentName, amount, reason: $("creditReason").value.trim(), remark: $("creditRemark").value.trim() });
+      logAction("Replacement Credit Added", studentName, before, `${studentName}: ${replacementCreditBalance(studentId, studentName)} credit`, $("creditReason").value.trim(), {
+        undo: makeUndoSnapshot({ replacementCredits: [] }, snapshotCollections({ replacementCredits: [credit.id] }))
+      });
       $("replacementCreditModal").classList.add("hide");
       save(false);
       renderReplacementCredits();
