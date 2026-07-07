@@ -158,7 +158,7 @@
       display: grid;
       gap: 14px;
     }
-    .metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .metrics { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
     .metric {
       background: #fff;
       border: 1px solid var(--line);
@@ -408,8 +408,9 @@
     <div class="grid metrics">
       <div class="metric"><span>Classes In Selected Month</span><strong id="metricTotal">0</strong></div>
       <div class="metric"><span>Today's Remaining Classes</span><strong id="metricUpcoming">0</strong></div>
-      <div class="metric"><span>Completed / Passed</span><strong id="metricCompleted">0</strong></div>
-      <div class="metric"><span>Cancelled / Leave</span><strong id="metricCancelled">0</strong></div>
+      <div class="metric"><span>Completed</span><strong id="metricCompleted">0</strong></div>
+      <div class="metric"><span>Not Show</span><strong id="metricNotShow">0</strong></div>
+      <div class="metric"><span>Cancelled</span><strong id="metricCancelled">0</strong></div>
       <div class="metric"><span>Income To Date</span><strong id="metricIncome">RM 0.00</strong></div>
     </div>
 
@@ -1125,6 +1126,19 @@
       return meta.status === "completed" && (meta.type || "").toLowerCase() !== "practical class";
     }
 
+    function isCompletedEntry(entry) {
+      const meta = entryMeta(entry);
+      return meta.status === "completed";
+    }
+
+    function isNotShowEntry(entry) {
+      return entryMeta(entry).status === "student_not_show";
+    }
+
+    function isCancelledEntry(entry) {
+      return CANCELLED.includes(entryMeta(entry).status);
+    }
+
     function selectedClaimMonthKey() {
       return `${$("claimYearSelect").value}-${String(Number($("claimMonthSelect").value) + 1).padStart(2, "0")}`;
     }
@@ -1425,6 +1439,11 @@
       return `<div class="row spread" style="margin-top:10px;"><span class="subtle">Showing ${start}-${end} of ${total} | Page ${page} of ${pages}</span><div class="row"><button class="btn ghost" data-page="${key}|prev" ${page <= 1 ? "disabled" : ""}>&lt;</button><button class="btn ghost" data-page="${key}|next" ${page >= pages ? "disabled" : ""}>&gt;</button></div></div>`;
     }
 
+    function scrollToListStart(id) {
+      const target = $(id);
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
     function renderTeacherStudents() {
       const students = timetableData?.students || [];
       teacherStudentPage = clampPage(teacherStudentPage, students.length);
@@ -1512,8 +1531,9 @@
       });
       $("monthList").innerHTML = rows.length ? tableHtml(["No.", "Date", "Time", "Student", "Subject", "Type", "Status", "Remark"], rows) + pagerHtml("monthList", monthListPage, entries.length) : `<div class="subtle" style="padding:12px;">No classes in selected month.</div>`;
       $("metricTotal").textContent = entries.length;
-      $("metricCompleted").textContent = entries.filter(isPaidCompletedEntry).length;
-      $("metricCancelled").textContent = entries.filter(entry => CANCELLED.includes(entryMeta(entry).status)).length;
+      $("metricCompleted").textContent = entries.filter(isCompletedEntry).length;
+      $("metricNotShow").textContent = entries.filter(isNotShowEntry).length;
+      $("metricCancelled").textContent = entries.filter(isCancelledEntry).length;
     }
 
     function renderLeaveList() {
@@ -1542,9 +1562,7 @@
     function renderIncomeHistory() {
       const { from, month, year } = selectedMonthRange();
       const monthEnd = localISO(new Date(year, month + 1, 0));
-      const today = localISO(new Date());
-      const to = today < from ? "" : (today > monthEnd ? monthEnd : today);
-      const entries = to ? classEntries(from, to).filter(entry => incomePayForEntry(entry) > 0) : [];
+      const entries = classEntries(from, monthEnd).filter(entry => incomePayForEntry(entry) > 0);
       const total = entries.reduce((sum, entry) => sum + incomePayForEntry(entry), 0);
       $("metricIncome").textContent = money(total);
       incomeListPage = clampPage(incomeListPage, entries.length);
@@ -1569,9 +1587,7 @@
     function selectedIncomeReportEntries() {
       const { from, month, year } = selectedMonthRange();
       const monthEnd = localISO(new Date(year, month + 1, 0));
-      const today = localISO(new Date());
-      const to = today < from ? "" : (today > monthEnd ? monthEnd : today);
-      return to ? classEntries(from, to).filter(entry => incomePayForEntry(entry) > 0) : [];
+      return classEntries(from, monthEnd).filter(entry => incomePayForEntry(entry) > 0);
     }
 
     function exportIncomePdf() {
@@ -1715,10 +1731,17 @@
       if (!pageButton) return;
       const [kind, direction] = pageButton.dataset.page.split("|");
       const delta = direction === "next" ? 1 : -1;
+      const scrollTargets = {
+        teacherStudents: "studentListTable",
+        monthList: "monthList",
+        leaveList: "leaveList",
+        incomeList: "incomeList"
+      };
       if (kind === "teacherStudents") { teacherStudentPage += delta; renderTeacherStudents(); }
       if (kind === "monthList") { monthListPage += delta; renderMonthList(); }
       if (kind === "leaveList") { leaveListPage += delta; renderLeaveList(); }
       if (kind === "incomeList") { incomeListPage += delta; renderIncomeHistory(); }
+      scrollToListStart(scrollTargets[kind]);
     });
     document.querySelectorAll("[data-view-tab]").forEach(button => {
       button.addEventListener("click", () => {
