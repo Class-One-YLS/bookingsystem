@@ -145,6 +145,9 @@
     button.metric { cursor: pointer; font: inherit; width: 100%; }
     button.metric:hover { border-color: var(--mint-dark); box-shadow: 0 6px 16px rgba(35, 91, 67, .08); }
     .metric strong { display: block; font-size: 22px; }
+    .teacher-view-summary-link { display: grid; place-items: center; min-height: 78px; }
+    .teacher-view-summary-link strong { font-size: 26px; line-height: 1; }
+    .teacher-view-summary-link:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
     .field-actions { display: flex; gap: 6px; align-items: center; }
     .field-actions select, .field-actions input { min-width: 0; }
     .field-actions .btn { flex: 0 0 auto; min-height: 40px; padding: 0 9px; }
@@ -4707,7 +4710,10 @@
     }
 
     function renderSalesSummary(summary) {
+      const selectedTeacher = teacherById($("teacherFilter")?.value);
+      const linkReady = Boolean(selectedTeacher && teacherTimetableLink(selectedTeacher));
       $("salesSummary").innerHTML = `
+        <button class="metric teacher-view-summary-link" data-open-filter-teacher-view ${linkReady ? "" : "disabled"} title="${selectedTeacher ? (linkReady ? `Open ${escapeHtml(selectedTeacher.name)} teacher view` : "Teacher view link not generated yet") : "Choose one teacher first"}" aria-label="Open selected teacher view link"><strong>&#128279;</strong><span class="subtle">${selectedTeacher ? escapeHtml(selectedTeacher.name) : "Choose teacher"}</span></button>
         <div class="metric"><span class="subtle">Open slots sales can propose</span><strong>${summary.open}</strong></div>
         <div class="metric"><span class="subtle">Booked special sessions</span><strong>${summary.booked}</strong></div>
         <div class="metric"><span class="subtle">Fixed regular classes</span><strong>${summary.fixed}</strong></div>
@@ -6061,8 +6067,8 @@
           <button class="btn small ghost" id="leadNextPageBtn" ${leadPage >= totalPages ? "disabled" : ""}>&gt;</button>
         </div>
       `;
-      $("leadPrevPageBtn").onclick = () => { leadPage -= 1; renderLeads(); };
-      $("leadNextPageBtn").onclick = () => { leadPage += 1; renderLeads(); };
+      $("leadPrevPageBtn").onclick = () => { leadPage -= 1; renderLeads(); scrollToListStart("leadList"); };
+      $("leadNextPageBtn").onclick = () => { leadPage += 1; renderLeads(); scrollToListStart("leadList"); };
       if (leadViewMode === "table") {
         const quickFields = [...document.querySelectorAll("[data-lead-quick]")];
         leads.forEach(lead => {
@@ -6122,8 +6128,8 @@
           <button class="btn small ghost" id="tutorLeadNextPageBtn" ${tutorLeadPage >= totalPages ? "disabled" : ""}>&gt;</button>
         </div>
       `;
-      $("tutorLeadPrevPageBtn").onclick = () => { tutorLeadPage -= 1; renderTutorCrm(); };
-      $("tutorLeadNextPageBtn").onclick = () => { tutorLeadPage += 1; renderTutorCrm(); };
+      $("tutorLeadPrevPageBtn").onclick = () => { tutorLeadPage -= 1; renderTutorCrm(); scrollToListStart("tutorLeadList"); };
+      $("tutorLeadNextPageBtn").onclick = () => { tutorLeadPage += 1; renderTutorCrm(); scrollToListStart("tutorLeadList"); };
       if (tutorLeadViewMode === "table") hydrateTutorLeadQuickFields(leads);
     }
 
@@ -7409,6 +7415,12 @@
         anchor.insertAdjacentElement("afterend", pager);
       }
       pager.innerHTML = html || "";
+    }
+
+    function scrollToListStart(id) {
+      const target = $(id);
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
     function downloadCsv(filename, headers, rows) {
@@ -9323,15 +9335,36 @@
       if (replacementSummary) {
         showReplacementActionModal(replacementSummary.dataset.replacementSummary);
       }
+      const filterTeacherView = e.target.closest("[data-open-filter-teacher-view]");
+      if (filterTeacherView) {
+        const teacher = teacherById($("teacherFilter").value);
+        if (!teacher) return setStatus("Choose one teacher first.", "warn");
+        const link = teacherTimetableLink(teacher);
+        if (!link) return setStatus("Teacher view link not generated yet. Generate it in Teacher Overview or Teachers tab.", "warn");
+        window.open(link, "_blank", "noopener,noreferrer");
+      }
       const replacementPageBtn = e.target.closest("[data-replacement-page]");
       if (replacementPageBtn) {
         replacementPage += replacementPageBtn.dataset.replacementPage === "next" ? 1 : -1;
         renderReplacements();
+        scrollToListStart("replacementList");
       }
       const listPageBtn = e.target.closest("[data-list-page]");
       if (listPageBtn) {
         const [kind, direction] = listPageBtn.dataset.listPage.split("|");
         const delta = direction === "next" ? 1 : -1;
+        const scrollTargets = {
+          teachers: "teacherList",
+          students: "studentList",
+          registeredStudents: "registeredStudentList",
+          teacherStudentRecords: "teacherStudentRecordList",
+          templates: "templateList",
+          replacementCredits: "replacementCreditSummary",
+          activity: "activityList",
+          slots: "slotList",
+          allTeacherPayout: "allTeacherPayoutTable",
+          teacherFeedback: "teacherFeedbackList"
+        };
         if (kind === "teachers") { teacherListPage += delta; renderTeachers(); }
         if (kind === "students") { studentListPage += delta; renderStudents(); }
         if (kind === "registeredStudents") { registeredStudentPage += delta; renderRegisteredStudents(); }
@@ -9342,6 +9375,7 @@
         if (kind === "slots") { slotListPage += delta; renderSlotList(); }
         if (kind === "allTeacherPayout") { allTeacherPayoutPage += delta; renderAllTeacherPayoutSummary(); }
         if (kind === "teacherFeedback") { teacherFeedbackPage += delta; renderTeacherFeedbackList($("feedbackTeacherId").value); }
+        scrollToListStart(scrollTargets[kind]);
       }
       const undoCancellation = e.target.closest("[data-undo-cancellation]");
       if (undoCancellation) {
