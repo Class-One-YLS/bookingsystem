@@ -934,10 +934,39 @@
 
     function bookingRank(booking) {
       const status = booking.status || "booked";
-      if (CANCELLED.includes(status) || status === "student_not_show") return 5;
-      if (status === "booked") return 4;
-      if (status === "completed") return 3;
+      if (status === "booked" && booking.changedSlot) return 7;
+      if (status === "booked") return 6;
+      if (status === "completed") return 5;
+      if (status === "student_not_show") return 4;
+      if (CANCELLED.includes(status)) return 2;
       return 1;
+    }
+
+    function amendmentTime(record) {
+      const candidates = [
+        record?.updatedAt,
+        record?.updated_at,
+        record?.changedAt,
+        record?.changedSlot?.changedAt,
+        record?.rebookedAt,
+        record?.cancelledAt,
+        record?.completedAt,
+        record?.deletedAt,
+        record?.createdAt,
+        record?.created_at
+      ];
+      const times = candidates
+        .map(value => Date.parse(value || ""))
+        .filter(value => Number.isFinite(value));
+      return times.length ? Math.max(...times) : 0;
+    }
+
+    function shouldUseBooking(candidate, existing) {
+      if (!existing) return true;
+      const candidateTime = amendmentTime(candidate);
+      const existingTime = amendmentTime(existing);
+      if (candidateTime !== existingTime) return candidateTime > existingTime;
+      return bookingRank(candidate) > bookingRank(existing);
     }
 
     function collectSlotsForDate(date) {
@@ -974,7 +1003,7 @@
         .forEach(booking => {
           const key = `${booking.date || ""}|${booking.time || ""}`;
           const existing = byTime.get(key);
-          if (!existing || bookingRank(booking) > bookingRank(existing)) byTime.set(key, booking);
+          if (shouldUseBooking(booking, existing)) byTime.set(key, booking);
         });
       return [...byTime.values()];
     }
@@ -1111,15 +1140,18 @@
 
     function incomePayForEntry(entry) {
       const meta = entryMeta(entry);
+      const type = String(meta.type || "").toLowerCase();
+      if (CANCELLED.includes(meta.status) || type === "cancelled") return 0;
       if (meta.status === "student_not_show") return 5;
-      if ((meta.type || "").toLowerCase() === "practical class") return 0;
+      if (type === "practical class") return 0;
       if (meta.status === "completed") return Number(meta.estimatedPay || 0);
       return 0;
     }
 
     function isPaidCompletedEntry(entry) {
       const meta = entryMeta(entry);
-      return meta.status === "completed" && (meta.type || "").toLowerCase() !== "practical class";
+      const type = String(meta.type || "").toLowerCase();
+      return meta.status === "completed" && !CANCELLED.includes(meta.status) && type !== "practical class" && type !== "cancelled";
     }
 
     function isNotShowEntry(entry) {
@@ -1130,6 +1162,31 @@
       return CANCELLED.includes(entryMeta(entry).status);
     }
 
+    function monthlyTeachingSummary(month, year) {
+      const from = localISO(new Date(year, month, 1));
+      const to = localISO(new Date(year, month + 1, 0));
+      const entries = timetableData ? classEntries(from, to) : [];
+      const completed = entries.filter(isPaidCompletedEntry);
+      const notShows = entries.filter(isNotShowEntry);
+      const cancelled = entries.filter(isCancelledEntry);
+      const teacherLeaveCount = entries.filter(entry => entryMeta(entry).status === "teacher_leave").length;
+      const lessonPay = completed.reduce((sum, entry) => sum + Number(entryMeta(entry).estimatedPay || 0), 0);
+      const notShowPay = notShows.length * 5;
+      return {
+        entries,
+        completed,
+        notShows,
+        cancelled,
+        completedCount: completed.length,
+        notShowCount: notShows.length,
+        cancelledCount: cancelled.length,
+        teacherLeaveCount,
+        lessonPay,
+        notShowPay,
+        incomeTotal: lessonPay + notShowPay
+      };
+    }
+
     function selectedClaimMonthKey() {
       return `${$("claimYearSelect").value}-${String(Number($("claimMonthSelect").value) + 1).padStart(2, "0")}`;
     }
@@ -1137,26 +1194,19 @@
     function claimAutomaticSummary() {
       const month = Number($("claimMonthSelect").value);
       const year = Number($("claimYearSelect").value);
-      const from = localISO(new Date(year, month, 1));
-      const to = localISO(new Date(year, month + 1, 0));
-      const entries = timetableData ? classEntries(from, to) : [];
-      const completed = entries.filter(isPaidCompletedEntry);
-      const notShows = entries.filter(entry => entryMeta(entry).status === "student_not_show");
-      const teacherLeaveCount = entries.filter(entry => entryMeta(entry).status === "teacher_leave").length;
-      const lessonPay = completed.reduce((sum, entry) => sum + Number(entryMeta(entry).estimatedPay || 0), 0);
-      const notShowPay = notShows.length * 5;
+      const summary = monthlyTeachingSummary(month, year);
       let attendancePay = 0;
-      if (!teacherLeaveCount) {
-        if (completed.length > 130) attendancePay = 100;
-        else if (completed.length > 80) attendancePay = 80;
-        else if (completed.length > 50) attendancePay = 50;
+      if (!summary.teacherLeaveCount) {
+        if (summary.completedCount > 130) attendancePay = 100;
+        else if (summary.completedCount > 80) attendancePay = 80;
+        else if (summary.completedCount > 50) attendancePay = 50;
       }
       return {
-        completedCount: completed.length,
-        notShowCount: notShows.length,
-        teacherLeaveCount,
-        lessonPay,
-        notShowPay,
+        completedCount: summary.completedCount,
+        notShowCount: summary.notShowCount,
+        teacherLeaveCount: summary.teacherLeaveCount,
+        lessonPay: summary.lessonPay,
+        notShowPay: summary.notShowPay,
         attendancePay
       };
     }
@@ -1521,10 +1571,11 @@
         ];
       });
       $("monthList").innerHTML = rows.length ? tableHtml(["No.", "Date", "Time", "Student", "Subject", "Type", "Status", "Remark"], rows) + pagerHtml("monthList", monthListPage, entries.length) : `<div class="subtle" style="padding:12px;">No classes in selected month.</div>`;
-      $("metricTotal").textContent = entries.length;
-      $("metricCompleted").textContent = entries.filter(isPaidCompletedEntry).length;
-      $("metricNotShow").textContent = entries.filter(isNotShowEntry).length;
-      $("metricCancelled").textContent = entries.filter(isCancelledEntry).length;
+      const summary = monthlyTeachingSummary(month, year);
+      $("metricTotal").textContent = summary.entries.length;
+      $("metricCompleted").textContent = summary.completedCount;
+      $("metricNotShow").textContent = summary.notShowCount;
+      $("metricCancelled").textContent = summary.cancelledCount;
     }
 
     function renderLeaveList() {
@@ -1551,11 +1602,10 @@
     }
 
     function renderIncomeHistory() {
-      const { from, month, year } = selectedMonthRange();
-      const monthEnd = localISO(new Date(year, month + 1, 0));
-      const entries = classEntries(from, monthEnd).filter(entry => incomePayForEntry(entry) > 0);
-      const total = entries.reduce((sum, entry) => sum + incomePayForEntry(entry), 0);
-      $("metricIncome").textContent = money(total);
+      const { month, year } = selectedMonthRange();
+      const summary = monthlyTeachingSummary(month, year);
+      const entries = summary.entries.filter(entry => incomePayForEntry(entry) > 0);
+      $("metricIncome").textContent = money(summary.incomeTotal);
       incomeListPage = clampPage(incomeListPage, entries.length);
       const incomePageData = pageSlice(entries, incomeListPage);
       incomeListPage = incomePageData.page;
