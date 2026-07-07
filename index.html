@@ -199,6 +199,10 @@
     .lead-table select, .lead-table input { min-height: 32px; padding: 6px 8px; font-size: 12px; }
     .lead-table textarea { min-height: 64px; min-width: 190px; padding: 6px 8px; font-size: 12px; }
     .lead-table td { vertical-align: top; }
+    .lead-table th:nth-child(3), .lead-table td:nth-child(3) { min-width: 260px; }
+    .lead-table td:nth-child(3) input { min-width: 230px; }
+    .settings-nav { margin-top: 22px; opacity: .55; font-size: 18px; text-align: center; }
+    .settings-nav.active { opacity: 1; }
     .column-filter { position: relative; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
     .column-filter-toggle { width: 24px; height: 24px; border-radius: 6px; background: #edf4f0; color: var(--ink); padding: 0; font-weight: 900; }
     .column-filter-toggle.active { background: var(--mint); }
@@ -333,17 +337,16 @@
       </div>
       <button class="nav-btn active" data-tab="schedule" data-short="Week">Weekly Timetable</button>
       <button class="nav-btn" data-tab="teacherOverview" data-short="Tutor">Teacher Overview</button>
-      <button class="nav-btn" data-tab="crm" data-short="CRM">CRM Leads</button>
-      <button class="nav-btn" data-tab="tutorCrm" data-short="TCRM">Tutor CRM</button>
-      <button class="nav-btn" data-tab="guidance" data-short="Guide">Guidance</button>
+      <button class="nav-btn" data-tab="replacements" data-short="Rep">Replacement Classes</button>
       <button class="nav-btn" data-tab="teachers" data-short="Teach">Teachers</button>
       <button class="nav-btn" data-tab="students" data-short="Stu">Students</button>
       <button class="nav-btn" data-tab="teacherStudentRecords" data-short="TSR">Teacher Student Records</button>
-      <button class="nav-btn" data-tab="reports" data-short="Rpt">Reports</button>
-      <button class="nav-btn" data-tab="replacements" data-short="Rep">Replacement Classes</button>
+      <button class="nav-btn" data-tab="crm" data-short="CRM">CRM Leads</button>
+      <button class="nav-btn" data-tab="tutorCrm" data-short="TCRM">Tutor CRM</button>
       <button class="nav-btn" data-tab="publicHoliday" data-short="PH">Public Holiday</button>
+      <button class="nav-btn" data-tab="reports" data-short="Rpt">Reports</button>
       <button class="nav-btn" data-tab="activity" data-short="Log">Activity Log</button>
-      <button class="nav-btn" data-tab="settings" data-short="Sync">Sync Settings</button>
+      <button class="nav-btn settings-nav" data-tab="settings" data-short="Set" data-title="Sync Settings" title="Sync Settings" aria-label="Sync Settings">&#9881;</button>
     </aside>
 
     <main>
@@ -1051,28 +1054,16 @@
           </div>
           <hr style="border:0;border-top:1px solid var(--line);margin:18px 0;">
           <h2>Start From Zero</h2>
-          <div class="subtle">Clears all operational records. Revenue, public holidays, activity logs, reply templates, and sync settings are preserved. Google Sheet importing will be disabled.</div>
+          <div class="subtle">Clears all operational records. Revenue, public holidays, activity logs, reply templates, and Neon settings are preserved.</div>
           <div class="row" style="margin-top:14px;"><button class="btn danger" id="resetOperationalDataBtn">Start From Zero</button></div>
-          <hr style="border:0;border-top:1px solid var(--line);margin:18px 0;">
-          <h2>Google Apps Script Import / Backup</h2>
-          <div class="subtle">Use this only for old Google Sheet import or emergency backup. Daily edits should save to Neon.</div>
-          <div class="grid two" style="margin-top:14px;">
+          <div class="hide" aria-hidden="true">
             <div><label>Web App URL</label><input id="scriptUrl" placeholder="https://script.google.com/macros/s/.../exec"></div>
             <div><label>API Key</label><input id="apiKey" placeholder="Any private key you set in Code.gs"></div>
-          </div>
-          <div class="row" style="margin-top:14px;">
             <button class="btn mint" id="pullBtn">Pull From Sheet</button>
             <button class="btn ghost" id="pushBtn">Push To Sheet</button>
             <button class="btn danger" id="resetDemoBtn">Clear Browser Data</button>
-          </div>
-          <hr style="border:0;border-top:1px solid var(--line);margin:18px 0;">
-          <h2>CRM Leads Sync</h2>
-          <div class="subtle">Use a separate Google Sheet and the CRM Apps Script for parent leads.</div>
-          <div class="grid two" style="margin-top:14px;">
             <div><label>CRM Web App URL</label><input id="crmScriptUrl" placeholder="https://script.google.com/macros/s/.../exec"></div>
             <div><label>CRM API Key</label><input id="crmApiKey" placeholder="Private key for CRM sheet"></div>
-          </div>
-          <div class="row" style="margin-top:14px;">
             <button class="btn mint" id="crmPullBtn">Pull CRM Leads</button>
             <button class="btn ghost" id="crmPushBtn">Push CRM Leads</button>
           </div>
@@ -9065,7 +9056,7 @@
         }
         document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b === nav));
         document.querySelectorAll(".tab").forEach(t => t.classList.toggle("hide", t.id !== nav.dataset.tab));
-        $("pageTitle").textContent = nav.textContent;
+        $("pageTitle").textContent = nav.dataset.title || nav.textContent;
         renderSectionNav(nav.dataset.tab);
         updateLayoutToggle();
       }
