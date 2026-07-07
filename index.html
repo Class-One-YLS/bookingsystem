@@ -209,6 +209,12 @@
     .column-filter-panel { display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 12; min-width: 190px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; box-shadow: 0 12px 28px rgba(23,33,43,.18); }
     .column-filter.open .column-filter-panel { display: block; }
     .column-filter-panel input { width: 100%; }
+    .compact-search-shell { display: inline-flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; width: auto; max-width: 100%; }
+    .compact-search-toggle.active { background: var(--mint); }
+    .compact-search-panel { min-width: min(320px, 100%); max-width: 100%; }
+    .compact-search-panel > div { margin: 0 !important; max-width: none !important; }
+    .compact-search-panel label { margin-bottom: 5px; }
+    .compact-search-panel input { min-width: min(260px, 100%); }
     .table-column-hidden { display: none !important; }
     .table-column-controls { position: sticky; left: 0; z-index: 4; width: max-content; max-width: 100%; padding: 8px; }
     .table-column-controls details { position: relative; }
@@ -5257,36 +5263,93 @@
       });
     }
 
-    function dropStudentFromSystem(student) {
-      if (!student) return;
+    function normalizeDropDate(value) {
+      const candidate = dateOnly(value);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(candidate)) return "";
+      const parsed = parseISODate(candidate);
+      return localISO(parsed) === candidate ? candidate : "";
+    }
+
+    function promptStudentLastLessonDate(student) {
+      const suggested = normalizeDropDate(student?.dropDate || student?.lastLessonDate) || todayISO();
+      const input = prompt(`What is the student's last lesson date?\n\nStudent: ${student?.name || "Student"}\nUse YYYY-MM-DD format.`, suggested);
+      if (input === null) return "";
+      const dropDate = normalizeDropDate(input);
+      if (!dropDate) {
+        alert("Please enter a valid last lesson date in YYYY-MM-DD format.");
+        return promptStudentLastLessonDate(student);
+      }
+      return dropDate;
+    }
+
+    function bookingBelongsToStudent(booking, student, nameKey) {
+      return booking.studentId === student.id || (nameKey && studentNameKey(booking.studentName || "") === nameKey);
+    }
+
+    function slotBelongsToStudent(slot, student, previousIds, nameKey) {
+      const linkedById = slot.studentId === student.id || previousIds.has(slot.studentSlotId);
+      const linkedByName = nameKey && studentNameKey(slot.studentName || "") === nameKey && slot.locked;
+      return linkedById || linkedByName;
+    }
+
+    function capRecurringSlotAtDropDate(slot, dropDate, now) {
+      if (!slot) return slot;
+      if (!slot.endDate || slot.endDate > dropDate) slot.endDate = dropDate;
+      slot.dropDate = dropDate;
+      slot.updatedAt = now;
+      return slot;
+    }
+
+    function isProtectedCompletedHistory(booking) {
+      return ["completed", "student_not_show"].includes(booking.status);
+    }
+
+    function dropStudentFromSystem(student, lastLessonDate = "") {
+      if (!student) return false;
+      const dropDate = normalizeDropDate(lastLessonDate) || promptStudentLastLessonDate(student);
+      if (!dropDate) return false;
       const before = studentLogSummary(student);
       const previousSlots = getStudentRegularSlots(student).map(slot => ({ ...slot }));
       const previousIds = new Set(previousSlots.map(slot => slot.id).filter(Boolean));
       const nameKey = studentNameKey(student.name || "");
-      const today = todayISO();
       const now = new Date().toISOString();
+
+      student.regularSlots = previousSlots.map(slot => capRecurringSlotAtDropDate({ ...slot }, dropDate, now));
+      student.dropDate = dropDate;
+      student.lastLessonDate = dropDate;
+      student.registeredStatus = "drop";
+      student.status = "archived";
+      student.archived = true;
+      student.updatedAt = now;
+
       (state.teachers || []).forEach(teacher => {
-        ["regularSlots", "overrideSlots"].forEach(listName => {
-          teacher[listName] = (teacher[listName] || []).filter(slot => {
-            const linkedById = slot.studentId === student.id || previousIds.has(slot.studentSlotId);
-            const linkedByName = nameKey && studentNameKey(slot.studentName || "") === nameKey && slot.locked;
-            return !(linkedById || linkedByName);
-          });
+        teacher.regularSlots = (teacher.regularSlots || []).map(slot => {
+          if (!slotBelongsToStudent(slot, student, previousIds, nameKey)) return slot;
+          return capRecurringSlotAtDropDate(slot, dropDate, now);
+        });
+        teacher.overrideSlots = (teacher.overrideSlots || []).filter(slot => {
+          if (!slotBelongsToStudent(slot, student, previousIds, nameKey)) return true;
+          const slotDate = dateOnly(slot.date || slot.startDate || "");
+          if (slotDate && slotDate > dropDate) return false;
+          if (!slotDate) capRecurringSlotAtDropDate(slot, dropDate, now);
+          return true;
         });
       });
       (state.bookings || []).forEach(booking => {
-        const linked = booking.studentId === student.id || (nameKey && studentNameKey(booking.studentName || "") === nameKey);
-        if (!linked) return;
-        if (!slotHasPassed(booking.date, booking.time) && !["completed", "student_not_show"].includes(booking.status)) {
-          booking.archived = true;
-          booking.remark = [booking.remark, "Student dropped; future class removed from active timetable."].filter(Boolean).join("\n");
-          booking.updatedAt = now;
-        }
+        if (!bookingBelongsToStudent(booking, student, nameKey)) return;
+        const bookingDate = dateOnly(booking.date);
+        if (!bookingDate || bookingDate <= dropDate || isProtectedCompletedHistory(booking)) return;
+        booking.status = "deleted";
+        booking.archived = true;
+        booking.deletedAt = now;
+        booking.dropDate = dropDate;
+        booking.remark = [booking.remark, `Student dropped after ${formatDateFromAny(dropDate)}; future class deleted from active timetable.`].filter(Boolean).join("\n");
+        booking.updatedAt = now;
       });
       state.teacherStudentNotes = (state.teacherStudentNotes || []).filter(note => note.studentId !== student.id && (!nameKey || studentNameKey(note.studentName || "") !== nameKey));
       state.replacementCredits = (state.replacementCredits || []).filter(credit => credit.studentId !== student.id && (!nameKey || studentNameKey(credit.studentName || "") !== nameKey));
-      state.students = (state.students || []).filter(item => item.id !== student.id);
-      logAction("Student Dropped And Removed", student.name, before, "Removed from active student system", "Previous booking records remain as timetable history.");
+      logAction("Student Dropped And Removed", student.name, before, studentLogSummary(student), `Last lesson date: ${formatDateFromAny(dropDate)}. Future linked classes deleted; completed history remains.`);
+      return true;
     }
 
     function selectedStudentRegularDays() {
@@ -7493,7 +7556,59 @@
     function scrollToListStart(id) {
       const target = $(id);
       if (!target) return;
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      const scroller = target.matches(".table-wrap, .schedule-wrap, .teacher-timetable-wrap, .timetable-wrap")
+        ? target
+        : target.querySelector(".table-wrap, .schedule-wrap, .teacher-timetable-wrap, .timetable-wrap");
+      const node = scroller || target;
+      if (typeof node.scrollTo === "function") node.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+      else {
+        node.scrollTop = 0;
+        node.scrollLeft = 0;
+      }
+    }
+
+    function setupCompactSearch(inputId, label = "Search") {
+      const input = $(inputId);
+      if (!input || input.dataset.compactSearchReady) return;
+      const field = input.closest("div");
+      if (!field || field.classList.contains("compact-search-panel")) return;
+      const shell = document.createElement("div");
+      shell.className = "compact-search-shell";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn ghost small icon-only compact-search-toggle";
+      button.title = label;
+      button.setAttribute("aria-label", label);
+      button.innerHTML = "&#128269;";
+      const panel = document.createElement("div");
+      panel.className = "compact-search-panel hide";
+      field.insertAdjacentElement("beforebegin", shell);
+      shell.append(button, panel);
+      panel.append(field);
+      input.dataset.compactSearchReady = "1";
+      const syncActive = () => button.classList.toggle("active", Boolean(input.value.trim()));
+      button.addEventListener("click", () => {
+        panel.classList.toggle("hide");
+        if (!panel.classList.contains("hide")) setTimeout(() => input.focus(), 0);
+      });
+      input.addEventListener("input", syncActive);
+      syncActive();
+      if (input.value.trim()) panel.classList.remove("hide");
+    }
+
+    function setupCompactSearchFields() {
+      [
+        ["leadSearch", "Search CRM leads"],
+        ["tutorLeadSearch", "Search tutor leads"],
+        ["teacherCardSearch", "Search teachers"],
+        ["teacherDirectorySearch", "Search teacher directory"],
+        ["studentSearch", "Search students"],
+        ["registeredStudentSearch", "Search registered students"],
+        ["teacherStudentRecordSearch", "Search teacher student records"],
+        ["replacementSearch", "Search replacement classes"],
+        ["activitySearch", "Search activity log"],
+        ["reserveRegularSearch", "Search students and leads"]
+      ].forEach(([inputId, label]) => setupCompactSearch(inputId, label));
     }
 
     function downloadCsv(filename, headers, rows) {
@@ -9666,15 +9781,19 @@
         if (!student || !["registeredStatus", "registeredRemark"].includes(field)) return;
         const before = studentLogSummary(student);
         if (field === "registeredStatus" && registeredStudent.value === "drop") {
-          if (!confirm(`Drop ${student.name} and remove this student from the active system? Previous booked class history will remain as timetable records.`)) {
+          const lastLessonDate = promptStudentLastLessonDate(student);
+          if (!lastLessonDate || !confirm(`Drop ${student.name} after ${formatDateFromAny(lastLessonDate)}?\n\nFuture regular classes after this date will stop. Completed lesson history will remain.`)) {
             renderRegisteredStudents();
             return;
           }
-          dropStudentFromSystem(student);
+          if (!dropStudentFromSystem(student, lastLessonDate)) {
+            renderRegisteredStudents();
+            return;
+          }
           save(false);
           renderAll();
           scheduleAutoPush();
-          setStatus(`${student.name} dropped and removed from active student lists.`);
+          setStatus(`${student.name} dropped from ${formatDateFromAny(lastLessonDate)}. Future recurring classes stopped.`);
           return;
         }
         student[field] = registeredStudent.value;
@@ -9853,13 +9972,14 @@
       const before = studentLogSummary(existing);
       const previousRegularSlots = getStudentRegularSlots(existing).map(slot => ({ ...slot }));
       if (existing.id && $("studentRegisteredStatus").value === "drop") {
-        if (!confirm(`Drop ${existing.name || name} and remove this student from the active system? Previous booked class history will remain as timetable records.`)) return;
-        dropStudentFromSystem(existing);
+        const lastLessonDate = promptStudentLastLessonDate(existing);
+        if (!lastLessonDate || !confirm(`Drop ${existing.name || name} after ${formatDateFromAny(lastLessonDate)}?\n\nFuture regular classes after this date will stop. Completed lesson history will remain.`)) return;
+        if (!dropStudentFromSystem(existing, lastLessonDate)) return;
         $("studentProfileModal").classList.add("hide");
         save(false);
         renderAll();
         await autoPushIfConfigured("Student dropped and removed.");
-        setStatus(`${existing.name || name} dropped and removed from active student lists.`);
+        setStatus(`${existing.name || name} dropped from ${formatDateFromAny(lastLessonDate)}. Future recurring classes stopped.`);
         return;
       }
       Object.assign(existing, { name, subjects, subject: subjects[0] || "", package: packageName, packageAmount: Number($("studentPackageAmount").value || 0), packageClasses: Number($("studentPackageClasses").value || 0), packageNotes: $("studentPackageNotes").value.trim(), registeredStatus: $("studentRegisteredStatus").value || "active", registeredRemark: $("studentRegisteredRemark").value.trim(), status: $("studentStatus").value || "registered", regularSlots: studentRegularSlotsDraft.map(slot => ({ ...slot })), updatedAt: new Date().toISOString() });
@@ -10746,10 +10866,12 @@
         hydrateSelects();
         setupMonths();
         renderAll();
+        setupCompactSearchFields();
         withTimeout(hydratePersistentState(), 3000, "Browser database took too long.")
           .then(() => {
             hydrateSelects();
             renderAll();
+            setupCompactSearchFields();
             setTimeout(() => autoPullOnStart(), 250);
           })
           .catch(err => {
