@@ -302,6 +302,18 @@
       </div>
     </div>
   </div>
+  <div id="teacherOverviewRemarkFormModal" class="modal hide">
+    <div class="modal-card" style="max-width:680px;">
+      <div class="row spread"><h2 id="teacherOverviewRemarkFormTitle">Add Teacher Remark</h2><button class="btn ghost small" id="closeTeacherOverviewRemarkFormBtn">Close</button></div>
+      <div class="subtle" id="teacherOverviewRemarkFormTeacher"></div>
+      <input id="teacherOverviewRemarkEditId" type="hidden">
+      <div style="margin-top:14px;"><label for="teacherOverviewRemarkInput">Remark</label><textarea id="teacherOverviewRemarkInput" placeholder="Add an admin remark for this teacher"></textarea></div>
+      <div class="row" style="margin-top:14px;">
+        <button class="btn mint" id="saveTeacherOverviewRemarkBtn">Save Remark</button>
+        <button class="btn ghost" id="cancelTeacherOverviewRemarkEditBtn">Cancel</button>
+      </div>
+    </div>
+  </div>
   <div class="app-shell">
     <aside>
       <button class="btn ghost side-toggle" id="sidebarToggle" title="Hide sidebar" aria-label="Hide sidebar">&lsaquo;</button>
@@ -372,15 +384,9 @@
         <div class="panel hide" id="teacherOverviewRemarkPanel">
           <div class="row spread">
             <div><h2>Teacher Remarks</h2><div class="subtle" id="teacherOverviewRemarkTeacher"></div></div>
+            <button class="btn mint small" id="openTeacherOverviewRemarkFormBtn" data-keep-label="true">Add Remark</button>
           </div>
-          <input id="teacherOverviewRemarkEditId" type="hidden">
-          <label for="teacherOverviewRemarkInput">Remark</label>
-          <textarea id="teacherOverviewRemarkInput" placeholder="Add an admin remark for this teacher"></textarea>
-          <div class="row" style="margin-top:10px;">
-            <button class="btn mint" id="saveTeacherOverviewRemarkBtn">Save Remark</button>
-            <button class="btn ghost hide" id="cancelTeacherOverviewRemarkEditBtn">Cancel Edit</button>
-          </div>
-          <div id="teacherOverviewActiveRemarks" class="list" style="margin-top:14px;"></div>
+          <div id="teacherOverviewActiveRemarks" class="list" style="margin-top:10px;"></div>
         </div>
         <div class="panel hide" id="teacherSlotEditPanel">
           <div class="row spread">
@@ -3322,8 +3328,22 @@
     function resetTeacherOverviewRemarkEditor() {
       $("teacherOverviewRemarkEditId").value = "";
       $("teacherOverviewRemarkInput").value = "";
-      $("cancelTeacherOverviewRemarkEditBtn").classList.add("hide");
+      $("teacherOverviewRemarkFormModal").classList.add("hide");
       setActionButtonLabel($("saveTeacherOverviewRemarkBtn"), "Save Remark");
+      $("teacherOverviewRemarkFormTitle").textContent = "Add Teacher Remark";
+      $("teacherOverviewRemarkFormTeacher").textContent = "";
+    }
+
+    function openTeacherOverviewRemarkForm(remark = null) {
+      const teacher = teacherById($("overviewTeacherFilter").value);
+      if (!teacher) return alert("Choose a teacher first.");
+      $("teacherOverviewRemarkFormTeacher").textContent = `${teacher.name} | Admin remarks for timetable planning and follow-up.`;
+      $("teacherOverviewRemarkEditId").value = remark?.id || "";
+      $("teacherOverviewRemarkInput").value = remark?.text || "";
+      $("teacherOverviewRemarkFormTitle").textContent = remark ? "Edit Teacher Remark" : "Add Teacher Remark";
+      setActionButtonLabel($("saveTeacherOverviewRemarkBtn"), remark ? "Update Remark" : "Save Remark");
+      $("teacherOverviewRemarkFormModal").classList.remove("hide");
+      setTimeout(() => $("teacherOverviewRemarkInput").focus(), 0);
     }
 
     function renderTeacherOverviewRemarks(teacher) {
@@ -3412,6 +3432,7 @@
         return;
       }
       pendingTeacherOverviewRemark = text;
+      $("teacherOverviewRemarkFormModal").classList.add("hide");
       $("teacherOverviewRemarkDecisionModal").classList.remove("hide");
     }
 
@@ -7349,7 +7370,7 @@
     function symbolizeActionButtons(root = document) {
       const buttons = root.matches?.("button") ? [root] : [...root.querySelectorAll?.("button") || []];
       buttons.forEach(button => {
-        if (button.dataset.symbolized || button.id === "sidebarToggle" || button.hasAttribute("data-column-filter-toggle")) return;
+        if (button.dataset.symbolized || button.id === "sidebarToggle" || button.hasAttribute("data-column-filter-toggle") || button.hasAttribute("data-keep-label")) return;
         const label = button.textContent.trim().replace(/\s+/g, " ");
         const symbol = actionSymbol(label);
         if (!symbol) return;
@@ -8798,11 +8819,7 @@
         const teacher = teacherById(teacherId);
         const remark = (teacher?.overviewRemarks || []).find(item => item.id === remarkId);
         if (!teacher || !remark) return alert("This remark is no longer available.");
-        $("teacherOverviewRemarkEditId").value = remark.id;
-        $("teacherOverviewRemarkInput").value = remark.text || "";
-        $("cancelTeacherOverviewRemarkEditBtn").classList.remove("hide");
-        setActionButtonLabel($("saveTeacherOverviewRemarkBtn"), "Update Remark");
-        $("teacherOverviewRemarkInput").focus();
+        openTeacherOverviewRemarkForm(remark);
       }
       const archiveOverviewRemark = e.target.closest("[data-archive-overview-remark]");
       if (archiveOverviewRemark) {
@@ -9952,6 +9969,8 @@
     $("toggleTeacherSlotEditBtn").onclick = () => setTeacherSlotEditMode(!teacherSlotEditMode);
     $("exitTeacherSlotEditBtn").onclick = () => setTeacherSlotEditMode(false);
     $("applyTeacherSlotEditBtn").onclick = applyTeacherSlotEdits;
+    $("openTeacherOverviewRemarkFormBtn").onclick = () => openTeacherOverviewRemarkForm();
+    $("closeTeacherOverviewRemarkFormBtn").onclick = resetTeacherOverviewRemarkEditor;
     $("saveTeacherOverviewRemarkBtn").onclick = requestTeacherOverviewRemarkSave;
     $("cancelTeacherOverviewRemarkEditBtn").onclick = resetTeacherOverviewRemarkEditor;
     $("keepTeacherOverviewRemarkBtn").onclick = () => addTeacherOverviewRemark(false);
@@ -9960,6 +9979,8 @@
       $(id).onclick = () => {
         pendingTeacherOverviewRemark = "";
         $("teacherOverviewRemarkDecisionModal").classList.add("hide");
+        $("teacherOverviewRemarkFormModal").classList.remove("hide");
+        setTimeout(() => $("teacherOverviewRemarkInput").focus(), 0);
       };
     });
     $("clearOverviewFiltersBtn").onclick = () => {
