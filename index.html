@@ -11923,6 +11923,7 @@
       } else {
         const recurrenceGroupId = period.mode === "temporary" ? uid("series") : "";
         period.dates.forEach(date => {
+          const now = new Date().toISOString();
           const passed = slotHasPassed(date, slot.time);
           const booking = {
             id: uid("booking"), ...slot, date, day: dayFromISO(date), studentId: student ? student.id : "", studentName,
@@ -11931,7 +11932,7 @@
             reusedCancelledBookingId: slot.reuseCancelledBookingId || "",
             recurrenceGroupId,
             recurrenceMode: period.mode, recurrenceStartDate: period.startDate, recurrenceEndDate: period.endDate,
-            openedAvailabilityRuleId: openedRule?.id || "", createdAt: new Date().toISOString()
+            openedAvailabilityRuleId: openedRule?.id || "", createdAt: now, updatedAt: now
           };
           const undoBefore = snapshotCollections({ bookings: [booking.id] });
           state.bookings.push(booking);

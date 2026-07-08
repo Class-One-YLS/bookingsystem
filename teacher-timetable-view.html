@@ -933,7 +933,9 @@
     }
 
     function bookingRank(booking) {
-      const status = booking.status || "booked";
+      const status = String(booking?.status || "booked").toLowerCase();
+      if (status === "deleted" || booking?.deleted === true) return -100;
+      if (booking?.archived === true) return -90;
       if (status === "booked" && booking.changedSlot) return 7;
       if (status === "booked") return 6;
       if (status === "completed") return 5;
@@ -966,13 +968,22 @@
       const candidateTime = amendmentTime(candidate);
       const existingTime = amendmentTime(existing);
       if (candidateTime !== existingTime) return candidateTime > existingTime;
-      return bookingRank(candidate) > bookingRank(existing);
+      const candidateRank = bookingRank(candidate);
+      const existingRank = bookingRank(existing);
+      if (candidateRank !== existingRank) return candidateRank > existingRank;
+      return String(candidate.id || "") > String(existing.id || "");
     }
 
     function visibleTeacherViewBooking(booking) {
-      if (!booking || booking.status === "deleted" || booking.deleted === true) return false;
+      const status = String(booking?.status || "booked").toLowerCase();
+      if (!booking || status === "deleted" || booking.deleted === true) return false;
+      if (booking.archived === true) return false;
       if ((booking.source || "") === "fixed_regular_snapshot" && booking.archived === true) return false;
       return true;
+    }
+
+    function bookingKey(booking) {
+      return `${booking.teacherId || timetableData?.teacher?.id || ""}|${booking.date || ""}|${booking.time || ""}`;
     }
 
     function collectSlotsForDate(date) {
@@ -1007,7 +1018,7 @@
       (timetableData?.bookings || [])
         .filter(visibleTeacherViewBooking)
         .forEach(booking => {
-          const key = `${booking.date || ""}|${booking.time || ""}`;
+          const key = bookingKey(booking);
           const existing = byTime.get(key);
           if (shouldUseBooking(booking, existing)) byTime.set(key, booking);
         });
