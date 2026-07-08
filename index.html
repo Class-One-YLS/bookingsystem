@@ -28,6 +28,8 @@
     }
     button, input, select, textarea { font: inherit; }
     button { cursor: pointer; border: 0; }
+    body.auth-locked .app-shell { display: none; }
+    body.auth-locked { background: #f7faf8; }
     .app-shell { width: 100%; max-width: 100vw; min-width: 0; min-height: 100vh; display: grid; grid-template-columns: 260px minmax(0, 1fr); background: linear-gradient(to right, var(--ink) 0 260px, #f7faf8 260px 100%); transition: grid-template-columns .2s ease; }
     .app-shell.sidebar-collapsed { grid-template-columns: 54px minmax(0, 1fr); background: linear-gradient(to right, var(--ink) 0 54px, #f7faf8 54px 100%); }
     .tab.layout-stacked .grid.two,
@@ -98,6 +100,11 @@
     .check-grid label { display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); color: var(--ink); font-size: 12px; text-transform: none; }
     .check-grid input { width: auto; min-height: 0; }
     .permission-denied { border-color: #e5484d; background: #fff5f5; color: #9f1239; }
+    body.auth-locked #loginModal { display: grid !important; }
+    #loginModal.auth-screen { position: fixed; inset: 0; display: grid; place-items: center; background: linear-gradient(135deg, #f7faf8 0%, #eaf7f1 100%); z-index: 9999; }
+    #loginModal.auth-screen .modal-card { width: min(520px, calc(100vw - 32px)); box-shadow: 0 22px 70px rgba(23,33,43,.16); }
+    .password-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+    .password-field input { min-width: 0; }
     #overviewTeacherLinkActions { justify-content: flex-end; }
     #overviewTeacherLinkActions .btn { min-height: 36px; padding: 0 12px; flex: 0 0 auto; width: auto; }
     #overviewTeacherLinkActions a.btn, #overviewTeacherLinkActions a.btn:visited { color: var(--ink); text-decoration: none; }
@@ -300,7 +307,7 @@
     }
   </style>
 </head>
-<body>
+<body class="auth-locked">
   <div id="toast" class="toast"></div>
   <div id="actionPopup" class="modal hide">
     <div class="modal-card" style="max-width:560px;">
@@ -338,17 +345,18 @@
       </div>
     </div>
   </div>
-  <div id="loginModal" class="modal hide">
+  <div id="loginModal" class="modal auth-screen">
     <div class="modal-card" style="max-width:520px;">
-      <div class="row spread"><h2>User Sign In</h2><button class="btn ghost small" id="closeLoginBtn">Close</button></div>
+      <div class="row spread"><h2>User Sign In</h2><button class="btn ghost small hide" id="closeLoginBtn">Close</button></div>
       <div class="subtle">Sign in before saving changes to Neon. Default first master admin: master@classone.local</div>
       <div class="grid one" style="margin-top:14px;">
-        <div><label>Email</label><input id="loginEmail" type="email" placeholder="master@classone.local"></div>
-        <div><label>Password</label><input id="loginPassword" type="password" placeholder="Password"></div>
+        <div><label>Email</label><input id="loginEmail" type="email" placeholder="master@classone.local" value="master@classone.local"></div>
+        <div><label>Password</label><div class="password-field"><input id="loginPassword" type="password" placeholder="Password"><button class="btn ghost icon-only" id="toggleLoginPasswordBtn" type="button" title="Show password" aria-label="Show password">&#128065;</button></div></div>
       </div>
+      <div class="subtle hide" id="loginMessage" style="margin-top:10px;"></div>
       <div class="row" style="margin-top:14px;">
         <button class="btn mint" id="confirmLoginBtn">Sign In</button>
-        <button class="btn ghost" id="signOutBtn">Sign Out</button>
+        <button class="btn ghost hide" id="signOutBtn">Sign Out</button>
       </div>
     </div>
   </div>
@@ -1738,6 +1746,7 @@
     ];
     const CURRENT_USER_KEY = "classOneCurrentUserId";
     const SESSION_TOKEN_KEY = "classOneUserSessionToken";
+    const SESSION_USER_KEY = "classOneUserSessionUser";
     const state = {
       teachers: [],
       students: [],
@@ -1849,6 +1858,53 @@
 
     function sessionToken() {
       return safeStorageGet(SESSION_TOKEN_KEY);
+    }
+
+    function sessionUser() {
+      try { return JSON.parse(safeStorageGet(SESSION_USER_KEY) || "null"); } catch (err) { return null; }
+    }
+
+    function sessionPayload() {
+      const token = sessionToken();
+      const payload = token.split(".")[0];
+      if (!payload) return null;
+      try {
+        const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+        return JSON.parse(atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=")));
+      } catch (err) {
+        return null;
+      }
+    }
+
+    function isAuthenticated() {
+      const payload = sessionPayload();
+      return Boolean(payload && Number(payload.exp || 0) > Date.now());
+    }
+
+    function setLoginMessage(message = "", type = "error") {
+      if (!$("loginMessage")) return;
+      $("loginMessage").textContent = message;
+      $("loginMessage").classList.toggle("hide", !message);
+      $("loginMessage").style.color = type === "error" ? "#b42318" : "var(--muted)";
+      $("loginMessage").style.fontWeight = message ? "800" : "";
+    }
+
+    function renderAuthState() {
+      const authenticated = isAuthenticated();
+      if (!authenticated && sessionToken()) {
+        safeStorageSet(SESSION_TOKEN_KEY, "");
+        safeStorageSet(SESSION_USER_KEY, "");
+      }
+      document.body.classList.toggle("auth-locked", !authenticated);
+      $("loginModal")?.classList.toggle("hide", authenticated);
+      $("loginModal")?.classList.toggle("auth-screen", !authenticated);
+      $("closeLoginBtn")?.classList.toggle("hide", !authenticated);
+      $("signOutBtn")?.classList.toggle("hide", !authenticated);
+      if ($("loginBtn")) {
+        const user = sessionUser() || currentUser();
+        $("loginBtn").textContent = authenticated ? `${user?.name || user?.email || "Signed In"} | Sign Out` : "Sign In";
+      }
+      if (!authenticated && $("loginEmail") && !$("loginEmail").value) $("loginEmail").value = "master@classone.local";
     }
 
     function effectiveAllowedTabs(user = currentUser()) {
@@ -8051,6 +8107,7 @@
     }
 
     function renderAccessControls() {
+      renderAuthState();
       const user = currentUser();
       document.querySelectorAll(".nav-btn[data-tab]").forEach(button => {
         const visible = hasTabAccess(button.dataset.tab, user);
@@ -8062,7 +8119,10 @@
         document.querySelector(`.nav-btn[data-tab="${fallback}"]`)?.click();
       }
       document.body.classList.toggle("viewer-mode", !hasActionPermission("edit", user));
-      if ($("loginBtn")) $("loginBtn").textContent = sessionToken() ? `Signed In: ${user?.name || user?.email || "User"}` : "Sign In";
+      if ($("loginBtn")) {
+        const signedUser = sessionUser() || user;
+        $("loginBtn").textContent = sessionToken() ? `${signedUser?.name || signedUser?.email || "Signed In"} | Sign Out` : "Sign In";
+      }
     }
 
     function selectUserForEdit(id) {
@@ -9007,24 +9067,36 @@
       const email = $("loginEmail").value.trim();
       const password = $("loginPassword").value;
       if (!email) return alert("Fill email first.");
-      const data = await fetchNeonJson("/api/session", {
-        method: "POST",
-        body: JSON.stringify({ key: neonStateKey(), email, password })
-      }, "User sign in", SYNC_SAVE_TIMEOUT_MS);
+      setLoginMessage("Signing in...", "info");
+      let data;
+      try {
+        data = await fetchNeonJson("/api/session", {
+          method: "POST",
+          body: JSON.stringify({ key: neonStateKey(), email, password })
+        }, "User sign in", SYNC_SAVE_TIMEOUT_MS);
+      } catch (error) {
+        setLoginMessage("Invalid email or password. Please check your login details.");
+        throw new Error("Invalid email or password. Please check your login details.");
+      }
       safeStorageSet(SESSION_TOKEN_KEY, data.token || "");
+      safeStorageSet(SESSION_USER_KEY, JSON.stringify(data.user || { email }));
       const user = (state.users || []).find(item => String(item.email || "").toLowerCase() === email.toLowerCase());
       if (user) safeStorageSet(CURRENT_USER_KEY, user.id);
       $("loginPassword").value = "";
-      $("loginModal").classList.add("hide");
+      setLoginMessage("");
+      renderAuthState();
       renderAll();
       setStatus(`Signed in as ${data.user?.name || email}.`);
     }
 
     function signOutUser() {
       safeStorageSet(SESSION_TOKEN_KEY, "");
-      $("loginModal").classList.add("hide");
+      safeStorageSet(SESSION_USER_KEY, "");
+      $("loginPassword").value = "";
+      setLoginMessage("");
+      renderAuthState();
       renderAll();
-      setStatus("Signed out. Viewing is still available, but saving requires sign in.");
+      setStatus("Signed out. Please sign in to access the system.");
     }
 
     async function neonPull(logManual = false) {
@@ -11664,11 +11736,24 @@
     $("sidebarToggle").onclick = () => setSidebarCollapsed(!document.querySelector(".app-shell").classList.contains("sidebar-collapsed"));
     $("layoutToggleBtn").onclick = () => setStackedLayout(!document.getElementById(activeTabId())?.classList.contains("layout-stacked"));
     $("loginBtn").onclick = () => {
+      if (isAuthenticated()) return signOutUser();
       const user = currentUser();
       $("loginEmail").value = user?.email || "";
+      setLoginMessage("");
       $("loginModal").classList.remove("hide");
     };
-    $("closeLoginBtn").onclick = () => $("loginModal").classList.add("hide");
+    $("closeLoginBtn").onclick = () => {
+      if (!isAuthenticated()) return;
+      $("loginModal").classList.add("hide");
+    };
+    $("toggleLoginPasswordBtn").onclick = () => {
+      const input = $("loginPassword");
+      const showing = input.type === "text";
+      input.type = showing ? "password" : "text";
+      $("toggleLoginPasswordBtn").innerHTML = showing ? "&#128065;" : "Hide";
+      $("toggleLoginPasswordBtn").setAttribute("aria-label", showing ? "Show password" : "Hide password");
+      $("toggleLoginPasswordBtn").title = showing ? "Show password" : "Hide password";
+    };
     $("confirmLoginBtn").onclick = () => animateClick($("confirmLoginBtn"), signInUser).catch(err => {
       setStatus(`Sign in failed: ${err.message}`, "error");
       alert(err.message);
