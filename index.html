@@ -101,8 +101,360 @@
     .check-grid input { width: auto; min-height: 0; }
     .permission-denied { border-color: #e5484d; background: #fff5f5; color: #9f1239; }
     body.auth-locked #loginModal { display: grid !important; }
-    #loginModal.auth-screen { position: fixed; inset: 0; display: grid; place-items: center; background: linear-gradient(135deg, #f7faf8 0%, #eaf7f1 100%); z-index: 9999; }
-    #loginModal.auth-screen .modal-card { width: min(520px, calc(100vw - 32px)); box-shadow: 0 22px 70px rgba(23,33,43,.16); }
+    body.auth-locked { background: #F7FFFC; }
+    #loginModal.auth-screen {
+      position: fixed;
+      inset: 0;
+      display: block;
+      overflow: auto;
+      background:
+        radial-gradient(circle at 12% 18%, rgba(49,196,141,.14) 0 110px, transparent 112px),
+        radial-gradient(circle at 88% 78%, rgba(49,196,141,.12) 0 150px, transparent 152px),
+        linear-gradient(135deg, #F7FFFC 0%, #EAFBF4 100%);
+      z-index: 9999;
+      color: #2D3748;
+      animation: loginPageFade .32s ease both;
+    }
+    #loginModal.auth-screen::before,
+    #loginModal.auth-screen::after {
+      content: "";
+      position: fixed;
+      pointer-events: none;
+      opacity: .5;
+      z-index: 0;
+    }
+    #loginModal.auth-screen::before {
+      width: 280px;
+      height: 280px;
+      right: 9vw;
+      top: 7vh;
+      border-radius: 42% 58% 54% 46%;
+      background: rgba(49,196,141,.09);
+      filter: blur(.2px);
+    }
+    #loginModal.auth-screen::after {
+      inset: 0;
+      background-image:
+        radial-gradient(circle, rgba(49,196,141,.28) 1px, transparent 1.8px),
+        radial-gradient(circle, rgba(45,55,72,.12) 1px, transparent 1.8px);
+      background-size: 74px 74px, 118px 118px;
+      background-position: 18px 24px, 52px 66px;
+    }
+    .login-shell {
+      position: relative;
+      z-index: 1;
+      min-height: 100vh;
+      width: min(1180px, calc(100vw - 48px));
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(360px, .85fr);
+      gap: clamp(32px, 6vw, 76px);
+      align-items: center;
+      padding: clamp(28px, 6vh, 64px) 0;
+    }
+    .login-left {
+      min-width: 0;
+      display: grid;
+      justify-items: center;
+      align-content: center;
+      gap: clamp(22px, 4vh, 34px);
+      text-align: center;
+    }
+    .login-copy { max-width: 560px; }
+    .login-greeting {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 36px;
+      padding: 0 14px;
+      border: 1px solid #D8F2E7;
+      border-radius: 999px;
+      background: rgba(255,255,255,.74);
+      color: #31C48D;
+      font-size: 14px;
+      font-weight: 900;
+      box-shadow: 0 10px 26px rgba(49,196,141,.08);
+      margin-bottom: 18px;
+    }
+    .login-title {
+      color: #2D3748;
+      font-size: clamp(42px, 6vw, 72px);
+      line-height: .95;
+      font-weight: 950;
+      letter-spacing: 0;
+      margin: 0;
+    }
+    .login-lead {
+      margin: 22px auto 0;
+      color: #718096;
+      font-size: clamp(18px, 2vw, 24px);
+      line-height: 1.35;
+      max-width: 560px;
+      font-weight: 700;
+    }
+    .login-slogan-en {
+      margin: 26px 0 4px;
+      color: #2D3748;
+      font-size: clamp(18px, 1.6vw, 22px);
+      font-weight: 900;
+    }
+    .login-slogan-zh {
+      margin: 0;
+      color: #31C48D;
+      font-size: clamp(22px, 2.2vw, 30px);
+      font-weight: 950;
+      letter-spacing: 0;
+    }
+    .login-mascot-wrap {
+      position: relative;
+      width: min(360px, 56vw);
+      display: grid;
+      place-items: center;
+      animation: loginMascotFloat 4s ease-in-out infinite;
+    }
+    .login-mascot-wrap::after {
+      content: "";
+      width: 58%;
+      height: 22px;
+      border-radius: 999px;
+      background: rgba(45,55,72,.12);
+      filter: blur(12px);
+      transform: translateY(-5px);
+      animation: loginShadowFloat 4s ease-in-out infinite;
+    }
+    .login-mascot {
+      width: min(340px, 56vw);
+      height: auto;
+      object-fit: contain;
+      display: block;
+      mix-blend-mode: multiply;
+      filter: drop-shadow(0 28px 38px rgba(45,55,72,.13));
+    }
+    .login-sparkle {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #31C48D;
+      opacity: .52;
+      animation: loginSparkle 3.8s ease-in-out infinite;
+    }
+    .login-sparkle.one { top: 16%; left: 4%; }
+    .login-sparkle.two { right: 9%; top: 28%; animation-delay: .8s; }
+    .login-sparkle.three { left: 16%; bottom: 26%; width: 5px; height: 5px; animation-delay: 1.45s; }
+    .login-card-wrap {
+      display: grid;
+      justify-items: center;
+      gap: 18px;
+      min-width: 0;
+    }
+    #loginModal.auth-screen .modal-card.login-card {
+      width: min(450px, 100%);
+      max-width: none !important;
+      padding: clamp(28px, 4vw, 42px);
+      border-radius: 20px;
+      border: 1px solid #E8F3EE;
+      background: rgba(255,255,255,.92);
+      box-shadow: 0 24px 80px rgba(45,55,72,.12), 0 2px 0 rgba(255,255,255,.88) inset;
+      backdrop-filter: blur(14px);
+      animation: loginCardRise .34s ease both;
+    }
+    .login-logo {
+      display: block;
+      width: 178px;
+      height: 56px;
+      object-fit: contain;
+      object-position: left center;
+      margin-bottom: 24px;
+    }
+    .login-card h2 {
+      margin: 0;
+      color: #2D3748;
+      font-size: clamp(24px, 2.3vw, 32px);
+      line-height: 1.08;
+      letter-spacing: 0;
+      font-weight: 950;
+    }
+    .login-card-subtitle {
+      margin: 12px 0 26px;
+      color: #718096;
+      font-size: 15px;
+      line-height: 1.5;
+      font-weight: 650;
+    }
+    .login-form { display: grid; gap: 16px; }
+    .login-field label {
+      color: #718096;
+      font-size: 12px;
+      letter-spacing: .04em;
+      margin-bottom: 8px;
+    }
+    .login-input-wrap {
+      position: relative;
+      display: grid;
+      align-items: center;
+    }
+    .login-input-icon {
+      position: absolute;
+      left: 16px;
+      z-index: 1;
+      color: #31C48D;
+      font-size: 18px;
+      line-height: 1;
+      pointer-events: none;
+    }
+    .login-input-wrap input {
+      min-height: 56px;
+      border-radius: 16px;
+      border: 1px solid #E8F3EE;
+      background: #FBFFFD;
+      color: #2D3748;
+      padding: 0 16px 0 48px;
+      font-size: 16px;
+      font-weight: 700;
+      transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+    .login-input-wrap input::placeholder { color: #A0AEC0; font-weight: 650; }
+    .login-input-wrap input:focus {
+      outline: none;
+      border-color: #31C48D;
+      background: #fff;
+      box-shadow: 0 0 0 4px rgba(49,196,141,.12);
+    }
+    .login-input-wrap.password input { padding-right: 58px; }
+    .login-password-toggle {
+      position: absolute;
+      right: 8px;
+      z-index: 2;
+      width: 42px;
+      min-width: 42px;
+      height: 42px;
+      min-height: 42px;
+      padding: 0;
+      border-radius: 14px;
+      background: #EAFBF4;
+      color: #2D3748;
+      font-size: 18px;
+      transition: transform .16s ease, background .16s ease;
+    }
+    .login-password-toggle:hover { background: #DDF8EC; transform: translateY(-1px); }
+    .login-remember {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #2D3748;
+      font-size: 14px;
+      font-weight: 800;
+      text-transform: none;
+      margin: 0;
+      cursor: pointer;
+    }
+    .login-remember input {
+      width: 18px;
+      height: 18px;
+      min-height: 18px;
+      accent-color: #31C48D;
+      cursor: pointer;
+    }
+    .login-error {
+      min-height: 0;
+      margin: 2px 0 0;
+      padding: 11px 13px;
+      border-radius: 14px;
+      background: #FFF5F5;
+      color: #B42318 !important;
+      font-size: 13px;
+      font-weight: 850;
+      border: 1px solid #FED7D7;
+    }
+    .login-error.hide { display: none; }
+    .login-submit {
+      width: 100%;
+      min-height: 58px;
+      margin-top: 2px;
+      border-radius: 16px;
+      background: #31C48D;
+      color: #fff;
+      font-size: 16px;
+      box-shadow: 0 15px 28px rgba(49,196,141,.24);
+      transition: transform .18s ease, box-shadow .18s ease, opacity .18s ease;
+    }
+    .login-submit:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 18px 34px rgba(49,196,141,.30);
+    }
+    .login-submit.syncing {
+      position: relative;
+      color: transparent;
+      opacity: 1;
+    }
+    .login-submit.syncing .login-btn-text { display: none; }
+    .login-submit.syncing::before {
+      content: "";
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,.55);
+      border-top-color: #fff;
+      margin-right: 10px;
+      animation: loginSpin .8s linear infinite;
+    }
+    .login-submit.syncing::after {
+      content: "Signing in...";
+      color: #fff;
+    }
+    .login-footer {
+      text-align: center;
+      color: #718096;
+      font-size: 13px;
+      line-height: 1.6;
+      font-weight: 750;
+    }
+    .login-footer span { color: #31C48D; }
+    @keyframes loginPageFade {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes loginCardRise {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes loginMascotFloat {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+    }
+    @keyframes loginShadowFloat {
+      0%, 100% { opacity: .72; transform: translateY(-5px) scale(1); }
+      50% { opacity: .44; transform: translateY(-1px) scale(.92); }
+    }
+    @keyframes loginSparkle {
+      0%, 100% { opacity: .18; transform: scale(.85); }
+      50% { opacity: .6; transform: scale(1.18); }
+    }
+    @keyframes loginSpin { to { transform: rotate(360deg); } }
+    @media (max-width: 980px) {
+      .login-shell {
+        grid-template-columns: 1fr;
+        gap: 22px;
+        width: min(720px, calc(100vw - 36px));
+        align-items: start;
+        padding-top: 26px;
+      }
+      .login-title { font-size: clamp(38px, 8vw, 56px); }
+      .login-mascot, .login-mascot-wrap { width: min(280px, 54vw); }
+      #loginModal.auth-screen .modal-card.login-card { width: min(500px, 100%); }
+      .login-greeting { margin-bottom: 12px; }
+      .login-lead { margin-top: 14px; }
+      .login-slogan-en { margin-top: 16px; }
+    }
+    @media (max-width: 620px) {
+      .login-shell { width: min(100% - 24px, 480px); padding: 24px 0; gap: 22px; }
+      .login-left { gap: 18px; }
+      .login-lead br, .login-card-subtitle br { display: none; }
+      .login-mascot, .login-mascot-wrap { width: min(220px, 68vw); }
+      #loginModal.auth-screen .modal-card.login-card { padding: 24px; border-radius: 20px; }
+      .login-logo { width: 150px; height: 48px; margin-bottom: 18px; }
+    }
     .password-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
     .password-field input { min-width: 0; }
     #overviewTeacherLinkActions { justify-content: flex-end; }
@@ -345,20 +697,53 @@
       </div>
     </div>
   </div>
-  <div id="loginModal" class="modal auth-screen">
-    <div class="modal-card" style="max-width:520px;">
-      <div class="row spread"><h2>User Sign In</h2><button class="btn ghost small hide" id="closeLoginBtn">Close</button></div>
-      <div class="subtle">Sign in before saving changes to Neon. Default first master admin: master@classone.local</div>
-      <div class="grid one" style="margin-top:14px;">
-        <div><label>Email</label><input id="loginEmail" type="email" placeholder="master@classone.local" value="master@classone.local"></div>
-        <div><label>Password</label><div class="password-field"><input id="loginPassword" type="password" placeholder="Password"><button class="btn ghost icon-only" id="toggleLoginPasswordBtn" type="button" title="Show password" aria-label="Show password">&#128065;</button></div></div>
-        <label class="row" style="justify-content:flex-start; gap:10px;"><input id="rememberLogin" type="checkbox"> Remember me</label>
-      </div>
-      <div class="subtle hide" id="loginMessage" style="margin-top:10px;"></div>
-      <div class="row" style="margin-top:14px;">
-        <button class="btn mint" id="confirmLoginBtn">Sign In</button>
-        <button class="btn ghost hide" id="signOutBtn">Sign Out</button>
-      </div>
+  <div id="loginModal" class="modal auth-screen" aria-labelledby="loginTitle">
+    <div class="login-shell">
+      <section class="login-left" aria-label="Class One welcome">
+        <div class="login-copy">
+          <div class="login-greeting" id="loginGreeting">Good Morning ☀️</div>
+          <h1 class="login-title">Welcome Back</h1>
+          <p class="login-lead">Every lesson creates another opportunity<br>to inspire, guide and grow.</p>
+          <p class="login-slogan-en">Learning with Someone.</p>
+          <p class="login-slogan-zh">壹课堂，终身受用！</p>
+        </div>
+        <div class="login-mascot-wrap" aria-hidden="true">
+          <span class="login-sparkle one"></span>
+          <span class="login-sparkle two"></span>
+          <span class="login-sparkle three"></span>
+          <img class="login-mascot" src="favicon.png" alt="">
+        </div>
+      </section>
+      <section class="login-card-wrap" aria-label="Sign in">
+        <div class="modal-card login-card">
+          <button class="btn ghost small hide" id="closeLoginBtn" type="button">Close</button>
+          <img class="login-logo" src="classone-logo.jpeg" alt="Class One">
+          <h2 id="loginTitle">Sign in to your workspace</h2>
+          <p class="login-card-subtitle">Continue managing your teachers,<br>students and learning journey.</p>
+          <form class="login-form" id="loginForm" autocomplete="on">
+            <div class="login-field">
+              <label for="loginEmail">Email</label>
+              <div class="login-input-wrap">
+                <span class="login-input-icon" aria-hidden="true">✉</span>
+                <input id="loginEmail" type="email" placeholder="master@classone.local" value="master@classone.local" autocomplete="email" aria-label="Email address">
+              </div>
+            </div>
+            <div class="login-field">
+              <label for="loginPassword">Password</label>
+              <div class="login-input-wrap password">
+                <span class="login-input-icon" aria-hidden="true">🔒</span>
+                <input id="loginPassword" type="password" placeholder="Password" autocomplete="current-password" aria-label="Password">
+                <button class="btn ghost icon-only login-password-toggle" id="toggleLoginPasswordBtn" type="button" title="Show password" aria-label="Show password">👁</button>
+              </div>
+            </div>
+            <label class="login-remember" for="rememberLogin"><input id="rememberLogin" type="checkbox"> Remember me</label>
+            <div class="subtle hide login-error" id="loginMessage" role="status" aria-live="polite"></div>
+            <button class="btn mint login-submit" id="confirmLoginBtn" type="button"><span class="login-btn-text">Sign In</span></button>
+            <button class="btn ghost hide" id="signOutBtn" type="button">Sign Out</button>
+          </form>
+        </div>
+        <footer class="login-footer">© 2026 Class One<br><span>Learn Together. Grow Together.</span></footer>
+      </section>
     </div>
   </div>
   <div class="app-shell">
@@ -393,6 +778,7 @@
           <button class="btn ghost" id="layoutToggleBtn" title="Change the layout for this tab only">This Tab: Up and Down</button>
           <button class="btn ghost" id="archivePastBtn">Finalize Passed Classes</button>
           <button class="btn ghost" id="loginBtn">Sign In</button>
+          <button class="btn danger hide" id="retryNeonSaveBtn">Retry Save</button>
           <button class="btn mint" id="saveBtn">Save</button>
         </div>
       </div>
@@ -1709,7 +2095,7 @@
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
     const AUTO_NEON_REFRESH_MS = 60000;
-    const AUTO_SAVE_DEBOUNCE_MS = 1200;
+    const AUTO_SAVE_DEBOUNCE_MS = 700;
     const NEON_CHUNK_SIZE = 300000;
     const STORE_KEY = "classOneBookingRevamp.v1";
     const DATA_BACKUP_KEY = "classone_data_backup";
@@ -1866,6 +2252,13 @@
     let autoNeonRefreshInProgress = false;
     let suppressAutoPush = false;
     let hasUnsavedBusinessChanges = false;
+    let isSavingToNeon = false;
+    let isPullingFromNeon = false;
+    let isUserEditingForm = false;
+    let pendingSave = false;
+    let lastNeonSaveFailed = false;
+    let dirtyForms = {};
+    let currentUserFormDraft = null;
     let initialDataLoadComplete = false;
     let pendingReplacementId = "";
     let pendingReplacementCreditId = "";
@@ -1973,8 +2366,18 @@
       $("loginMessage").style.fontWeight = message ? "800" : "";
     }
 
+    function updateLoginGreeting() {
+      const el = $("loginGreeting");
+      if (!el) return;
+      const hour = new Date().getHours();
+      if (hour < 12) el.textContent = "Good Morning ☀️";
+      else if (hour < 18) el.textContent = "Good Afternoon 🌤";
+      else el.textContent = "Good Evening 🌙";
+    }
+
     function renderAuthState() {
       const authenticated = isAuthenticated();
+      updateLoginGreeting();
       if (!authenticated && sessionToken()) {
         clearSessionRecord();
       }
@@ -3136,6 +3539,11 @@
       if (suppressAutoPush) return;
       if (!neonConfigured()) return;
       if (!hasUnsavedBusinessChanges && !state.settings.pendingLocalSync) return;
+      if (isSavingToNeon) {
+        pendingSave = true;
+        setStatus("Saving already in progress — latest changes will sync next.", "warn", false);
+        return;
+      }
       clearTimeout(autoPushTimer);
       setStatus("Saved locally. Waiting to sync to Neon...", "warn");
       autoPushTimer = setTimeout(() => enqueueNeonPush("Saved.", true), AUTO_SAVE_DEBOUNCE_MS);
@@ -3154,6 +3562,71 @@
       button.innerHTML = showing ? "&#128065;" : "&#128584;";
       button.setAttribute("aria-label", showing ? "Show password" : "Hide password");
       button.title = showing ? "Show password" : "Hide password";
+    }
+
+    function setRetrySaveVisible(visible) {
+      $("retryNeonSaveBtn")?.classList.toggle("hide", !visible);
+    }
+
+    function nowTimeLabel() {
+      return new Date().toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" });
+    }
+
+    function readUserFormDraft() {
+      if (!$("userId")) return null;
+      return {
+        id: $("userId").value || "",
+        name: $("userName").value || "",
+        email: $("userEmail").value || "",
+        password: $("userPassword").value || "",
+        role: $("userRole").value || "viewer",
+        status: $("userStatus").value || "active",
+        allowedTabs: checkedValues("userAllowedTab")
+      };
+    }
+
+    function restoreUserFormDraft(draft) {
+      if (!draft || !$("userId")) return;
+      $("userId").value = draft.id || "";
+      $("userName").value = draft.name || "";
+      $("userEmail").value = draft.email || "";
+      $("userPassword").value = draft.password || "";
+      if ($("userRole")) $("userRole").value = draft.role || "viewer";
+      if ($("userStatus")) $("userStatus").value = draft.status || "active";
+      $("userAllowedTabs").innerHTML = checklistHtml("userAllowedTab", APP_TABS, draft.allowedTabs || []);
+      bindUserFormDraftTracking();
+    }
+
+    function markUserFormDirty() {
+      dirtyForms.users = true;
+      isUserEditingForm = true;
+      currentUserFormDraft = readUserFormDraft();
+      if (isPullingFromNeon || isSavingToNeon) setStatus("Editing in progress — sync will continue after save.", "warn", false);
+    }
+
+    function bindUserFormDraftTracking() {
+      ["userName", "userEmail", "userPassword", "userRole", "userStatus"].forEach(id => {
+        const el = $(id);
+        if (!el || el.dataset.draftBound) return;
+        el.dataset.draftBound = "1";
+        el.addEventListener("input", markUserFormDirty);
+        el.addEventListener("change", markUserFormDirty);
+        el.addEventListener("focus", () => { isUserEditingForm = true; });
+        el.addEventListener("blur", () => setTimeout(() => {
+          if (!dirtyForms.users && !document.activeElement?.closest?.("#users")) isUserEditingForm = false;
+        }, 200));
+      });
+      document.querySelectorAll("input[name='userAllowedTab']").forEach(input => {
+        if (input.dataset.draftBound) return;
+        input.dataset.draftBound = "1";
+        input.addEventListener("change", markUserFormDirty);
+      });
+    }
+
+    function clearUserFormDirty() {
+      dirtyForms.users = false;
+      currentUserFormDraft = null;
+      isUserEditingForm = false;
     }
 
     function setStatus(msg, type = "success", showToast = true) {
@@ -8240,9 +8713,11 @@
       }
     }
 
-    function selectUserForEdit(id) {
+    function selectUserForEdit(id, options = {}) {
       const user = (state.users || []).find(item => item.id === id);
       if (!user) return;
+      if (options.respectDirty && dirtyForms.users) return restoreUserFormDraft(currentUserFormDraft);
+      if (!options.keepDirty) clearUserFormDirty();
       $("userId").value = user.id;
       $("userName").value = user.name || "";
       $("userEmail").value = user.email || "";
@@ -8250,9 +8725,12 @@
       $("userRole").value = user.role || "viewer";
       $("userStatus").value = user.status || "active";
       $("userAllowedTabs").innerHTML = checklistHtml("userAllowedTab", APP_TABS, user.allowedTabs || []);
+      bindUserFormDraftTracking();
     }
 
-    function clearUserForm() {
+    function clearUserForm(options = {}) {
+      if (options.respectDirty && dirtyForms.users) return restoreUserFormDraft(currentUserFormDraft);
+      if (!options.keepDirty) clearUserFormDirty();
       $("userId").value = "";
       $("userName").value = "";
       $("userEmail").value = "";
@@ -8260,6 +8738,7 @@
       $("userRole").value = "viewer";
       $("userStatus").value = "active";
       $("userAllowedTabs").innerHTML = checklistHtml("userAllowedTab", APP_TABS, []);
+      bindUserFormDraftTracking();
     }
 
     function selectRoleForEdit(id) {
@@ -8289,8 +8768,9 @@
       $("currentUserSummary").textContent = user ? `${user.name || user.email || "User"} | ${user.role || "viewer"} | ${user.status || "active"}` : "No active user";
       $("userRole").innerHTML = editableRoles().map(role => `<option value="${escapeHtml(role.name)}">${escapeHtml(role.name)}</option>`).join("");
       const existingUserId = $("userId").value;
-      if (existingUserId && (state.users || []).some(item => item.id === existingUserId)) selectUserForEdit(existingUserId);
-      else clearUserForm();
+      if (dirtyForms.users && currentUserFormDraft) restoreUserFormDraft(currentUserFormDraft);
+      else if (existingUserId && (state.users || []).some(item => item.id === existingUserId)) selectUserForEdit(existingUserId, { respectDirty: true });
+      else clearUserForm({ respectDirty: true });
       const users = [...(state.users || [])].sort((a, b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || "")));
       $("userList").innerHTML = users.map(item => `
         <div class="card" style="margin-bottom:10px;">
@@ -8350,9 +8830,12 @@
         state.users.push(payload);
       }
       logAction(existing ? "User Updated" : "User Created", payload.name || payload.email, before, cloneForUndo(payload), `Role: ${payload.role}`);
+      $("userId").value = id;
+      clearUserFormDirty();
       save(false);
       const synced = await autoPushIfConfigured(existing ? "User updated." : "User created.");
-      selectUserForEdit(id);
+      if (dirtyForms.users && currentUserFormDraft) restoreUserFormDraft(currentUserFormDraft);
+      else selectUserForEdit(id);
       setStatus(synced ? (existing ? "User updated and synced to Neon." : "User created and synced to Neon.") : (existing ? "User updated locally. Neon sync is still pending." : "User created locally. Neon sync is still pending."), synced ? "success" : "warn");
     }
 
@@ -9215,10 +9698,16 @@
     }
 
     async function signInUser() {
-      if (!neonConfigured()) return alert("Neon API URL and API key are required before sign in.");
+      if (!neonConfigured()) {
+        setLoginMessage("Unable to connect. Neon API URL and API key are required before sign in.");
+        return;
+      }
       const email = $("loginEmail").value.trim();
       const password = $("loginPassword").value;
-      if (!email) return alert("Fill email first.");
+      if (!email) {
+        setLoginMessage("Please enter your email address.");
+        return;
+      }
       setLoginMessage("Signing in...", "info");
       console.info("[ClassOne login]", { attemptedEmail: email.toLowerCase(), localUsersCount: (state.users || []).length, apiUrl: neonApiBase() });
       let data;
@@ -9260,44 +9749,61 @@
 
     async function neonPull(logManual = false) {
       if (!neonConfigured()) return alert("Neon API URL and API key are required.");
+      if (!logManual && isUserEditingForm) {
+        setStatus("Editing in progress — sync will continue after save.", "warn", false);
+        return { paused: true };
+      }
+      if (hasUnsavedBusinessChanges && !logManual) {
+        setStatus("Local changes are newer — background pull paused until save finishes.", "warn", false);
+        return { paused: true };
+      }
+      isPullingFromNeon = true;
       let manifest = null;
       let payload = null;
       let chunkError = null;
-      for (let attempt = 1; attempt <= 3 && !payload; attempt += 1) {
-        try {
-          manifest = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon load", SYNC_READ_TIMEOUT_MS);
-          if (manifest.empty || !manifest.totalChunks) {
-            if (logManual) setStatus("Neon database is empty. Current browser data is unchanged.", "warn");
-            return { empty: true };
+      try {
+        for (let attempt = 1; attempt <= 3 && !payload; attempt += 1) {
+          try {
+            manifest = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon load", SYNC_READ_TIMEOUT_MS);
+            if (manifest.empty || !manifest.totalChunks) {
+              if (logManual) setStatus("Neon database is empty. Current browser data is unchanged.", "warn");
+              return { empty: true };
+            }
+            const chunks = [];
+            for (let index = 0; index < Number(manifest.totalChunks || 0); index += 1) {
+              const part = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}&version=${encodeURIComponent(manifest.version)}&chunk=${index}`, { method: "GET" }, `Neon load chunk ${index + 1}/${manifest.totalChunks}`, SYNC_READ_TIMEOUT_MS);
+              chunks.push(part.chunk || "");
+            }
+            payload = JSON.parse(chunks.join(""));
+          } catch (err) {
+            chunkError = err;
+            if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 600));
           }
-          const chunks = [];
-          for (let index = 0; index < Number(manifest.totalChunks || 0); index += 1) {
-            const part = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}&version=${encodeURIComponent(manifest.version)}&chunk=${index}`, { method: "GET" }, `Neon load chunk ${index + 1}/${manifest.totalChunks}`, SYNC_READ_TIMEOUT_MS);
-            chunks.push(part.chunk || "");
-          }
-          payload = JSON.parse(chunks.join(""));
-        } catch (err) {
-          chunkError = err;
-          if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 600));
         }
+        if (!payload) {
+          const fallback = await fetchNeonJson(`/api/state?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon recovery load", SYNC_READ_TIMEOUT_MS);
+          if (!fallback.data) throw chunkError || new Error("Neon state could not be loaded.");
+          payload = fallback.data;
+          manifest = { version: Number(fallback.version || 0) };
+          setStatus("Recovered Neon data through the complete-state endpoint.", "warn");
+        }
+        if (!logManual && (isUserEditingForm || hasUnsavedBusinessChanges)) {
+          setStatus("Editing in progress — Neon data loaded but not applied yet.", "warn", false);
+          return { paused: true };
+        }
+        applyPulledPayload(payload);
+        state.settings.neonVersion = Number(manifest.version || 0);
+        state.settings.lastSyncedAt = new Date().toISOString();
+        clearPendingSyncFlag();
+        suppressAutoPush = true;
+        save(false, { system: true });
+        suppressAutoPush = false;
+        if (logManual) logAction("Neon Loaded", "Neon Database", "", "Loaded latest app data", "Manual Neon load completed.");
+        setStatus("Loaded latest data from Neon database.");
+        return { empty: false, version: state.settings.neonVersion };
+      } finally {
+        isPullingFromNeon = false;
       }
-      if (!payload) {
-        const fallback = await fetchNeonJson(`/api/state?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon recovery load", SYNC_READ_TIMEOUT_MS);
-        if (!fallback.data) throw chunkError || new Error("Neon state could not be loaded.");
-        payload = fallback.data;
-        manifest = { version: Number(fallback.version || 0) };
-        setStatus("Recovered Neon data through the complete-state endpoint.", "warn");
-      }
-      applyPulledPayload(payload);
-      state.settings.neonVersion = Number(manifest.version || 0);
-      state.settings.lastSyncedAt = new Date().toISOString();
-      clearPendingSyncFlag();
-      suppressAutoPush = true;
-      save(false, { system: true });
-      suppressAutoPush = false;
-      if (logManual) logAction("Neon Loaded", "Neon Database", "", "Loaded latest app data", "Manual Neon load completed.");
-      setStatus("Loaded latest data from Neon database.");
-      return { empty: false, version: state.settings.neonVersion };
     }
 
     async function autoLoadLatestNeonIfNeeded(label = "saving") {
@@ -9309,54 +9815,82 @@
         if (logManual) setStatus("No unsaved business changes to sync.");
         return true;
       }
+      if (isSavingToNeon) {
+        pendingSave = true;
+        setStatus("Saving already in progress — latest changes will sync next.", "warn", false);
+        return false;
+      }
       if (!neonConfigured()) {
         setStatus(`${successMessage} Saved in this browser only. Neon API is not configured.`, "warn");
         return;
       }
-      const currentVersion = Number(state.settings.neonVersion || 0);
-      const pushedRevision = Number(state.settings.localRevision || 0);
-      const serialized = JSON.stringify(remoteStatePayload());
-      const chunks = splitIntoChunks(serialized);
-      const init = await fetchNeonJson("/api/state-chunk", {
-        method: "POST",
-        body: JSON.stringify({
-          mode: "init",
-          key: neonStateKey(),
-          expectedVersion: currentVersion,
-          totalChunks: chunks.length,
-          updatedBy: currentUser()?.name || safeStorageGet("classOneStaffName") || "Class One Admin"
-        })
-      }, "Neon save init", SYNC_SAVE_TIMEOUT_MS);
-      for (let index = 0; index < chunks.length; index += 1) {
-        await fetchNeonJson("/api/state-chunk", {
+      isSavingToNeon = true;
+      setRetrySaveVisible(false);
+      setStatus("Saving to Neon...", "success", false);
+      try {
+        const currentVersion = Number(state.settings.neonVersion || 0);
+        const pushedRevision = Number(state.settings.localRevision || 0);
+        const serialized = JSON.stringify(remoteStatePayload());
+        const chunks = splitIntoChunks(serialized);
+        const init = await fetchNeonJson("/api/state-chunk", {
           method: "POST",
           body: JSON.stringify({
-            mode: "chunk",
-            uploadId: init.uploadId,
-            index,
-            chunk: chunks[index]
+            mode: "init",
+            key: neonStateKey(),
+            expectedVersion: currentVersion,
+            totalChunks: chunks.length,
+            updatedBy: currentUser()?.name || safeStorageGet("classOneStaffName") || "Class One Admin"
           })
-        }, `Neon save chunk ${index + 1}/${chunks.length}`, SYNC_SAVE_TIMEOUT_MS);
+        }, "Neon save init", SYNC_SAVE_TIMEOUT_MS);
+        for (let index = 0; index < chunks.length; index += 1) {
+          await fetchNeonJson("/api/state-chunk", {
+            method: "POST",
+            body: JSON.stringify({
+              mode: "chunk",
+              uploadId: init.uploadId,
+              index,
+              chunk: chunks[index]
+            })
+          }, `Neon save chunk ${index + 1}/${chunks.length}`, SYNC_SAVE_TIMEOUT_MS);
+        }
+        const data = await fetchNeonJson("/api/state-chunk", {
+          method: "POST",
+          body: JSON.stringify({
+            mode: "complete",
+            uploadId: init.uploadId
+          })
+        }, "Neon save complete", SYNC_SAVE_TIMEOUT_MS);
+        state.settings.neonVersion = Number(data.version || currentVersion || 0);
+        state.settings.lastSyncedRevision = Math.max(Number(state.settings.lastSyncedRevision || 0), pushedRevision);
+        const newerEditExists = Number(state.settings.localRevision || 0) > pushedRevision || pendingSave;
+        pendingSave = false;
+        state.settings.pendingLocalSync = newerEditExists;
+        state.settings.businessDirty = newerEditExists;
+        hasUnsavedBusinessChanges = newerEditExists;
+        lastNeonSaveFailed = false;
+        setRetrySaveVisible(false);
+        if (!newerEditExists) state.settings.lastLocalChangeAt = "";
+        state.settings.lastSyncedAt = new Date().toISOString();
+        persistState();
+        if (logManual) logAction("Neon Saved", "Neon Database", "", "Saved latest app data", "Manual Neon save completed.");
+        setStatus(newerEditExists ? "Earlier changes synced. A newer edit is waiting to sync..." : `Saved at ${nowTimeLabel()}.`, newerEditExists ? "warn" : "success");
+        return !newerEditExists;
+      } catch (error) {
+        lastNeonSaveFailed = true;
+        hasUnsavedBusinessChanges = true;
+        state.settings.businessDirty = true;
+        state.settings.pendingLocalSync = true;
+        persistState();
+        setRetrySaveVisible(true);
+        setStatus(`Save failed — Retry. ${error.message}`, "error");
+        throw error;
+      } finally {
+        isSavingToNeon = false;
+        if (!lastNeonSaveFailed && hasUnsavedBusinessChanges) {
+          pendingSave = false;
+          scheduleAutoPush();
+        }
       }
-      const data = await fetchNeonJson("/api/state-chunk", {
-        method: "POST",
-        body: JSON.stringify({
-          mode: "complete",
-          uploadId: init.uploadId
-        })
-      }, "Neon save complete", SYNC_SAVE_TIMEOUT_MS);
-      state.settings.neonVersion = Number(data.version || currentVersion || 0);
-      state.settings.lastSyncedRevision = Math.max(Number(state.settings.lastSyncedRevision || 0), pushedRevision);
-      const newerEditExists = Number(state.settings.localRevision || 0) > pushedRevision;
-      state.settings.pendingLocalSync = newerEditExists;
-      state.settings.businessDirty = newerEditExists;
-      hasUnsavedBusinessChanges = newerEditExists;
-      if (!newerEditExists) state.settings.lastLocalChangeAt = "";
-      state.settings.lastSyncedAt = new Date().toISOString();
-      persistState();
-      if (logManual) logAction("Neon Saved", "Neon Database", "", "Saved latest app data", "Manual Neon save completed.");
-      setStatus(newerEditExists ? "Earlier changes synced. A newer edit is waiting to sync..." : successMessage, newerEditExists ? "warn" : "success");
-      return !newerEditExists;
     }
 
     function startAutoLoadCountdown(totalSeconds = Math.ceil(SYNC_READ_TIMEOUT_MS / 1000), label = "Neon database") {
@@ -9392,7 +9926,9 @@
         try {
           const result = await neonPull(false);
           stopAutoLoadCountdown();
-          if (result?.empty) {
+          if (result?.paused) {
+            setStatus("Editing in progress — sync will continue after save.", "warn");
+          } else if (result?.empty) {
             if (hasMeaningfulStateData()) {
               await neonPush(false, "Neon database was empty. Current browser data saved as first Neon version.");
             } else {
@@ -10924,6 +11460,17 @@
     });
 
     $("saveBtn").onclick = () => save();
+    $("retryNeonSaveBtn").onclick = () => animateClick($("retryNeonSaveBtn"), async () => {
+      lastNeonSaveFailed = false;
+      pendingSave = false;
+      hasUnsavedBusinessChanges = true;
+      state.settings.businessDirty = true;
+      state.settings.pendingLocalSync = true;
+      await autoPushIfConfigured("Retry save completed.");
+    }).catch(err => {
+      setStatus(`Save failed — Retry. ${err.message}`, "error");
+      setRetrySaveVisible(true);
+    });
     $("archivePastBtn").onclick = () => { archivePast(); renderAll(); };
     $("saveTeacherBtn").onclick = () => saveTeacher().catch(err => {
       setStatus(`Teacher save sync failed: ${err.message}`, "error");
@@ -11921,7 +12468,12 @@
     $("toggleUserPasswordBtn").onclick = () => togglePasswordVisibility("userPassword", "toggleUserPasswordBtn");
     $("confirmLoginBtn").onclick = () => animateClick($("confirmLoginBtn"), signInUser).catch(err => {
       setStatus(`Sign in failed: ${err.message}`, "error");
-      alert(err.message);
+      setLoginMessage(err.message || "Invalid email or password. Please check your login details.");
+    });
+    $("loginForm")?.addEventListener("keydown", event => {
+      if (event.key !== "Enter" || event.target?.tagName !== "INPUT") return;
+      event.preventDefault();
+      $("confirmLoginBtn")?.click();
     });
     $("signOutBtn").onclick = signOutUser;
     $("dismissActionPopupBtn").onclick = () => {
