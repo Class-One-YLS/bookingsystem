@@ -207,10 +207,11 @@
     }
     .login-mascot-wrap {
       position: relative;
-      width: min(360px, 56vw);
+      width: min(330px, 50vw);
       display: grid;
       place-items: center;
-      animation: loginMascotFloat 4s ease-in-out infinite;
+      margin-top: -4px;
+      animation: loginMascotFloat 4.4s ease-in-out infinite;
     }
     .login-mascot-wrap::after {
       content: "";
@@ -223,12 +224,15 @@
       animation: loginShadowFloat 4s ease-in-out infinite;
     }
     .login-mascot {
-      width: min(340px, 56vw);
+      width: min(315px, 50vw);
       height: auto;
       object-fit: contain;
       display: block;
-      mix-blend-mode: multiply;
-      filter: drop-shadow(0 28px 38px rgba(45,55,72,.13));
+      background: transparent;
+      border: 0;
+      box-shadow: none;
+      transform-origin: 50% 60%;
+      animation: loginMascotPose 6.4s ease-in-out infinite;
     }
     .login-sparkle {
       position: absolute;
@@ -247,6 +251,52 @@
       justify-items: center;
       gap: 18px;
       min-width: 0;
+    }
+    .workspace-loading {
+      position: fixed;
+      inset: 0;
+      z-index: 9500;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, rgba(247,255,252,.98), rgba(234,251,244,.98));
+      transition: opacity .28s ease;
+    }
+    .workspace-loading.hide { display: none; }
+    .workspace-loading-card {
+      width: min(420px, calc(100vw - 32px));
+      border: 1px solid #E8F3EE;
+      border-radius: 20px;
+      background: rgba(255,255,255,.92);
+      box-shadow: 0 24px 70px rgba(45,55,72,.10);
+      padding: 34px;
+      text-align: center;
+      color: #2D3748;
+    }
+    .workspace-loading-logo {
+      width: 150px;
+      height: 48px;
+      object-fit: contain;
+      margin-bottom: 18px;
+    }
+    .workspace-loading-spinner {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: 3px solid #DDF8EC;
+      border-top-color: #31C48D;
+      margin: 0 auto 18px;
+      animation: loginSpin .8s linear infinite;
+    }
+    .workspace-loading-card strong {
+      display: block;
+      font-size: 22px;
+      font-weight: 950;
+      margin-bottom: 8px;
+    }
+    .workspace-loading-card span {
+      color: #718096;
+      font-size: 14px;
+      font-weight: 750;
     }
     #loginModal.auth-screen .modal-card.login-card {
       width: min(450px, 100%);
@@ -367,6 +417,16 @@
       font-weight: 850;
       border: 1px solid #FED7D7;
     }
+    .login-error.info {
+      background: #F7FFFC;
+      color: #718096 !important;
+      border-color: #E8F3EE;
+    }
+    .login-error.warn {
+      background: #FFF9E8;
+      color: #925C00 !important;
+      border-color: #FDECC8;
+    }
     .login-error.hide { display: none; }
     .login-submit {
       width: 100%;
@@ -421,7 +481,11 @@
     }
     @keyframes loginMascotFloat {
       0%, 100% { transform: translateY(0); }
-      50% { transform: translateY(-6px); }
+      50% { transform: translateY(-7px); }
+    }
+    @keyframes loginMascotPose {
+      0%, 100% { transform: rotate(-1deg) translateX(0); }
+      50% { transform: rotate(1.2deg) translateX(3px); }
     }
     @keyframes loginShadowFloat {
       0%, 100% { opacity: .72; transform: translateY(-5px) scale(1); }
@@ -441,7 +505,7 @@
         padding-top: 26px;
       }
       .login-title { font-size: clamp(38px, 8vw, 56px); }
-      .login-mascot, .login-mascot-wrap { width: min(280px, 54vw); }
+      .login-mascot, .login-mascot-wrap { width: min(245px, 48vw); }
       #loginModal.auth-screen .modal-card.login-card { width: min(500px, 100%); }
       .login-greeting { margin-bottom: 12px; }
       .login-lead { margin-top: 14px; }
@@ -451,7 +515,7 @@
       .login-shell { width: min(100% - 24px, 480px); padding: 24px 0; gap: 22px; }
       .login-left { gap: 18px; }
       .login-lead br, .login-card-subtitle br { display: none; }
-      .login-mascot, .login-mascot-wrap { width: min(220px, 68vw); }
+      .login-mascot, .login-mascot-wrap { width: min(180px, 58vw); }
       #loginModal.auth-screen .modal-card.login-card { padding: 24px; border-radius: 20px; }
       .login-logo { width: 150px; height: 48px; margin-bottom: 18px; }
     }
@@ -711,7 +775,7 @@
           <span class="login-sparkle one"></span>
           <span class="login-sparkle two"></span>
           <span class="login-sparkle three"></span>
-          <img class="login-mascot" src="favicon.png" alt="">
+          <img class="login-mascot" id="loginMascot" src="classone-mascot-transparent.png" alt="">
         </div>
       </section>
       <section class="login-card-wrap" aria-label="Sign in">
@@ -744,6 +808,14 @@
         </div>
         <footer class="login-footer">© 2026 Class One<br><span>Learn Together. Grow Together.</span></footer>
       </section>
+    </div>
+  </div>
+  <div id="workspaceLoading" class="workspace-loading hide" aria-live="polite" aria-busy="true">
+    <div class="workspace-loading-card">
+      <img class="workspace-loading-logo" src="classone-logo.jpeg" alt="Class One">
+      <div class="workspace-loading-spinner" aria-hidden="true"></div>
+      <strong>Loading your workspace...</strong>
+      <span>Preparing your latest timetable and student records.</span>
     </div>
   </div>
   <div class="app-shell">
@@ -2094,6 +2166,7 @@
     };
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
+    const LOGIN_TIMEOUT_MS = 8000;
     const AUTO_NEON_REFRESH_MS = 60000;
     const AUTO_SAVE_DEBOUNCE_MS = 700;
     const NEON_CHUNK_SIZE = 300000;
@@ -2101,6 +2174,9 @@
     const DATA_BACKUP_KEY = "classone_data_backup";
     const SESSION_KEY = "classone_session";
     const UI_STATE_KEY = "classone_ui_state";
+    const loginMascots = [
+      { src: "classone-mascot-transparent.png", pose: "floating", alt: "" }
+    ];
     const REMEMBERED_EMAIL_KEY = "classone_remembered_email";
     const DB_NAME = "ClassOneBookingDB";
     const DB_STORE = "state";
@@ -2255,6 +2331,7 @@
     let isSavingToNeon = false;
     let isPullingFromNeon = false;
     let isUserEditingForm = false;
+    let loginRequestInFlight = false;
     let pendingSave = false;
     let lastNeonSaveFailed = false;
     let dirtyForms = {};
@@ -2362,8 +2439,24 @@
       if (!$("loginMessage")) return;
       $("loginMessage").textContent = message;
       $("loginMessage").classList.toggle("hide", !message);
-      $("loginMessage").style.color = type === "error" ? "#b42318" : "var(--muted)";
+      $("loginMessage").classList.toggle("info", type === "info");
+      $("loginMessage").classList.toggle("warn", type === "warn");
+      $("loginMessage").style.color = type === "error" ? "#b42318" : "";
       $("loginMessage").style.fontWeight = message ? "800" : "";
+    }
+
+    function setWorkspaceLoading(visible) {
+      $("workspaceLoading")?.classList.toggle("hide", !visible);
+    }
+
+    function updateLoginMascot() {
+      const img = $("loginMascot");
+      if (!img || !loginMascots.length) return;
+      const hour = new Date().getHours();
+      const mascot = loginMascots[hour % loginMascots.length] || loginMascots[0];
+      if (img.getAttribute("src") !== mascot.src) img.setAttribute("src", mascot.src);
+      img.dataset.pose = mascot.pose || "floating";
+      img.alt = mascot.alt || "";
     }
 
     function updateLoginGreeting() {
@@ -2378,9 +2471,11 @@
     function renderAuthState() {
       const authenticated = isAuthenticated();
       updateLoginGreeting();
+      updateLoginMascot();
       if (!authenticated && sessionToken()) {
         clearSessionRecord();
       }
+      if (!authenticated) setWorkspaceLoading(false);
       document.body.classList.toggle("auth-locked", !authenticated);
       $("loginModal")?.classList.toggle("hide", authenticated);
       $("loginModal")?.classList.toggle("auth-screen", !authenticated);
@@ -3930,7 +4025,7 @@
 
     function findBooking(slot) {
       const matches = scheduleBookings().filter(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
-      return matches.find(booking => !isCancelledStatus(booking.status)) || matches.slice().sort((a, b) => activityTime(b.updatedAt || b.createdAt) - activityTime(a.updatedAt || a.createdAt))[0];
+      return matches.reduce((winner, booking) => shouldUseBooking(booking, winner) ? booking : winner, null);
     }
 
     function weeklyDatesInRange(startDate, endDate, day) {
@@ -6598,6 +6693,46 @@
       if (value instanceof Date) return value.getTime();
       const parsed = new Date(value);
       return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+    }
+
+    function bookingAmendmentTime(booking) {
+      if (!booking) return 0;
+      const times = [
+        booking.updatedAt,
+        booking.updated_at,
+        booking.changedAt,
+        booking.changedSlot?.changedAt,
+        booking.rebookedAt,
+        booking.cancelledAt,
+        booking.completedAt,
+        booking.studentNotShowAt,
+        booking.deletedAt,
+        booking.createdAt,
+        booking.created_at
+      ].map(activityTime).filter(Boolean);
+      return times.length ? Math.max(...times) : 0;
+    }
+
+    function bookingTieRank(booking) {
+      const status = String(booking?.status || "booked").toLowerCase();
+      if (status === "deleted" || booking?.deleted === true) return -100;
+      if (booking?.changedSlot) return 8;
+      if (status === "student_not_show") return 7;
+      if (status === "booked") return 6;
+      if (status === "completed") return 5;
+      if (isCancelledStatus(status)) return 4;
+      return 1;
+    }
+
+    function shouldUseBooking(candidate, existing) {
+      if (!existing) return true;
+      const candidateTime = bookingAmendmentTime(candidate);
+      const existingTime = bookingAmendmentTime(existing);
+      if (candidateTime !== existingTime) return candidateTime > existingTime;
+      const candidateRank = bookingTieRank(candidate);
+      const existingRank = bookingTieRank(existing);
+      if (candidateRank !== existingRank) return candidateRank > existingRank;
+      return String(candidate.id || "") > String(existing.id || "");
     }
 
     function leadLatestTime(lead) {
@@ -9697,7 +9832,24 @@
       }
     }
 
+    async function loadWorkspaceAfterSignIn(email, signedInUser) {
+      setWorkspaceLoading(true);
+      try {
+        await neonPull(false);
+        const user = (state.users || []).find(item => String(item.email || "").toLowerCase() === email.toLowerCase());
+        if (user) uiStateSet("CurrentUserId", user.id);
+        renderAll();
+        setStatus(`Signed in as ${signedInUser?.name || email}.`);
+      } catch (pullError) {
+        renderAll();
+        setStatus(`Signed in, but latest Neon data could not load: ${pullError.message}`, "warn");
+      } finally {
+        setWorkspaceLoading(false);
+      }
+    }
+
     async function signInUser() {
+      if (loginRequestInFlight) return;
       if (!neonConfigured()) {
         setLoginMessage("Unable to connect. Neon API URL and API key are required before sign in.");
         return;
@@ -9708,40 +9860,44 @@
         setLoginMessage("Please enter your email address.");
         return;
       }
-      setLoginMessage("Signing in...", "info");
+      loginRequestInFlight = true;
+      setLoginMessage("");
       console.info("[ClassOne login]", { attemptedEmail: email.toLowerCase(), localUsersCount: (state.users || []).length, apiUrl: neonApiBase() });
       let data;
       try {
         data = await fetchNeonJson("/api/session", {
           method: "POST",
           body: JSON.stringify({ key: neonStateKey(), email, password })
-        }, "User sign in", SYNC_SAVE_TIMEOUT_MS);
+        }, "User sign in", LOGIN_TIMEOUT_MS);
       } catch (error) {
-        const message = /disabled/i.test(error.message || "") ? "This user is disabled." : (/invalid email or password/i.test(error.message || "") ? "Invalid email or password. Please check your login details." : error.message);
-        setLoginMessage(message);
+        const raw = String(error.message || "");
+        const message = /disabled/i.test(raw)
+          ? "This user is disabled."
+          : (/invalid email or password/i.test(raw)
+            ? "Invalid email or password. Please check your login details."
+            : (/took too long|timeout|abort/i.test(raw)
+              ? "Login is taking longer than usual. Please check your connection."
+              : raw));
+        setLoginMessage(message, /took too long|connection/i.test(message) ? "warn" : "error");
         throw new Error(message);
+      } finally {
+        loginRequestInFlight = false;
       }
       console.info("[ClassOne login]", { attemptedEmail: email.toLowerCase(), usersCountLoaded: data.debug?.usersCount, matchedUserFound: data.debug?.matchedUserFound });
       setSessionRecord(data.token || "", data.user || { email }, Boolean($("rememberLogin")?.checked));
       if (data.user?.id) uiStateSet("CurrentUserId", data.user.id);
-      try {
-        await neonPull(false);
-      } catch (pullError) {
-        setStatus(`Signed in, but latest Neon data could not load: ${pullError.message}`, "warn");
-      }
-      const user = (state.users || []).find(item => String(item.email || "").toLowerCase() === email.toLowerCase());
-      if (user) uiStateSet("CurrentUserId", user.id);
       $("loginPassword").value = "";
       setLoginMessage("");
       renderAuthState();
-      renderAll();
-      setStatus(`Signed in as ${data.user?.name || email}.`);
+      setWorkspaceLoading(true);
+      requestAnimationFrame(() => loadWorkspaceAfterSignIn(email, data.user));
     }
 
     function signOutUser() {
       clearSessionRecord();
       $("loginPassword").value = "";
       setLoginMessage("");
+      setWorkspaceLoading(false);
       renderAuthState();
       renderAll();
       setStatus("Signed out. Please sign in to access the system.");
@@ -10118,15 +10274,20 @@
         .filter(item => item.originalBookingId === booking.id || item.replacementBookingId === booking.id)
         .map(item => item.id);
       const undoBefore = snapshotCollections({ bookings: [booking.id], replacements: replacementIdsBefore });
+      const now = new Date().toISOString();
       booking.status = nextStatus;
       booking.remark = remark;
       if (nextStatus === "booked") booking.publicHolidayOverride = true;
-      booking.archived = booking.status !== "booked" || slotHasPassed(booking.date, booking.time);
+      booking.archived = false;
       if (booking.status === "booked" && slotHasPassed(booking.date, booking.time)) {
         booking.status = "completed";
-        booking.completedAt = booking.completedAt || new Date().toISOString();
+        booking.completedAt = booking.completedAt || now;
       }
-      booking.updatedAt = new Date().toISOString();
+      if (booking.status === "completed") booking.completedAt = booking.completedAt || now;
+      if (booking.status === "student_not_show") booking.studentNotShowAt = now;
+      if (isCancelledStatus(booking.status)) booking.cancelledAt = now;
+      booking.changedAt = now;
+      booking.updatedAt = now;
       if (replacementReasonForStatus(nextStatus)) handleReplacementForOutcome(booking, replacementNeeded);
       else if (nextStatus === "student_not_show" && options.createStudentNotShowReplacement) handleReplacementForOutcome(booking, "yes", "Student Not Show");
       else if (options.withdrawExistingReplacement) withdrawReplacementForBooking(booking);
@@ -12468,8 +12629,9 @@
     $("toggleLoginPasswordBtn").onclick = () => togglePasswordVisibility("loginPassword", "toggleLoginPasswordBtn");
     $("toggleUserPasswordBtn").onclick = () => togglePasswordVisibility("userPassword", "toggleUserPasswordBtn");
     $("confirmLoginBtn").onclick = () => animateClick($("confirmLoginBtn"), signInUser).catch(err => {
-      setStatus(`Sign in failed: ${err.message}`, "error");
-      setLoginMessage(err.message || "Invalid email or password. Please check your login details.");
+      const message = err.message || "Invalid email or password. Please check your login details.";
+      setStatus(`Sign in failed: ${message}`, "error");
+      setLoginMessage(message, /taking longer|connection/i.test(message) ? "warn" : "error");
     });
     $("loginForm")?.addEventListener("keydown", event => {
       if (event.key !== "Enter" || event.target?.tagName !== "INPUT") return;

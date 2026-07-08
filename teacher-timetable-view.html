@@ -935,12 +935,11 @@
     function bookingRank(booking) {
       const status = String(booking?.status || "booked").toLowerCase();
       if (status === "deleted" || booking?.deleted === true) return -100;
-      if (booking?.archived === true) return -90;
-      if (status === "booked" && booking.changedSlot) return 7;
+      if (booking?.changedSlot) return 8;
+      if (status === "student_not_show") return 7;
       if (status === "booked") return 6;
       if (status === "completed") return 5;
-      if (status === "student_not_show") return 4;
-      if (CANCELLED.includes(status)) return 2;
+      if (CANCELLED.includes(status)) return 4;
       return 1;
     }
 
@@ -953,6 +952,7 @@
         record?.rebookedAt,
         record?.cancelledAt,
         record?.completedAt,
+        record?.studentNotShowAt,
         record?.deletedAt,
         record?.createdAt,
         record?.created_at
@@ -977,8 +977,6 @@
     function visibleTeacherViewBooking(booking) {
       const status = String(booking?.status || "booked").toLowerCase();
       if (!booking || status === "deleted" || booking.deleted === true) return false;
-      if (booking.archived === true) return false;
-      if ((booking.source || "") === "fixed_regular_snapshot" && booking.archived === true) return false;
       return true;
     }
 
