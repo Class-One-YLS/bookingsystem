@@ -8972,9 +8972,9 @@
       const method = String(options.method || "GET").toUpperCase();
       const authHeaders = {};
       const isSessionRequest = path.startsWith("/api/session");
-      if (method !== "GET" && !isSessionRequest) {
+      if (method !== "GET" && !isSessionRequest && sessionToken()) {
         authHeaders["X-User-Email"] = currentUserEmail();
-        if (sessionToken()) authHeaders["X-User-Session"] = sessionToken();
+        authHeaders["X-User-Session"] = sessionToken();
       }
       try {
         const res = await fetch(url, {
