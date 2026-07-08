@@ -8968,7 +8968,8 @@
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       const method = String(options.method || "GET").toUpperCase();
       const authHeaders = {};
-      if (method !== "GET") {
+      const isSessionRequest = path.startsWith("/api/session");
+      if (method !== "GET" && !isSessionRequest) {
         authHeaders["X-User-Email"] = currentUserEmail();
         if (sessionToken()) authHeaders["X-User-Session"] = sessionToken();
       }
@@ -8989,6 +8990,9 @@
         return data;
       } catch (err) {
         if (err.name === "AbortError") throw new Error(`${label} took too long to respond. Data is still saved in this browser.`);
+        if (label === "User sign in" && /failed to fetch/i.test(String(err.message || err))) {
+          throw new Error("User sign in cannot reach the API. Please redeploy the classone-booking-api repo with api/session.js and the updated CORS file first.");
+        }
         throw err;
       } finally {
         clearTimeout(timer);
