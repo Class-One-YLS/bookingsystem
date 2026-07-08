@@ -352,6 +352,7 @@
       <div class="grid one" style="margin-top:14px;">
         <div><label>Email</label><input id="loginEmail" type="email" placeholder="master@classone.local" value="master@classone.local"></div>
         <div><label>Password</label><div class="password-field"><input id="loginPassword" type="password" placeholder="Password"><button class="btn ghost icon-only" id="toggleLoginPasswordBtn" type="button" title="Show password" aria-label="Show password">&#128065;</button></div></div>
+        <label class="row" style="justify-content:flex-start; gap:10px;"><input id="rememberLogin" type="checkbox"> Remember me</label>
       </div>
       <div class="subtle hide" id="loginMessage" style="margin-top:10px;"></div>
       <div class="row" style="margin-top:14px;">
@@ -1103,7 +1104,7 @@
               <div class="grid two">
                 <div><label>Name</label><input id="userName" placeholder="Staff name"></div>
                 <div><label>Email</label><input id="userEmail" type="email" placeholder="name@classone.com"></div>
-                <div><label>Password</label><input id="userPassword" type="text" placeholder="Temporary password"></div>
+                <div><label>Password</label><div class="password-field"><input id="userPassword" type="password" placeholder="Temporary password"><button class="btn ghost icon-only" id="toggleUserPasswordBtn" type="button" title="Show password" aria-label="Show password">&#128065;</button></div></div>
                 <div><label>Role</label><select id="userRole"></select></div>
                 <div><label>Status</label><select id="userStatus"><option value="active">Active</option><option value="disabled">Disabled</option></select></div>
               </div>
@@ -1714,6 +1715,7 @@
     const DATA_BACKUP_KEY = "classone_data_backup";
     const SESSION_KEY = "classone_session";
     const UI_STATE_KEY = "classone_ui_state";
+    const REMEMBERED_EMAIL_KEY = "classone_remembered_email";
     const DB_NAME = "ClassOneBookingDB";
     const DB_STORE = "state";
     const MONTHLY_LEAD_PATTERN = /^(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)[\s_-]*\d{4}/i;
@@ -1782,6 +1784,30 @@
       } catch (err) {
         setStatus(`Browser storage blocked: ${err.message}`, "warn");
       }
+    }
+
+    function safeSessionGet(key) {
+      try {
+        return sessionStorage.getItem(key);
+      } catch (err) {
+        return "";
+      }
+    }
+
+    function safeSessionSet(key, value) {
+      try {
+        sessionStorage.setItem(key, value);
+      } catch (err) {
+        setStatus(`Browser session storage blocked: ${err.message}`, "warn");
+      }
+    }
+
+    function safeStorageRemove(key) {
+      try { localStorage.removeItem(key); } catch (err) {}
+    }
+
+    function safeSessionRemove(key) {
+      try { sessionStorage.removeItem(key); } catch (err) {}
     }
 
     function uiStateGet(key, fallback = "") {
@@ -1877,25 +1903,41 @@
     function sessionRecord() {
       try {
         const saved = JSON.parse(safeStorageGet(SESSION_KEY) || "null");
-        if (saved && typeof saved === "object") return saved;
+        if (saved && typeof saved === "object") return { ...saved, remembered: true };
+      } catch (err) {}
+      try {
+        const saved = JSON.parse(safeSessionGet(SESSION_KEY) || "null");
+        if (saved && typeof saved === "object") return { ...saved, remembered: false };
       } catch (err) {}
       const legacyToken = safeStorageGet(LEGACY_SESSION_TOKEN_KEY);
       if (!legacyToken) return null;
       let legacyUser = null;
       try { legacyUser = JSON.parse(safeStorageGet(LEGACY_SESSION_USER_KEY) || "null"); } catch (err) {}
-      return { token: legacyToken, user: legacyUser, savedAt: "" };
+      return { token: legacyToken, user: legacyUser, savedAt: "", remembered: true };
     }
 
-    function setSessionRecord(token, user) {
-      safeStorageSet(SESSION_KEY, JSON.stringify({ token: token || "", user: user || null, savedAt: new Date().toISOString() }));
-      safeStorageSet(LEGACY_SESSION_TOKEN_KEY, "");
-      safeStorageSet(LEGACY_SESSION_USER_KEY, "");
+    function setSessionRecord(token, user, remember = false) {
+      const record = JSON.stringify({ token: token || "", user: user || null, savedAt: new Date().toISOString() });
+      if (remember) {
+        safeStorageSet(SESSION_KEY, record);
+        safeSessionRemove(SESSION_KEY);
+        if (user?.email) safeStorageSet(REMEMBERED_EMAIL_KEY, user.email);
+      } else {
+        safeSessionSet(SESSION_KEY, record);
+        safeStorageRemove(SESSION_KEY);
+        safeStorageRemove(REMEMBERED_EMAIL_KEY);
+      }
+      safeStorageRemove(LEGACY_SESSION_TOKEN_KEY);
+      safeStorageRemove(LEGACY_SESSION_USER_KEY);
     }
 
     function clearSessionRecord() {
-      safeStorageSet(SESSION_KEY, "");
-      safeStorageSet(LEGACY_SESSION_TOKEN_KEY, "");
-      safeStorageSet(LEGACY_SESSION_USER_KEY, "");
+      const rememberedEmail = safeStorageGet(REMEMBERED_EMAIL_KEY);
+      safeStorageRemove(SESSION_KEY);
+      safeSessionRemove(SESSION_KEY);
+      safeStorageRemove(LEGACY_SESSION_TOKEN_KEY);
+      safeStorageRemove(LEGACY_SESSION_USER_KEY);
+      if (rememberedEmail) safeStorageSet(REMEMBERED_EMAIL_KEY, rememberedEmail);
     }
 
     function sessionToken() {
@@ -1945,10 +1987,12 @@
         const user = sessionUser() || currentUser();
         $("loginBtn").textContent = authenticated ? `${user?.name || user?.email || "Signed In"} | Sign Out` : "Sign In";
       }
-      if (!authenticated && $("loginEmail") && !$("loginEmail").value) $("loginEmail").value = "master@classone.local";
+      if (!authenticated && $("loginEmail") && !$("loginEmail").value) $("loginEmail").value = safeStorageGet(REMEMBERED_EMAIL_KEY) || "master@classone.local";
+      if ($("rememberLogin")) $("rememberLogin").checked = Boolean(safeStorageGet(REMEMBERED_EMAIL_KEY));
     }
 
     function effectiveAllowedTabs(user = currentUser()) {
+      if (!isAuthenticated()) return new Set();
       if (!user) return new Set(["schedule"]);
       if (user.role === "master_admin") return new Set(APP_TABS.map(tab => tab.id));
       const role = roleByName(user.role);
@@ -1957,12 +2001,14 @@
     }
 
     function hasTabAccess(tabId, user = currentUser()) {
+      if (!isAuthenticated()) return false;
       if (!user || user.status === "disabled") return false;
       if (tabId === "users") return user.role === "master_admin";
       return user.role === "master_admin" || effectiveAllowedTabs(user).has(tabId);
     }
 
     function hasActionPermission(permission, user = currentUser()) {
+      if (!isAuthenticated()) return false;
       if (!user || user.status === "disabled") return false;
       if (user.role === "master_admin") return true;
       const role = roleByName(user.role);
@@ -2387,8 +2433,8 @@
       state.users.forEach(user => {
         user.id ||= uid("user");
         user.name ||= "";
-        user.email ||= "";
-        user.password ||= "";
+        user.email = String(user.email || "").trim();
+        user.password = String(user.password || user.tempPassword || user.passwordHash || "");
         if (String(user.email || "").trim().toLowerCase() === "master@classone.local" && !user.password) {
           user.password = "classone2026private";
         }
@@ -3097,6 +3143,17 @@
 
     function isNeonVersionConflict(error) {
       return /version conflict|reload latest data/i.test(String(error?.message || error || ""));
+    }
+
+    function togglePasswordVisibility(inputId, buttonId) {
+      const input = $(inputId);
+      const button = $(buttonId);
+      if (!input || !button) return;
+      const showing = input.type === "text";
+      input.type = showing ? "password" : "text";
+      button.innerHTML = showing ? "&#128065;" : "&#128584;";
+      button.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+      button.title = showing ? "Show password" : "Hide password";
     }
 
     function setStatus(msg, type = "success", showToast = true) {
@@ -8189,7 +8246,7 @@
       $("userId").value = user.id;
       $("userName").value = user.name || "";
       $("userEmail").value = user.email || "";
-      $("userPassword").value = user.password || "";
+      $("userPassword").value = user.password || user.tempPassword || user.passwordHash || "";
       $("userRole").value = user.role || "viewer";
       $("userStatus").value = user.status || "active";
       $("userAllowedTabs").innerHTML = checklistHtml("userAllowedTab", APP_TABS, user.allowedTabs || []);
@@ -8264,16 +8321,17 @@
       `).join("") || `<div class="empty">No roles yet.</div>`;
     }
 
-    function saveUserProfile() {
+    async function saveUserProfile() {
       if (currentUser()?.role !== "master_admin") return denyPermission("Only master_admin can manage users.");
       const id = $("userId").value || uid("user");
       const existing = (state.users || []).find(item => item.id === id);
       const before = existing ? cloneForUndo(existing) : "";
+      const passwordValue = $("userPassword").value || existing?.password || existing?.tempPassword || existing?.passwordHash || "";
       const payload = {
         id,
         name: $("userName").value.trim(),
         email: $("userEmail").value.trim(),
-        password: $("userPassword").value,
+        password: passwordValue,
         role: $("userRole").value || "viewer",
         status: $("userStatus").value || "active",
         allowedTabs: checkedValues("userAllowedTab"),
@@ -8281,12 +8339,21 @@
         updatedAt: new Date().toISOString()
       };
       if (!payload.name && !payload.email) return alert("Fill user name or email first.");
-      if (existing) Object.assign(existing, payload);
-      else state.users.push(payload);
+      if (!payload.password) return alert("Fill a password for this user first.");
+      delete payload.passwordHash;
+      delete payload.tempPassword;
+      if (existing) {
+        Object.assign(existing, payload);
+        delete existing.passwordHash;
+        delete existing.tempPassword;
+      } else {
+        state.users.push(payload);
+      }
       logAction(existing ? "User Updated" : "User Created", payload.name || payload.email, before, cloneForUndo(payload), `Role: ${payload.role}`);
       save(false);
+      const synced = await autoPushIfConfigured(existing ? "User updated." : "User created.");
       selectUserForEdit(id);
-      setStatus(existing ? "User updated." : "User created.");
+      setStatus(synced ? (existing ? "User updated and synced to Neon." : "User created and synced to Neon.") : (existing ? "User updated locally. Neon sync is still pending." : "User created locally. Neon sync is still pending."), synced ? "success" : "warn");
     }
 
     function disableSelectedUser() {
@@ -8938,6 +9005,16 @@
       return Boolean(neonApiBase() && neonApiKey());
     }
 
+    function safeApiUrlForDisplay(url) {
+      try {
+        const parsed = new URL(url);
+        if (parsed.searchParams.has("key")) parsed.searchParams.set("key", "[hidden]");
+        return parsed.toString();
+      } catch (err) {
+        return String(url || "").replace(/(key=)[^&]+/i, "$1[hidden]");
+      }
+    }
+
     function remoteStatePayload() {
       const payload = JSON.parse(JSON.stringify(state));
       payload.settings ||= {};
@@ -9088,34 +9165,48 @@
 
     async function fetchNeonJson(path, options = {}, label = "Neon database", timeoutMs = SYNC_SAVE_TIMEOUT_MS) {
       const url = `${neonApiBase()}${path}`;
+      const displayUrl = safeApiUrlForDisplay(url);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       const method = String(options.method || "GET").toUpperCase();
-      const authHeaders = {};
       const isSessionRequest = path.startsWith("/api/session");
+      const requestOptions = { ...options };
       if (method !== "GET" && !isSessionRequest && sessionToken()) {
-        authHeaders["X-User-Email"] = currentUserEmail();
-        authHeaders["X-User-Session"] = sessionToken();
+        try {
+          const body = requestOptions.body ? JSON.parse(requestOptions.body) : {};
+          body.userSession = sessionToken();
+          body.userEmail = currentUserEmail();
+          requestOptions.body = JSON.stringify(body);
+        } catch (err) {}
       }
       try {
         const res = await fetch(url, {
-          ...options,
+          ...requestOptions,
           signal: controller.signal,
           headers: {
             "Content-Type": "application/json",
             "X-API-Key": neonApiKey(),
-            ...authHeaders,
-            ...(options.headers || {})
+            ...(requestOptions.headers || {})
           }
         });
         const text = await res.text();
         const data = text ? JSON.parse(text) : {};
-        if (!res.ok || data.ok === false) throw new Error(data.error || `${label} failed with HTTP ${res.status}.`);
+        if (method !== "GET" || !res.ok) console.info("[ClassOne API]", { label, url: displayUrl, method, status: res.status, ok: res.ok });
+        if (!res.ok || data.ok === false) {
+          const message = data.error || res.statusText || "Request failed.";
+          const error = new Error(`${label} failed at ${displayUrl} (HTTP ${res.status}): ${message}`);
+          error.status = res.status;
+          error.url = displayUrl;
+          throw error;
+        }
         return data;
       } catch (err) {
-        if (err.name === "AbortError") throw new Error(`${label} took too long to respond. Data is still saved in this browser.`);
+        if (err.name === "AbortError") throw new Error(`${label} at ${displayUrl} took too long to respond. Data is still saved in this browser.`);
         if (label === "User sign in" && /failed to fetch/i.test(String(err.message || err))) {
-          throw new Error("User sign in cannot reach the API. Please redeploy the classone-booking-api repo with api/session.js and the updated CORS file first.");
+          throw new Error(`User sign in cannot reach the API at ${displayUrl}. Please check Vercel deployment and CORS for https://class-one-yls.github.io.`);
+        }
+        if (/failed to fetch/i.test(String(err.message || err))) {
+          throw new Error(`${label} could not reach ${displayUrl}. Check the API URL, Vercel deployment, CORS, and network access.`);
         }
         throw err;
       } finally {
@@ -9129,6 +9220,7 @@
       const password = $("loginPassword").value;
       if (!email) return alert("Fill email first.");
       setLoginMessage("Signing in...", "info");
+      console.info("[ClassOne login]", { attemptedEmail: email.toLowerCase(), localUsersCount: (state.users || []).length, apiUrl: neonApiBase() });
       let data;
       try {
         data = await fetchNeonJson("/api/session", {
@@ -9136,10 +9228,18 @@
           body: JSON.stringify({ key: neonStateKey(), email, password })
         }, "User sign in", SYNC_SAVE_TIMEOUT_MS);
       } catch (error) {
-        setLoginMessage("Invalid email or password. Please check your login details.");
-        throw new Error("Invalid email or password. Please check your login details.");
+        const message = /disabled/i.test(error.message || "") ? "This user is disabled." : (/invalid email or password/i.test(error.message || "") ? "Invalid email or password. Please check your login details." : error.message);
+        setLoginMessage(message);
+        throw new Error(message);
       }
-      setSessionRecord(data.token || "", data.user || { email });
+      console.info("[ClassOne login]", { attemptedEmail: email.toLowerCase(), usersCountLoaded: data.debug?.usersCount, matchedUserFound: data.debug?.matchedUserFound });
+      setSessionRecord(data.token || "", data.user || { email }, Boolean($("rememberLogin")?.checked));
+      if (data.user?.id) uiStateSet("CurrentUserId", data.user.id);
+      try {
+        await neonPull(false);
+      } catch (pullError) {
+        setStatus(`Signed in, but latest Neon data could not load: ${pullError.message}`, "warn");
+      }
       const user = (state.users || []).find(item => String(item.email || "").toLowerCase() === email.toLowerCase());
       if (user) uiStateSet("CurrentUserId", user.id);
       $("loginPassword").value = "";
@@ -11756,7 +11856,10 @@
       setStatus("Current user changed for this browser.");
     };
     $("newUserBtn").onclick = clearUserForm;
-    $("saveUserBtn").onclick = saveUserProfile;
+    $("saveUserBtn").onclick = () => animateClick($("saveUserBtn"), saveUserProfile).catch(err => {
+      setStatus(`User save failed: ${err.message}`, "error");
+      alert(err.message);
+    });
     $("disableUserBtn").onclick = disableSelectedUser;
     $("resetUserPasswordBtn").onclick = resetSelectedUserPassword;
     $("newRoleBtn").onclick = clearRoleForm;
@@ -11814,14 +11917,8 @@
       if (!isAuthenticated()) return;
       $("loginModal").classList.add("hide");
     };
-    $("toggleLoginPasswordBtn").onclick = () => {
-      const input = $("loginPassword");
-      const showing = input.type === "text";
-      input.type = showing ? "password" : "text";
-      $("toggleLoginPasswordBtn").innerHTML = showing ? "&#128065;" : "Hide";
-      $("toggleLoginPasswordBtn").setAttribute("aria-label", showing ? "Show password" : "Hide password");
-      $("toggleLoginPasswordBtn").title = showing ? "Show password" : "Hide password";
-    };
+    $("toggleLoginPasswordBtn").onclick = () => togglePasswordVisibility("loginPassword", "toggleLoginPasswordBtn");
+    $("toggleUserPasswordBtn").onclick = () => togglePasswordVisibility("userPassword", "toggleUserPasswordBtn");
     $("confirmLoginBtn").onclick = () => animateClick($("confirmLoginBtn"), signInUser).catch(err => {
       setStatus(`Sign in failed: ${err.message}`, "error");
       alert(err.message);
