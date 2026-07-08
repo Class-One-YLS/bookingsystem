@@ -94,6 +94,10 @@
     .btn.small { min-height: 36px; padding: 0 11px; font-size: 11px; }
     .btn.icon-only { width: 44px; min-width: 44px; height: 44px; padding: 0; font-size: 20px; line-height: 1; }
     .btn.small.icon-only { width: 36px; min-width: 36px; height: 36px; padding: 0; font-size: 18px; }
+    .check-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; margin-top: 8px; }
+    .check-grid label { display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); color: var(--ink); font-size: 12px; text-transform: none; }
+    .check-grid input { width: auto; min-height: 0; }
+    .permission-denied { border-color: #e5484d; background: #fff5f5; color: #9f1239; }
     #overviewTeacherLinkActions { justify-content: flex-end; }
     #overviewTeacherLinkActions .btn { min-height: 36px; padding: 0 12px; flex: 0 0 auto; width: auto; }
     #overviewTeacherLinkActions a.btn, #overviewTeacherLinkActions a.btn:visited { color: var(--ink); text-decoration: none; }
@@ -334,6 +338,20 @@
       </div>
     </div>
   </div>
+  <div id="loginModal" class="modal hide">
+    <div class="modal-card" style="max-width:520px;">
+      <div class="row spread"><h2>User Sign In</h2><button class="btn ghost small" id="closeLoginBtn">Close</button></div>
+      <div class="subtle">Sign in before saving changes to Neon. Default first master admin: master@classone.local</div>
+      <div class="grid one" style="margin-top:14px;">
+        <div><label>Email</label><input id="loginEmail" type="email" placeholder="master@classone.local"></div>
+        <div><label>Password</label><input id="loginPassword" type="password" placeholder="Password"></div>
+      </div>
+      <div class="row" style="margin-top:14px;">
+        <button class="btn mint" id="confirmLoginBtn">Sign In</button>
+        <button class="btn ghost" id="signOutBtn">Sign Out</button>
+      </div>
+    </div>
+  </div>
   <div class="app-shell">
     <aside>
       <button class="btn ghost side-toggle" id="sidebarToggle" title="Hide sidebar" aria-label="Hide sidebar">&lsaquo;</button>
@@ -352,6 +370,7 @@
       <button class="nav-btn" data-tab="publicHoliday" data-short="PH">Public Holiday</button>
       <button class="nav-btn" data-tab="reports" data-short="Rpt">Reports</button>
       <button class="nav-btn" data-tab="activity" data-short="Log">Activity Log</button>
+      <button class="nav-btn" data-tab="users" data-short="Users">Users</button>
       <button class="nav-btn settings-nav" data-tab="settings" data-short="Set" data-title="Sync Settings" title="Sync Settings" aria-label="Sync Settings">&#9881;</button>
     </aside>
 
@@ -364,6 +383,7 @@
         <div class="row">
           <button class="btn ghost" id="layoutToggleBtn" title="Change the layout for this tab only">This Tab: Up and Down</button>
           <button class="btn ghost" id="archivePastBtn">Finalize Passed Classes</button>
+          <button class="btn ghost" id="loginBtn">Sign In</button>
           <button class="btn mint" id="saveBtn">Save</button>
         </div>
       </div>
@@ -1045,6 +1065,84 @@
         </div>
       </section>
 
+      <section id="users" class="tab hide">
+        <div class="panel section-nav">
+          <div class="row spread">
+            <strong>Sections in this tab</strong>
+            <div class="row">
+              <button class="btn ghost small" data-section-jump="userManagementPanel">Users</button>
+              <button class="btn ghost small" data-section-jump="roleManagementPanel">Roles</button>
+            </div>
+          </div>
+        </div>
+        <div class="panel" id="userManagementPanel">
+          <div class="row spread">
+            <div>
+              <h2>User Management</h2>
+              <div class="subtle">Create internal users, assign roles, and control which tabs they can access.</div>
+            </div>
+            <button class="btn mint small" id="newUserBtn">New User</button>
+          </div>
+          <div class="grid three" style="margin-top:14px;">
+            <div><label>Current User</label><select id="currentUserSelect"></select></div>
+            <div><label>Current Role</label><div class="card subtle" id="currentUserSummary">-</div></div>
+            <div><label>Access</label><div class="card subtle">Only master_admin can open this tab.</div></div>
+          </div>
+          <div class="grid two" style="margin-top:16px;">
+            <div class="card">
+              <h3>User Profile</h3>
+              <input id="userId" type="hidden">
+              <div class="grid two">
+                <div><label>Name</label><input id="userName" placeholder="Staff name"></div>
+                <div><label>Email</label><input id="userEmail" type="email" placeholder="name@classone.com"></div>
+                <div><label>Password</label><input id="userPassword" type="text" placeholder="Temporary password"></div>
+                <div><label>Role</label><select id="userRole"></select></div>
+                <div><label>Status</label><select id="userStatus"><option value="active">Active</option><option value="disabled">Disabled</option></select></div>
+              </div>
+              <h3 style="margin-top:14px;">Allowed Tabs Override</h3>
+              <div class="subtle">Leave empty to follow the role. Tick tabs here only when this user needs a custom access list.</div>
+              <div id="userAllowedTabs" class="check-grid"></div>
+              <div class="row" style="margin-top:14px;">
+                <button class="btn mint" id="saveUserBtn">Save User</button>
+                <button class="btn ghost" id="resetUserPasswordBtn">Reset Password</button>
+                <button class="btn danger" id="disableUserBtn">Disable User</button>
+              </div>
+            </div>
+            <div>
+              <h3>Users</h3>
+              <div id="userList" class="list"></div>
+            </div>
+          </div>
+        </div>
+        <div class="panel" id="roleManagementPanel">
+          <div class="row spread">
+            <div>
+              <h2>Role Management</h2>
+              <div class="subtle">Roles decide the default visible tabs and action permissions.</div>
+            </div>
+            <button class="btn mint small" id="newRoleBtn">New Role</button>
+          </div>
+          <div class="grid two" style="margin-top:16px;">
+            <div class="card">
+              <h3>Role Profile</h3>
+              <input id="roleId" type="hidden">
+              <div><label>Role Name</label><input id="roleName" placeholder="company_admin"></div>
+              <h3 style="margin-top:14px;">Allowed Tabs</h3>
+              <div id="roleAllowedTabs" class="check-grid"></div>
+              <h3 style="margin-top:14px;">Permissions</h3>
+              <div id="rolePermissions" class="check-grid"></div>
+              <div class="row" style="margin-top:14px;">
+                <button class="btn mint" id="saveRoleBtn">Save Role</button>
+              </div>
+            </div>
+            <div>
+              <h3>Roles</h3>
+              <div id="roleList" class="list"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="settings" class="tab hide">
         <div class="panel">
           <h2>Neon Database Sync</h2>
@@ -1608,6 +1706,38 @@
     const DB_NAME = "ClassOneBookingDB";
     const DB_STORE = "state";
     const MONTHLY_LEAD_PATTERN = /^(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)[\s_-]*\d{4}/i;
+    const APP_TABS = [
+      { id: "schedule", label: "Weekly Timetable" },
+      { id: "teacherOverview", label: "Teacher Overview" },
+      { id: "replacements", label: "Replacement Classes" },
+      { id: "teachers", label: "Teachers" },
+      { id: "students", label: "Students" },
+      { id: "teacherStudentRecords", label: "Teacher Student Records" },
+      { id: "crm", label: "CRM Leads" },
+      { id: "tutorCrm", label: "Tutor CRM" },
+      { id: "publicHoliday", label: "Public Holiday" },
+      { id: "reports", label: "Reports" },
+      { id: "activity", label: "Activity Log" },
+      { id: "settings", label: "Settings" },
+      { id: "users", label: "Users" }
+    ];
+    const ACTION_PERMISSIONS = [
+      { id: "view", label: "View" },
+      { id: "save", label: "Save" },
+      { id: "edit", label: "Edit" },
+      { id: "delete", label: "Delete" },
+      { id: "archive", label: "Archive" },
+      { id: "import", label: "Import / Sync" },
+      { id: "reset", label: "Reset" },
+      { id: "user_management", label: "User Management" }
+    ];
+    const DEFAULT_ROLES = [
+      { id: "role_master_admin", name: "master_admin", allowedTabs: APP_TABS.map(tab => tab.id), permissions: ACTION_PERMISSIONS.map(permission => permission.id) },
+      { id: "role_company_admin", name: "company_admin", allowedTabs: APP_TABS.filter(tab => tab.id !== "users").map(tab => tab.id), permissions: ["view", "save", "edit", "delete", "archive", "import"] },
+      { id: "role_viewer", name: "viewer", allowedTabs: ["schedule", "teacherOverview", "reports"], permissions: ["view"] }
+    ];
+    const CURRENT_USER_KEY = "classOneCurrentUserId";
+    const SESSION_TOKEN_KEY = "classOneUserSessionToken";
     const state = {
       teachers: [],
       students: [],
@@ -1622,6 +1752,8 @@
       teacherStudentNotes: [],
       teacherFeedback: [],
       activityLogs: [],
+      users: [],
+      roles: [],
       settings: { scriptUrl: "", apiKey: "", crmScriptUrl: "", crmApiKey: "", neonApiUrl: "", neonApiKey: "", neonStateKey: "", replyTemplates: [] }
     };
 
@@ -1697,6 +1829,59 @@
     const $ = (id) => document.getElementById(id);
     const uid = (prefix) => prefix + "_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
     const localISO = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+    function roleByName(name) {
+      return (state.roles || []).find(role => role.name === name) || null;
+    }
+
+    function currentUser() {
+      const selectedId = safeStorageGet(CURRENT_USER_KEY);
+      let user = (state.users || []).find(item => item.id === selectedId && item.status !== "disabled");
+      if (!user) user = (state.users || []).find(item => item.role === "master_admin" && item.status !== "disabled");
+      if (!user) user = (state.users || []).find(item => item.status !== "disabled");
+      if (user && selectedId !== user.id) safeStorageSet(CURRENT_USER_KEY, user.id);
+      return user || null;
+    }
+
+    function currentUserEmail() {
+      return currentUser()?.email || "";
+    }
+
+    function sessionToken() {
+      return safeStorageGet(SESSION_TOKEN_KEY);
+    }
+
+    function effectiveAllowedTabs(user = currentUser()) {
+      if (!user) return new Set(["schedule"]);
+      if (user.role === "master_admin") return new Set(APP_TABS.map(tab => tab.id));
+      const role = roleByName(user.role);
+      const tabs = Array.isArray(user.allowedTabs) && user.allowedTabs.length ? user.allowedTabs : (role?.allowedTabs || []);
+      return new Set(tabs);
+    }
+
+    function hasTabAccess(tabId, user = currentUser()) {
+      if (!user || user.status === "disabled") return false;
+      if (tabId === "users") return user.role === "master_admin";
+      return user.role === "master_admin" || effectiveAllowedTabs(user).has(tabId);
+    }
+
+    function hasActionPermission(permission, user = currentUser()) {
+      if (!user || user.status === "disabled") return false;
+      if (user.role === "master_admin") return true;
+      const role = roleByName(user.role);
+      return new Set(role?.permissions || []).has(permission);
+    }
+
+    function denyPermission(message = "You do not have permission to access this section.") {
+      setStatus(message, "error");
+      alert(message);
+      return false;
+    }
+
+    function requireActionPermission(permission) {
+      if (hasActionPermission(permission)) return true;
+      return denyPermission("You do not have permission to perform this action.");
+    }
 
     window.addEventListener("error", event => {
       const message = event.error?.message || event.message || "Unknown page error";
@@ -2065,6 +2250,47 @@
       state.teacherStudentNotes ||= [];
       state.teacherFeedback ||= [];
       state.activityLogs ||= [];
+      state.users ||= [];
+      state.roles ||= [];
+      if (!Array.isArray(state.roles) || !state.roles.length) {
+        state.roles = DEFAULT_ROLES.map(role => ({ ...role, allowedTabs: [...role.allowedTabs], permissions: [...role.permissions] }));
+      } else {
+        DEFAULT_ROLES.forEach(defaultRole => {
+          let role = state.roles.find(item => item.name === defaultRole.name);
+          if (!role) {
+            state.roles.push({ ...defaultRole, allowedTabs: [...defaultRole.allowedTabs], permissions: [...defaultRole.permissions] });
+          } else {
+            role.id ||= defaultRole.id;
+            role.allowedTabs = Array.isArray(role.allowedTabs) ? role.allowedTabs : [...defaultRole.allowedTabs];
+            role.permissions = Array.isArray(role.permissions) ? role.permissions : [...defaultRole.permissions];
+          }
+        });
+      }
+      if (!Array.isArray(state.users)) state.users = [];
+      if (!state.users.length) {
+        state.users.push({
+          id: "user_master_admin",
+          name: "Master Admin",
+          email: "master@classone.local",
+          password: "classone2026private",
+          role: "master_admin",
+          status: "active",
+          allowedTabs: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+      state.users.forEach(user => {
+        user.id ||= uid("user");
+        user.name ||= "";
+        user.email ||= "";
+        user.password ||= "";
+        user.role ||= "viewer";
+        user.status = user.status === "disabled" ? "disabled" : "active";
+        user.allowedTabs = Array.isArray(user.allowedTabs) ? user.allowedTabs : [];
+        user.createdAt ||= new Date().toISOString();
+        user.updatedAt ||= user.createdAt;
+      });
       state.settings ||= {};
       state.settings.scriptUrl = state.settings.scriptUrl || DEFAULT_SYNC.scriptUrl;
       state.settings.apiKey = state.settings.apiKey || DEFAULT_SYNC.apiKey;
@@ -2366,7 +2592,7 @@
       state.activityLogs.unshift({
         id: uid("log"),
         createdAt: new Date().toISOString(),
-        user: safeStorageGet("classOneStaffName") || "This browser / Admin",
+        user: currentUser()?.name || safeStorageGet("classOneStaffName") || "This browser / Admin",
         type,
         target: String(target || ""),
         beforeValue: compactLogValue(beforeValue),
@@ -2715,7 +2941,10 @@
       normalizeState();
     }
 
-    function save(show = true) {
+    function save(show = true, options = {}) {
+      if (!options.system && !hasActionPermission("save")) {
+        return denyPermission("You do not have permission to save changes.");
+      }
       state.settings.neonApiUrl = $("neonApiUrl").value.trim() || DEFAULT_NEON.apiUrl;
       state.settings.neonApiKey = $("neonApiKey").value.trim() || DEFAULT_NEON.apiKey;
       state.settings.neonStateKey = $("neonStateKey").value.trim() || DEFAULT_NEON.stateKey;
@@ -2734,6 +2963,7 @@
       if (show) setStatus("Saved.");
       renderAll();
       scheduleAutoPush();
+      return true;
     }
 
     function clearPendingSyncFlag() {
@@ -7804,6 +8034,196 @@
       </div>`;
     }
 
+    function checklistHtml(name, values, selected = []) {
+      const selectedSet = new Set(selected || []);
+      return values.map(item => `<label><input type="checkbox" name="${escapeHtml(name)}" value="${escapeHtml(item.id)}" ${selectedSet.has(item.id) ? "checked" : ""}> ${escapeHtml(item.label)}</label>`).join("");
+    }
+
+    function checkedValues(name) {
+      return [...document.querySelectorAll(`input[name="${name}"]:checked`)].map(input => input.value);
+    }
+
+    function editableRoles() {
+      return [...(state.roles || [])].sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+    }
+
+    function renderAccessControls() {
+      const user = currentUser();
+      document.querySelectorAll(".nav-btn[data-tab]").forEach(button => {
+        const visible = hasTabAccess(button.dataset.tab, user);
+        button.classList.toggle("hide", !visible);
+      });
+      const active = activeTabId();
+      if (!hasTabAccess(active, user)) {
+        const fallback = APP_TABS.find(tab => hasTabAccess(tab.id, user))?.id || "schedule";
+        document.querySelector(`.nav-btn[data-tab="${fallback}"]`)?.click();
+      }
+      document.body.classList.toggle("viewer-mode", !hasActionPermission("edit", user));
+      if ($("loginBtn")) $("loginBtn").textContent = sessionToken() ? `Signed In: ${user?.name || user?.email || "User"}` : "Sign In";
+    }
+
+    function selectUserForEdit(id) {
+      const user = (state.users || []).find(item => item.id === id);
+      if (!user) return;
+      $("userId").value = user.id;
+      $("userName").value = user.name || "";
+      $("userEmail").value = user.email || "";
+      $("userPassword").value = user.password || "";
+      $("userRole").value = user.role || "viewer";
+      $("userStatus").value = user.status || "active";
+      $("userAllowedTabs").innerHTML = checklistHtml("userAllowedTab", APP_TABS, user.allowedTabs || []);
+    }
+
+    function clearUserForm() {
+      $("userId").value = "";
+      $("userName").value = "";
+      $("userEmail").value = "";
+      $("userPassword").value = "";
+      $("userRole").value = "viewer";
+      $("userStatus").value = "active";
+      $("userAllowedTabs").innerHTML = checklistHtml("userAllowedTab", APP_TABS, []);
+    }
+
+    function selectRoleForEdit(id) {
+      const role = (state.roles || []).find(item => item.id === id);
+      if (!role) return;
+      $("roleId").value = role.id;
+      $("roleName").value = role.name || "";
+      $("roleAllowedTabs").innerHTML = checklistHtml("roleAllowedTab", APP_TABS, role.allowedTabs || []);
+      $("rolePermissions").innerHTML = checklistHtml("rolePermission", ACTION_PERMISSIONS, role.permissions || []);
+    }
+
+    function clearRoleForm() {
+      $("roleId").value = "";
+      $("roleName").value = "";
+      $("roleAllowedTabs").innerHTML = checklistHtml("roleAllowedTab", APP_TABS, []);
+      $("rolePermissions").innerHTML = checklistHtml("rolePermission", ACTION_PERMISSIONS, ["view"]);
+    }
+
+    function renderUsers() {
+      if (!$("users")) return;
+      const user = currentUser();
+      $("currentUserSelect").innerHTML = (state.users || [])
+        .filter(item => item.status !== "disabled")
+        .map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name || item.email || item.id)} (${escapeHtml(item.role || "viewer")})</option>`)
+        .join("");
+      if (user) $("currentUserSelect").value = user.id;
+      $("currentUserSummary").textContent = user ? `${user.name || user.email || "User"} | ${user.role || "viewer"} | ${user.status || "active"}` : "No active user";
+      $("userRole").innerHTML = editableRoles().map(role => `<option value="${escapeHtml(role.name)}">${escapeHtml(role.name)}</option>`).join("");
+      const existingUserId = $("userId").value;
+      if (existingUserId && (state.users || []).some(item => item.id === existingUserId)) selectUserForEdit(existingUserId);
+      else clearUserForm();
+      const users = [...(state.users || [])].sort((a, b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || "")));
+      $("userList").innerHTML = users.map(item => `
+        <div class="card" style="margin-bottom:10px;">
+          <div class="row spread">
+            <div>
+              <strong>${escapeHtml(item.name || item.email || "Unnamed user")}</strong>
+              <div class="subtle">${escapeHtml(item.email || "-")} | ${escapeHtml(item.role || "viewer")} | ${escapeHtml(item.status || "active")}</div>
+              <div class="subtle">${(item.allowedTabs || []).length ? `${item.allowedTabs.length} custom tabs` : "Follows role tabs"}</div>
+            </div>
+            <button class="btn ghost small" data-edit-user="${escapeHtml(item.id)}">Edit</button>
+          </div>
+        </div>
+      `).join("") || `<div class="empty">No users yet.</div>`;
+
+      const roleId = $("roleId").value;
+      if (roleId && (state.roles || []).some(item => item.id === roleId)) selectRoleForEdit(roleId);
+      else clearRoleForm();
+      $("roleList").innerHTML = editableRoles().map(role => `
+        <div class="card" style="margin-bottom:10px;">
+          <div class="row spread">
+            <div>
+              <strong>${escapeHtml(role.name || "Role")}</strong>
+              <div class="subtle">${(role.allowedTabs || []).length} tabs | ${(role.permissions || []).length} permissions</div>
+            </div>
+            <button class="btn ghost small" data-edit-role="${escapeHtml(role.id)}">Edit</button>
+          </div>
+        </div>
+      `).join("") || `<div class="empty">No roles yet.</div>`;
+    }
+
+    function saveUserProfile() {
+      if (currentUser()?.role !== "master_admin") return denyPermission("Only master_admin can manage users.");
+      const id = $("userId").value || uid("user");
+      const existing = (state.users || []).find(item => item.id === id);
+      const before = existing ? cloneForUndo(existing) : "";
+      const payload = {
+        id,
+        name: $("userName").value.trim(),
+        email: $("userEmail").value.trim(),
+        password: $("userPassword").value,
+        role: $("userRole").value || "viewer",
+        status: $("userStatus").value || "active",
+        allowedTabs: checkedValues("userAllowedTab"),
+        createdAt: existing?.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      if (!payload.name && !payload.email) return alert("Fill user name or email first.");
+      if (existing) Object.assign(existing, payload);
+      else state.users.push(payload);
+      logAction(existing ? "User Updated" : "User Created", payload.name || payload.email, before, cloneForUndo(payload), `Role: ${payload.role}`);
+      save(false);
+      selectUserForEdit(id);
+      setStatus(existing ? "User updated." : "User created.");
+    }
+
+    function disableSelectedUser() {
+      if (currentUser()?.role !== "master_admin") return denyPermission("Only master_admin can manage users.");
+      const user = (state.users || []).find(item => item.id === $("userId").value);
+      if (!user) return alert("Choose a user first.");
+      if (user.role === "master_admin" && (state.users || []).filter(item => item.role === "master_admin" && item.status !== "disabled").length <= 1) {
+        return alert("Keep at least one active master_admin user.");
+      }
+      const before = cloneForUndo(user);
+      user.status = "disabled";
+      user.updatedAt = new Date().toISOString();
+      logAction("User Disabled", user.name || user.email, before, cloneForUndo(user), "User status changed to disabled.");
+      save(false);
+      setStatus("User disabled.");
+    }
+
+    function resetSelectedUserPassword() {
+      if (currentUser()?.role !== "master_admin") return denyPermission("Only master_admin can manage users.");
+      const user = (state.users || []).find(item => item.id === $("userId").value);
+      if (!user) return alert("Choose a user first.");
+      const password = prompt(`Enter a new temporary password for ${user.name || user.email}:`, user.password || "");
+      if (password == null) return;
+      const before = cloneForUndo(user);
+      user.password = password;
+      user.updatedAt = new Date().toISOString();
+      $("userPassword").value = password;
+      logAction("Password Reset", user.name || user.email, before, cloneForUndo({ ...user, password: "[reset]" }), "Master admin reset password.");
+      save(false);
+      setStatus("Password reset.");
+    }
+
+    function saveRoleProfile() {
+      if (currentUser()?.role !== "master_admin") return denyPermission("Only master_admin can manage roles.");
+      const id = $("roleId").value || uid("role");
+      const name = $("roleName").value.trim();
+      if (!name) return alert("Fill role name first.");
+      const existing = (state.roles || []).find(item => item.id === id || item.name === name);
+      const before = existing ? cloneForUndo(existing) : "";
+      const payload = {
+        id: existing?.id || id,
+        name,
+        allowedTabs: checkedValues("roleAllowedTab"),
+        permissions: checkedValues("rolePermission"),
+        updatedAt: new Date().toISOString()
+      };
+      if (payload.name === "master_admin") {
+        payload.allowedTabs = APP_TABS.map(tab => tab.id);
+        payload.permissions = ACTION_PERMISSIONS.map(permission => permission.id);
+      }
+      if (existing) Object.assign(existing, payload);
+      else state.roles.push({ ...payload, createdAt: new Date().toISOString() });
+      logAction(existing ? "Role Changed" : "Role Created", payload.name, before, cloneForUndo(payload), "Tab permission changed.");
+      save(false);
+      selectRoleForEdit(payload.id);
+      setStatus(existing ? "Role updated." : "Role created.");
+    }
+
     function setAutoPager(anchorId, html) {
       const anchor = $(anchorId);
       if (!anchor) return;
@@ -8066,10 +8486,12 @@
       renderReplacementCredits();
       renderPublicHolidayCalendar();
       renderActivityLog();
+      renderUsers();
       renderSectionNav();
       updateActionPopup();
       symbolizeActionButtons();
       enhanceTableColumnControls();
+      renderAccessControls();
     }
 
     function clearTeacherForm() {
@@ -8551,6 +8973,8 @@
           headers: {
             "Content-Type": "application/json",
             "X-API-Key": neonApiKey(),
+            "X-User-Email": currentUserEmail(),
+            "X-User-Session": sessionToken(),
             ...(options.headers || {})
           }
         });
@@ -8564,6 +8988,31 @@
       } finally {
         clearTimeout(timer);
       }
+    }
+
+    async function signInUser() {
+      if (!neonConfigured()) return alert("Neon API URL and API key are required before sign in.");
+      const email = $("loginEmail").value.trim();
+      const password = $("loginPassword").value;
+      if (!email) return alert("Fill email first.");
+      const data = await fetchNeonJson("/api/session", {
+        method: "POST",
+        body: JSON.stringify({ key: neonStateKey(), email, password })
+      }, "User sign in", SYNC_SAVE_TIMEOUT_MS);
+      safeStorageSet(SESSION_TOKEN_KEY, data.token || "");
+      const user = (state.users || []).find(item => String(item.email || "").toLowerCase() === email.toLowerCase());
+      if (user) safeStorageSet(CURRENT_USER_KEY, user.id);
+      $("loginPassword").value = "";
+      $("loginModal").classList.add("hide");
+      renderAll();
+      setStatus(`Signed in as ${data.user?.name || email}.`);
+    }
+
+    function signOutUser() {
+      safeStorageSet(SESSION_TOKEN_KEY, "");
+      $("loginModal").classList.add("hide");
+      renderAll();
+      setStatus("Signed out. Viewing is still available, but saving requires sign in.");
     }
 
     async function neonPull(logManual = false) {
@@ -8601,7 +9050,7 @@
       state.settings.lastSyncedAt = new Date().toISOString();
       clearPendingSyncFlag();
       suppressAutoPush = true;
-      save(false);
+      save(false, { system: true });
       suppressAutoPush = false;
       if (logManual) logAction("Neon Loaded", "Neon Database", "", "Loaded latest app data", "Manual Neon load completed.");
       setStatus("Loaded latest data from Neon database.");
@@ -8628,7 +9077,7 @@
           key: neonStateKey(),
           expectedVersion: currentVersion,
           totalChunks: chunks.length,
-          updatedBy: safeStorageGet("classOneStaffName") || "Class One Admin"
+          updatedBy: currentUser()?.name || safeStorageGet("classOneStaffName") || "Class One Admin"
         })
       }, "Neon save init", SYNC_SAVE_TIMEOUT_MS);
       for (let index = 0; index < chunks.length; index += 1) {
@@ -9453,9 +9902,36 @@
       applyTabLayout(activeTabId(), stacked, true);
     }
 
+    function permissionForActionButton(button) {
+      if (!button || button.classList.contains("nav-btn") || button.id === "sidebarToggle" || button.id === "layoutToggleBtn") return "";
+      if (button.closest("#loginModal") || button.id === "loginBtn") return "";
+      if (button.closest("#users")) return "user_management";
+      const text = `${button.id || ""} ${button.dataset ? Object.keys(button.dataset).join(" ") : ""} ${button.textContent || ""} ${button.title || ""} ${button.getAttribute("aria-label") || ""}`.toLowerCase();
+      if (/reset|start from zero|clear browser/.test(text)) return "reset";
+      if (/import|pull|push|sync|neon|sheet|load from|save to/.test(text)) return "import";
+      if (/delete|remove|void/.test(text)) return "delete";
+      if (/archive|restore|undo cancellation|drop/.test(text)) return "archive";
+      if (/save/.test(text)) return "save";
+      if (/edit|add|new|book|confirm|set |update|create|disable|password|open slot|off/.test(text)) return "edit";
+      return "";
+    }
+
+    document.addEventListener("click", event => {
+      const button = event.target.closest?.("button");
+      const permission = permissionForActionButton(button);
+      if (!permission) return;
+      if (hasActionPermission(permission)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      denyPermission("You do not have permission to perform this action.");
+    }, true);
+
     document.addEventListener("click", (e) => {
       const nav = e.target.closest(".nav-btn");
       if (nav) {
+        if (!hasTabAccess(nav.dataset.tab)) {
+          return denyPermission("You do not have permission to access this section.");
+        }
         if (teacherSlotEditMode && nav.dataset.tab !== "teacherOverview") {
           teacherSlotEditMode = false;
           teacherSlotEditTeacherId = "";
@@ -11121,6 +11597,29 @@
     };
     $("exportActivityCsvBtn").onclick = () => downloadCsv("class-one-activity-log.csv", ["No.", "Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], numbered(activityExportRows()));
     $("exportActivityPdfBtn").onclick = () => openPrintReport("Activity Log", ["No.", "Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], numbered(activityExportRows()));
+    $("currentUserSelect").onchange = () => {
+      safeStorageSet(CURRENT_USER_KEY, $("currentUserSelect").value);
+      renderAll();
+      setStatus("Current user changed for this browser.");
+    };
+    $("newUserBtn").onclick = clearUserForm;
+    $("saveUserBtn").onclick = saveUserProfile;
+    $("disableUserBtn").onclick = disableSelectedUser;
+    $("resetUserPasswordBtn").onclick = resetSelectedUserPassword;
+    $("newRoleBtn").onclick = clearRoleForm;
+    $("saveRoleBtn").onclick = saveRoleProfile;
+    document.addEventListener("click", event => {
+      const editUser = event.target.closest("[data-edit-user]");
+      if (editUser) {
+        selectUserForEdit(editUser.dataset.editUser);
+        document.getElementById("userManagementPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      const editRole = event.target.closest("[data-edit-role]");
+      if (editRole) {
+        selectRoleForEdit(editRole.dataset.editRole);
+        document.getElementById("roleManagementPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
     $("neonPullBtn").onclick = () => animateClick($("neonPullBtn"), async () => {
       if (state.settings.pendingLocalSync) return alert("Local edits are still waiting to sync. Wait for Synced, or use Save To Neon before loading remote data.");
       await neonPull(true);
@@ -11152,6 +11651,17 @@
     });
     $("sidebarToggle").onclick = () => setSidebarCollapsed(!document.querySelector(".app-shell").classList.contains("sidebar-collapsed"));
     $("layoutToggleBtn").onclick = () => setStackedLayout(!document.getElementById(activeTabId())?.classList.contains("layout-stacked"));
+    $("loginBtn").onclick = () => {
+      const user = currentUser();
+      $("loginEmail").value = user?.email || "";
+      $("loginModal").classList.remove("hide");
+    };
+    $("closeLoginBtn").onclick = () => $("loginModal").classList.add("hide");
+    $("confirmLoginBtn").onclick = () => animateClick($("confirmLoginBtn"), signInUser).catch(err => {
+      setStatus(`Sign in failed: ${err.message}`, "error");
+      alert(err.message);
+    });
+    $("signOutBtn").onclick = signOutUser;
     $("dismissActionPopupBtn").onclick = () => {
       safeStorageSet(`classOneActionPopupDismissed.${todayISO()}`, "1");
       $("actionPopup").classList.add("hide");
