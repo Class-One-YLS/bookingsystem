@@ -8966,6 +8966,12 @@
       const url = `${neonApiBase()}${path}`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const method = String(options.method || "GET").toUpperCase();
+      const authHeaders = {};
+      if (method !== "GET") {
+        authHeaders["X-User-Email"] = currentUserEmail();
+        if (sessionToken()) authHeaders["X-User-Session"] = sessionToken();
+      }
       try {
         const res = await fetch(url, {
           ...options,
@@ -8973,8 +8979,7 @@
           headers: {
             "Content-Type": "application/json",
             "X-API-Key": neonApiKey(),
-            "X-User-Email": currentUserEmail(),
-            "X-User-Session": sessionToken(),
+            ...authHeaders,
             ...(options.headers || {})
           }
         });
