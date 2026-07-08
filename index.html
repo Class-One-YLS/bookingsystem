@@ -1711,6 +1711,9 @@
     const AUTO_SAVE_DEBOUNCE_MS = 1200;
     const NEON_CHUNK_SIZE = 300000;
     const STORE_KEY = "classOneBookingRevamp.v1";
+    const DATA_BACKUP_KEY = "classone_data_backup";
+    const SESSION_KEY = "classone_session";
+    const UI_STATE_KEY = "classone_ui_state";
     const DB_NAME = "ClassOneBookingDB";
     const DB_STORE = "state";
     const MONTHLY_LEAD_PATTERN = /^(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)[\s_-]*\d{4}/i;
@@ -1744,9 +1747,8 @@
       { id: "role_company_admin", name: "company_admin", allowedTabs: APP_TABS.filter(tab => tab.id !== "users").map(tab => tab.id), permissions: ["view", "save", "edit", "delete", "archive", "import"] },
       { id: "role_viewer", name: "viewer", allowedTabs: ["schedule", "teacherOverview", "reports"], permissions: ["view"] }
     ];
-    const CURRENT_USER_KEY = "classOneCurrentUserId";
-    const SESSION_TOKEN_KEY = "classOneUserSessionToken";
-    const SESSION_USER_KEY = "classOneUserSessionUser";
+    const LEGACY_SESSION_TOKEN_KEY = "classOneUserSessionToken";
+    const LEGACY_SESSION_USER_KEY = "classOneUserSessionUser";
     const state = {
       teachers: [],
       students: [],
@@ -1782,15 +1784,30 @@
       }
     }
 
+    function uiStateGet(key, fallback = "") {
+      try {
+        const state = JSON.parse(safeStorageGet(UI_STATE_KEY) || "{}");
+        if (state && Object.prototype.hasOwnProperty.call(state, key)) return state[key];
+      } catch (err) {}
+      return safeStorageGet(`classOne${key}`) || fallback;
+    }
+
+    function uiStateSet(key, value) {
+      let state = {};
+      try { state = JSON.parse(safeStorageGet(UI_STATE_KEY) || "{}") || {}; } catch (err) {}
+      state[key] = value;
+      safeStorageSet(UI_STATE_KEY, JSON.stringify(state));
+    }
+
     let studentRegularSlotsDraft = [];
     let studentRegularSlotEditId = "";
     let pendingEnrollmentLeadId = "";
     const LIST_PAGE_SIZE = 10;
     const LEADS_PER_PAGE = LIST_PAGE_SIZE;
     let leadPage = 1;
-    let leadViewMode = "table";
+    let leadViewMode = uiStateGet("LeadViewMode", "table") || "table";
     let tutorLeadPage = 1;
-    let tutorLeadViewMode = "table";
+    let tutorLeadViewMode = uiStateGet("TutorLeadViewMode", "table") || "table";
     let teacherListPage = 1;
     let studentListPage = 1;
     let registeredStudentPage = 1;
@@ -1804,7 +1821,7 @@
     let teacherFeedbackPage = 1;
     let leadColumnFilterTimer = null;
     let openColumnFilterId = "";
-    let replacementViewMode = safeStorageGet("classOneReplacementViewMode") || "board";
+    let replacementViewMode = uiStateGet("ReplacementViewMode", "board") || "board";
     let replacementPage = 1;
     const REPLACEMENT_PAGE_SIZE = LIST_PAGE_SIZE;
     const teacherLinkSyncing = new Set();
@@ -1822,6 +1839,7 @@
     let autoNeonRefreshTimer = null;
     let autoNeonRefreshInProgress = false;
     let suppressAutoPush = false;
+    let hasUnsavedBusinessChanges = false;
     let initialDataLoadComplete = false;
     let pendingReplacementId = "";
     let pendingReplacementCreditId = "";
@@ -1844,11 +1862,11 @@
     }
 
     function currentUser() {
-      const selectedId = safeStorageGet(CURRENT_USER_KEY);
+      const selectedId = uiStateGet("CurrentUserId", "");
       let user = (state.users || []).find(item => item.id === selectedId && item.status !== "disabled");
       if (!user) user = (state.users || []).find(item => item.role === "master_admin" && item.status !== "disabled");
       if (!user) user = (state.users || []).find(item => item.status !== "disabled");
-      if (user && selectedId !== user.id) safeStorageSet(CURRENT_USER_KEY, user.id);
+      if (user && selectedId !== user.id) uiStateSet("CurrentUserId", user.id);
       return user || null;
     }
 
@@ -1856,12 +1874,36 @@
       return currentUser()?.email || "";
     }
 
+    function sessionRecord() {
+      try {
+        const saved = JSON.parse(safeStorageGet(SESSION_KEY) || "null");
+        if (saved && typeof saved === "object") return saved;
+      } catch (err) {}
+      const legacyToken = safeStorageGet(LEGACY_SESSION_TOKEN_KEY);
+      if (!legacyToken) return null;
+      let legacyUser = null;
+      try { legacyUser = JSON.parse(safeStorageGet(LEGACY_SESSION_USER_KEY) || "null"); } catch (err) {}
+      return { token: legacyToken, user: legacyUser, savedAt: "" };
+    }
+
+    function setSessionRecord(token, user) {
+      safeStorageSet(SESSION_KEY, JSON.stringify({ token: token || "", user: user || null, savedAt: new Date().toISOString() }));
+      safeStorageSet(LEGACY_SESSION_TOKEN_KEY, "");
+      safeStorageSet(LEGACY_SESSION_USER_KEY, "");
+    }
+
+    function clearSessionRecord() {
+      safeStorageSet(SESSION_KEY, "");
+      safeStorageSet(LEGACY_SESSION_TOKEN_KEY, "");
+      safeStorageSet(LEGACY_SESSION_USER_KEY, "");
+    }
+
     function sessionToken() {
-      return safeStorageGet(SESSION_TOKEN_KEY);
+      return sessionRecord()?.token || "";
     }
 
     function sessionUser() {
-      try { return JSON.parse(safeStorageGet(SESSION_USER_KEY) || "null"); } catch (err) { return null; }
+      return sessionRecord()?.user || null;
     }
 
     function sessionPayload() {
@@ -1892,8 +1934,7 @@
     function renderAuthState() {
       const authenticated = isAuthenticated();
       if (!authenticated && sessionToken()) {
-        safeStorageSet(SESSION_TOKEN_KEY, "");
-        safeStorageSet(SESSION_USER_KEY, "");
+        clearSessionRecord();
       }
       document.body.classList.toggle("auth-locked", !authenticated);
       $("loginModal")?.classList.toggle("hide", authenticated);
@@ -2149,7 +2190,7 @@
 
     function load() {
       try {
-        const saved = safeStorageGet(STORE_KEY);
+        const saved = safeStorageGet(DATA_BACKUP_KEY) || safeStorageGet(STORE_KEY);
         if (saved) {
           const parsed = JSON.parse(saved);
           if (parsed && parsed.settings) state.settings = { ...(state.settings || {}), ...parsed.settings };
@@ -2262,6 +2303,7 @@
           localRevision: Number(state.settings.localRevision || 0),
           lastSyncedRevision: Number(state.settings.lastSyncedRevision || 0),
           pendingLocalSync: Boolean(state.settings.pendingLocalSync),
+          businessDirty: Boolean(state.settings.businessDirty),
           lastLocalChangeAt: state.settings.lastLocalChangeAt || "",
           lastSyncedAt: state.settings.lastSyncedAt || ""
         }
@@ -2270,7 +2312,7 @@
 
     function persistState() {
       saveStateToIndexedDb().catch(err => setStatus(`Browser database save failed: ${err.message}`, "error"));
-      safeStorageSet(STORE_KEY, JSON.stringify(localStorageSnapshot()));
+      safeStorageSet(DATA_BACKUP_KEY, JSON.stringify(localStorageSnapshot()));
     }
 
     async function hydratePersistentState() {
@@ -2278,7 +2320,13 @@
       if (!saved) return;
       Object.assign(state, saved);
       state.settings ||= {};
-      state.settings.pendingLocalSync = Boolean(state.settings.pendingLocalSync);
+      state.settings.businessDirty = Boolean(state.settings.businessDirty);
+      state.settings.pendingLocalSync = Boolean(state.settings.pendingLocalSync && state.settings.businessDirty);
+      hasUnsavedBusinessChanges = Boolean(state.settings.businessDirty && state.settings.pendingLocalSync);
+      if (!hasUnsavedBusinessChanges) {
+        state.settings.pendingLocalSync = false;
+        state.settings.businessDirty = false;
+      }
       state.settings.lastLocalChangeAt ||= "";
       normalizeState();
       applySettingsInputs();
@@ -2361,6 +2409,8 @@
       state.settings.neonVersion = Number(state.settings.neonVersion || 0);
       state.settings.localRevision = Number(state.settings.localRevision || 0);
       state.settings.lastSyncedRevision = Number(state.settings.lastSyncedRevision || 0);
+      state.settings.businessDirty = Boolean(state.settings.businessDirty);
+      state.settings.pendingLocalSync = Boolean(state.settings.pendingLocalSync && state.settings.businessDirty);
       state.settings.crmActiveLeadStartAt ||= new Date().toISOString();
       if (!Array.isArray(state.settings.replyTemplates) || !state.settings.replyTemplates.length) {
         state.settings.replyTemplates = DEFAULT_REPLY_TEMPLATES.map(template => ({ ...template }));
@@ -3004,6 +3054,7 @@
       if (!options.system && !hasActionPermission("save")) {
         return denyPermission("You do not have permission to save changes.");
       }
+      const isBusinessChange = !options.system && options.dirty !== false;
       state.settings.neonApiUrl = $("neonApiUrl").value.trim() || DEFAULT_NEON.apiUrl;
       state.settings.neonApiKey = $("neonApiKey").value.trim() || DEFAULT_NEON.apiKey;
       state.settings.neonStateKey = $("neonStateKey").value.trim() || DEFAULT_NEON.stateKey;
@@ -3012,7 +3063,9 @@
       state.settings.crmScriptUrl = $("crmScriptUrl").value.trim() || DEFAULT_SYNC.crmScriptUrl;
       state.settings.crmApiKey = $("crmApiKey").value.trim() || DEFAULT_SYNC.crmApiKey;
       applySettingsInputs();
-      if (!suppressAutoPush) {
+      if (isBusinessChange && !suppressAutoPush) {
+        hasUnsavedBusinessChanges = true;
+        state.settings.businessDirty = true;
         state.settings.pendingLocalSync = true;
         state.settings.lastLocalChangeAt = new Date().toISOString();
         state.settings.localRevision = Number(state.settings.localRevision || 0) + 1;
@@ -3021,11 +3074,13 @@
       persistState();
       if (show) setStatus("Saved.");
       renderAll();
-      scheduleAutoPush();
+      if (isBusinessChange) scheduleAutoPush();
       return true;
     }
 
     function clearPendingSyncFlag() {
+      hasUnsavedBusinessChanges = false;
+      state.settings.businessDirty = false;
       state.settings.pendingLocalSync = false;
       state.settings.lastLocalChangeAt = "";
       persistState();
@@ -3034,6 +3089,7 @@
     function scheduleAutoPush() {
       if (suppressAutoPush) return;
       if (!neonConfigured()) return;
+      if (!hasUnsavedBusinessChanges && !state.settings.pendingLocalSync) return;
       clearTimeout(autoPushTimer);
       setStatus("Saved locally. Waiting to sync to Neon...", "warn");
       autoPushTimer = setTimeout(() => enqueueNeonPush("Saved.", true), AUTO_SAVE_DEBOUNCE_MS);
@@ -4350,6 +4406,8 @@
         });
       });
       if (!expired.length) return;
+      hasUnsavedBusinessChanges = true;
+      state.settings.businessDirty = true;
       state.settings.pendingLocalSync = true;
       state.settings.lastLocalChangeAt = new Date().toISOString();
       state.settings.localRevision = Number(state.settings.localRevision || 0) + 1;
@@ -8462,7 +8520,7 @@
 
     function hiddenTableColumns(key) {
       try {
-        const saved = JSON.parse(safeStorageGet(`classOneHiddenTableColumns.${key}`) || "[]");
+        const saved = JSON.parse(uiStateGet(`HiddenTableColumns.${key}`, "[]") || "[]");
         return new Set(Array.isArray(saved) ? saved.map(Number).filter(Number.isInteger) : []);
       } catch (err) {
         return new Set();
@@ -8470,7 +8528,7 @@
     }
 
     function saveHiddenTableColumns(key, hidden) {
-      safeStorageSet(`classOneHiddenTableColumns.${key}`, JSON.stringify([...hidden].sort((a, b) => a - b)));
+      uiStateSet(`HiddenTableColumns.${key}`, JSON.stringify([...hidden].sort((a, b) => a - b)));
     }
 
     function findColumnControlledTable(key) {
@@ -8884,6 +8942,7 @@
       const payload = JSON.parse(JSON.stringify(state));
       payload.settings ||= {};
       payload.settings.pendingLocalSync = false;
+      payload.settings.businessDirty = false;
       payload.settings.lastLocalChangeAt = "";
       return payload;
     }
@@ -8970,8 +9029,10 @@
         ...(state.settings || {}),
         ...(localPayload.settings || {}),
         neonVersion: remoteVersion,
+        businessDirty: true,
         pendingLocalSync: true
       };
+      hasUnsavedBusinessChanges = true;
       normalizeState();
       if (localResetIsNewer) {
         state.teachers = [];
@@ -9078,10 +9139,9 @@
         setLoginMessage("Invalid email or password. Please check your login details.");
         throw new Error("Invalid email or password. Please check your login details.");
       }
-      safeStorageSet(SESSION_TOKEN_KEY, data.token || "");
-      safeStorageSet(SESSION_USER_KEY, JSON.stringify(data.user || { email }));
+      setSessionRecord(data.token || "", data.user || { email });
       const user = (state.users || []).find(item => String(item.email || "").toLowerCase() === email.toLowerCase());
-      if (user) safeStorageSet(CURRENT_USER_KEY, user.id);
+      if (user) uiStateSet("CurrentUserId", user.id);
       $("loginPassword").value = "";
       setLoginMessage("");
       renderAuthState();
@@ -9090,8 +9150,7 @@
     }
 
     function signOutUser() {
-      safeStorageSet(SESSION_TOKEN_KEY, "");
-      safeStorageSet(SESSION_USER_KEY, "");
+      clearSessionRecord();
       $("loginPassword").value = "";
       setLoginMessage("");
       renderAuthState();
@@ -9146,6 +9205,10 @@
     }
 
     async function neonPush(logManual = false, successMessage = "Saved to Neon database.") {
+      if (!hasUnsavedBusinessChanges && !state.settings.pendingLocalSync) {
+        if (logManual) setStatus("No unsaved business changes to sync.");
+        return true;
+      }
       if (!neonConfigured()) {
         setStatus(`${successMessage} Saved in this browser only. Neon API is not configured.`, "warn");
         return;
@@ -9186,6 +9249,8 @@
       state.settings.lastSyncedRevision = Math.max(Number(state.settings.lastSyncedRevision || 0), pushedRevision);
       const newerEditExists = Number(state.settings.localRevision || 0) > pushedRevision;
       state.settings.pendingLocalSync = newerEditExists;
+      state.settings.businessDirty = newerEditExists;
+      hasUnsavedBusinessChanges = newerEditExists;
       if (!newerEditExists) state.settings.lastLocalChangeAt = "";
       state.settings.lastSyncedAt = new Date().toISOString();
       persistState();
@@ -9214,7 +9279,7 @@
     async function autoPullOnStart() {
       applySettingsInputs();
       if (neonConfigured()) {
-        if (state.settings.pendingLocalSync) {
+        if (hasUnsavedBusinessChanges && state.settings.pendingLocalSync) {
           setStatus("Recovered unsynced browser changes. Syncing them before loading Neon...", "warn");
           await autoPushIfConfigured("Recovered browser changes.", true);
           initialDataLoadComplete = true;
@@ -9238,7 +9303,7 @@
           }
         } catch (err) {
           stopAutoLoadCountdown();
-          setStatus(`Neon auto-load failed. Browser data is still available: ${err.message}`, "error");
+          setStatus(`Could not connect to Neon. Showing local cached data.`, "warn");
         }
         initialDataLoadComplete = true;
         processExpiredReservations();
@@ -9276,7 +9341,7 @@
       if (!neonConfigured()) return false;
       if (document.hidden) return false;
       if (autoNeonRefreshInProgress) return false;
-      if (state.settings.pendingLocalSync) return false;
+      if (hasUnsavedBusinessChanges || state.settings.pendingLocalSync) return false;
       if (modalIsOpen()) return false;
       return true;
     }
@@ -9298,6 +9363,8 @@
       } catch (err) {
         if (isNeonVersionConflict(err)) {
           if (!allowConflictPull) {
+            hasUnsavedBusinessChanges = true;
+            state.settings.businessDirty = true;
             state.settings.pendingLocalSync = true;
             persistState();
             setStatus("Neon has newer data. Your edit is saved locally. Refresh this page to merge and sync it safely.", "warn");
@@ -9319,7 +9386,7 @@
 
     function enqueueNeonPush(successMessage = "Saved.", allowConflictPull = false) {
       neonPushQueue = neonPushQueue.catch(() => false).then(async () => {
-        if (!state.settings.pendingLocalSync) return true;
+        if (!hasUnsavedBusinessChanges && !state.settings.pendingLocalSync) return true;
         setStatus("Syncing latest changes to Neon...", "success", false);
         const run = () => performQueuedNeonPush(successMessage, allowConflictPull);
         if (navigator.locks?.request) return navigator.locks.request("class-one-neon-sync", run);
@@ -9330,11 +9397,13 @@
 
     async function autoPushIfConfigured(successMessage, allowConflictPull = true) {
       clearTimeout(autoPushTimer);
+      if (!hasUnsavedBusinessChanges && !state.settings.pendingLocalSync) return true;
       return enqueueNeonPush(successMessage, allowConflictPull);
     }
 
     async function autoPushCrmIfConfigured() {
       clearTimeout(autoPushTimer);
+      if (!hasUnsavedBusinessChanges && !state.settings.pendingLocalSync) return true;
       return enqueueNeonPush("CRM saved.");
     }
 
@@ -9958,7 +10027,7 @@
       $("sidebarToggle").textContent = collapsed ? "\u203a" : "\u2039";
       $("sidebarToggle").title = collapsed ? "Show sidebar" : "Hide sidebar";
       $("sidebarToggle").setAttribute("aria-label", collapsed ? "Show sidebar" : "Hide sidebar");
-      safeStorageSet("classOneSidebarCollapsed", collapsed ? "1" : "0");
+      uiStateSet("SidebarCollapsed", collapsed ? "1" : "0");
     }
 
     function updateLayoutToggle() {
@@ -9971,13 +10040,13 @@
       const tab = document.getElementById(tabId);
       if (!tab) return;
       tab.classList.toggle("layout-stacked", stacked);
-      if (persist) safeStorageSet(`classOneTabLayout.${tabId}`, stacked ? "stacked" : "side");
+      if (persist) uiStateSet(`TabLayout.${tabId}`, stacked ? "stacked" : "side");
       if (tabId === activeTabId()) updateLayoutToggle();
     }
 
     function initializeTabLayouts() {
       document.querySelectorAll(".tab").forEach(tab => {
-        applyTabLayout(tab.id, safeStorageGet(`classOneTabLayout.${tab.id}`) !== "side");
+        applyTabLayout(tab.id, uiStateGet(`TabLayout.${tab.id}`, "stacked") !== "side");
       });
       updateLayoutToggle();
     }
@@ -11116,12 +11185,12 @@
     }
     $("tutorLeadCardViewBtn").onclick = () => {
       tutorLeadViewMode = "cards";
-      safeStorageSet("classOneTutorLeadViewMode", tutorLeadViewMode);
+      uiStateSet("TutorLeadViewMode", tutorLeadViewMode);
       renderTutorCrm();
     };
     $("tutorLeadTableViewBtn").onclick = () => {
       tutorLeadViewMode = "table";
-      safeStorageSet("classOneTutorLeadViewMode", tutorLeadViewMode);
+      uiStateSet("TutorLeadViewMode", tutorLeadViewMode);
       renderTutorCrm();
     };
     ["tutorLeadFilterStatus", "tutorLeadFilterCategory"].forEach(id => $(id).addEventListener("change", resetTutorLeadPageAndRender));
@@ -11468,8 +11537,8 @@
       tutorLeadPage = 1;
       renderTutorCrm();
     };
-    $("leadCardViewBtn").onclick = () => { leadViewMode = "cards"; safeStorageSet("classOneLeadViewMode", leadViewMode); resetLeadPageAndRender(); };
-    $("leadTableViewBtn").onclick = () => { leadViewMode = "table"; safeStorageSet("classOneLeadViewMode", leadViewMode); resetLeadPageAndRender(); };
+    $("leadCardViewBtn").onclick = () => { leadViewMode = "cards"; uiStateSet("LeadViewMode", leadViewMode); resetLeadPageAndRender(); };
+    $("leadTableViewBtn").onclick = () => { leadViewMode = "table"; uiStateSet("LeadViewMode", leadViewMode); resetLeadPageAndRender(); };
     $("newTemplateBtn").onclick = clearTemplateForm;
     $("saveTemplateBtn").onclick = saveTemplate;
     $("templateBody").addEventListener("input", () => $("templatePreview").textContent = $("templateBody").value);
@@ -11658,8 +11727,8 @@
     $("exportAllTeacherPayoutPdfBtn").onclick = () => openPrintReport("All Teachers Monthly Payout", ["No.", "Teacher", "Category", "Tier", "Rate", "Share", "Completed", "Not Show", "Cancelled", "Lesson Pay", "Not Show Pay", "Total Pay"], numbered(teacherMonthlyPayoutRows()));
     ["replacementFilterStatus", "replacementFilterReason"].forEach(id => $(id).addEventListener("change", () => { replacementPage = 1; renderReplacements(); }));
     $("replacementSearch").addEventListener("input", () => { replacementPage = 1; renderReplacements(); });
-    $("replacementBoardViewBtn").onclick = () => { replacementViewMode = "board"; replacementPage = 1; safeStorageSet("classOneReplacementViewMode", replacementViewMode); renderReplacements(); };
-    $("replacementTableViewBtn").onclick = () => { replacementViewMode = "table"; replacementPage = 1; safeStorageSet("classOneReplacementViewMode", replacementViewMode); renderReplacements(); };
+    $("replacementBoardViewBtn").onclick = () => { replacementViewMode = "board"; replacementPage = 1; uiStateSet("ReplacementViewMode", replacementViewMode); renderReplacements(); };
+    $("replacementTableViewBtn").onclick = () => { replacementViewMode = "table"; replacementPage = 1; uiStateSet("ReplacementViewMode", replacementViewMode); renderReplacements(); };
     $("clearReplacementFiltersBtn").onclick = () => {
       $("replacementFilterStatus").value = "all";
       $("replacementFilterReason").value = "all";
@@ -11682,7 +11751,7 @@
     $("exportActivityCsvBtn").onclick = () => downloadCsv("class-one-activity-log.csv", ["No.", "Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], numbered(activityExportRows()));
     $("exportActivityPdfBtn").onclick = () => openPrintReport("Activity Log", ["No.", "Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], numbered(activityExportRows()));
     $("currentUserSelect").onchange = () => {
-      safeStorageSet(CURRENT_USER_KEY, $("currentUserSelect").value);
+      uiStateSet("CurrentUserId", $("currentUserSelect").value);
       renderAll();
       setStatus("Current user changed for this browser.");
     };
@@ -11709,11 +11778,7 @@
       await neonPull(true);
     }).catch(err => alert(err.message));
     $("neonPushBtn").onclick = () => animateClick($("neonPushBtn"), async () => {
-      if (!state.settings.pendingLocalSync) {
-        state.settings.pendingLocalSync = true;
-        state.settings.localRevision = Number(state.settings.localRevision || 0) + 1;
-        persistState();
-      }
+      if (!hasUnsavedBusinessChanges && !state.settings.pendingLocalSync) return setStatus("No unsaved business changes to sync.");
       await autoPushIfConfigured("Manual Neon save completed.");
     }).catch(err => alert(err.message));
     $("resetOperationalDataBtn").onclick = () => animateClick($("resetOperationalDataBtn"), resetOperationalDataFromZero).catch(err => {
@@ -11729,6 +11794,9 @@
     $("resetDemoBtn").onclick = () => animateClick($("resetDemoBtn"), async () => {
       if (confirm("Clear all browser data for this app?")) {
         try { localStorage.removeItem(STORE_KEY); } catch (err) {}
+        try { localStorage.removeItem(DATA_BACKUP_KEY); } catch (err) {}
+        try { localStorage.removeItem(SESSION_KEY); } catch (err) {}
+        try { localStorage.removeItem(UI_STATE_KEY); } catch (err) {}
         if (window.indexedDB) indexedDB.deleteDatabase(DB_NAME);
         location.reload();
       }
@@ -11802,7 +11870,7 @@
       applyTableColumnVisibility(table, hidden);
     });
     window.addEventListener("beforeunload", event => {
-      if (!state.settings.pendingLocalSync) return;
+      if (!hasUnsavedBusinessChanges && !state.settings.pendingLocalSync) return;
       event.preventDefault();
       event.returnValue = "";
     });
@@ -11812,7 +11880,7 @@
         symbolButtonObserver.observe(document.body, { childList: true, subtree: true });
         tableColumnObserver.observe(document.body, { childList: true, subtree: true });
         load();
-        setSidebarCollapsed(safeStorageGet("classOneSidebarCollapsed") === "1");
+        setSidebarCollapsed(uiStateGet("SidebarCollapsed", "0") === "1");
         initializeTabLayouts();
         hydrateSelects();
         setupMonths();
