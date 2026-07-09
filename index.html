@@ -789,7 +789,7 @@
               <label for="loginEmail">Email</label>
               <div class="login-input-wrap">
                 <span class="login-input-icon" aria-hidden="true">✉</span>
-                <input id="loginEmail" type="email" placeholder="master@classone.local" value="master@classone.local" autocomplete="email" aria-label="Email address">
+                <input id="loginEmail" type="email" placeholder="Email address" autocomplete="email" aria-label="Email address">
               </div>
             </div>
             <div class="login-field">
@@ -800,7 +800,7 @@
                 <button class="btn ghost icon-only login-password-toggle" id="toggleLoginPasswordBtn" type="button" title="Show password" aria-label="Show password">👁</button>
               </div>
             </div>
-            <label class="login-remember" for="rememberLogin"><input id="rememberLogin" type="checkbox"> Remember me</label>
+            <label class="login-remember" for="rememberLogin"><input id="rememberLogin" type="checkbox"> Remember Me</label>
             <div class="subtle hide login-error" id="loginMessage" role="status" aria-live="polite"></div>
             <button class="btn mint login-submit" id="confirmLoginBtn" type="button"><span class="login-btn-text">Sign In</span></button>
             <button class="btn ghost hide" id="signOutBtn" type="button">Sign Out</button>
@@ -2120,12 +2120,12 @@
 
   <div id="neonConflictModal" class="modal hide">
     <div class="modal-card">
-      <h2>Newer Data Found In Neon</h2>
-      <div class="subtle">Another device saved changes after this page loaded. Choose how to handle your local edits.</div>
+      <h2>Newer data found</h2>
+      <div class="subtle">Another device has newer data. You also have unsaved changes in this browser.</div>
       <div class="grid three" style="margin-top:16px;">
-        <button class="btn mint" id="conflictMergeBtn">Pull Latest + Merge My Changes</button>
-        <button class="btn ghost" id="conflictKeepLocalBtn">Keep Local Only</button>
-        <button class="btn ghost" id="conflictCancelBtn">Cancel</button>
+        <button class="btn mint" id="conflictMergeBtn">Merge My Changes With Latest Data</button>
+        <button class="btn ghost" id="conflictKeepLocalBtn">Keep Local Draft</button>
+        <button class="btn ghost" id="conflictDiscardBtn">Discard Local Draft And Load Latest</button>
       </div>
       <div class="subtle" style="margin-top:12px;">Teacher View remains outdated until the merged state is successfully saved to Neon.</div>
     </div>
@@ -2198,13 +2198,17 @@
     const NEON_CHUNK_SIZE = 300000;
     const STORE_KEY = "classOneBookingRevamp.v1";
     const DATA_BACKUP_KEY = "classone_data_backup";
+    const DATA_CACHE_KEY = "classone_data_cache";
+    const UNSAVED_DRAFT_KEY = "classone_unsaved_draft";
     const SESSION_KEY = "classone_session";
+    const USER_KEY = "classone_user";
     const UI_STATE_KEY = "classone_ui_state";
     const SYNC_DEBUG = new URLSearchParams(window.location.search).get("debugSync") === "1";
     const loginMascots = [
       { src: "classone-mascot-transparent.png", pose: "floating", alt: "" }
     ];
-    const REMEMBERED_EMAIL_KEY = "classone_remembered_email";
+    const REMEMBERED_EMAIL_KEY = "classone_remember_email";
+    const LEGACY_REMEMBERED_EMAIL_KEY = "classone_remembered_email";
     const DB_NAME = "ClassOneBookingDB";
     const DB_STORE = "state";
     const MONTHLY_LEAD_PATTERN = /^(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)[\s_-]*\d{4}/i;
@@ -2401,11 +2405,13 @@
     function sessionRecord() {
       try {
         const saved = JSON.parse(safeStorageGet(SESSION_KEY) || "null");
-        if (saved && typeof saved === "object") return { ...saved, remembered: true };
+        const user = JSON.parse(safeStorageGet(USER_KEY) || "null");
+        if (saved && typeof saved === "object") return { ...saved, user: user || saved.user || null, remembered: true };
       } catch (err) {}
       try {
         const saved = JSON.parse(safeSessionGet(SESSION_KEY) || "null");
-        if (saved && typeof saved === "object") return { ...saved, remembered: false };
+        const user = JSON.parse(safeSessionGet(USER_KEY) || "null");
+        if (saved && typeof saved === "object") return { ...saved, user: user || saved.user || null, remembered: false };
       } catch (err) {}
       const legacyToken = safeStorageGet(LEGACY_SESSION_TOKEN_KEY);
       if (!legacyToken) return null;
@@ -2415,16 +2421,22 @@
     }
 
     function setSessionRecord(token, user, remember = false) {
-      const record = JSON.stringify({ token: token || "", user: user || null, savedAt: new Date().toISOString() });
+      const record = JSON.stringify({ token: token || "", savedAt: new Date().toISOString() });
+      const savedUser = JSON.stringify(user || null);
       if (remember) {
         safeStorageSet(SESSION_KEY, record);
+        safeStorageSet(USER_KEY, savedUser);
         safeSessionRemove(SESSION_KEY);
+        safeSessionRemove(USER_KEY);
         if (user?.email) safeStorageSet(REMEMBERED_EMAIL_KEY, user.email);
       } else {
         safeSessionSet(SESSION_KEY, record);
+        safeSessionSet(USER_KEY, savedUser);
         safeStorageRemove(SESSION_KEY);
+        safeStorageRemove(USER_KEY);
         safeStorageRemove(REMEMBERED_EMAIL_KEY);
       }
+      safeStorageRemove(LEGACY_REMEMBERED_EMAIL_KEY);
       safeStorageRemove(LEGACY_SESSION_TOKEN_KEY);
       safeStorageRemove(LEGACY_SESSION_USER_KEY);
     }
@@ -2432,7 +2444,9 @@
     function clearSessionRecord() {
       const rememberedEmail = safeStorageGet(REMEMBERED_EMAIL_KEY);
       safeStorageRemove(SESSION_KEY);
+      safeStorageRemove(USER_KEY);
       safeSessionRemove(SESSION_KEY);
+      safeSessionRemove(USER_KEY);
       safeStorageRemove(LEGACY_SESSION_TOKEN_KEY);
       safeStorageRemove(LEGACY_SESSION_USER_KEY);
       if (rememberedEmail) safeStorageSet(REMEMBERED_EMAIL_KEY, rememberedEmail);
@@ -2513,8 +2527,15 @@
         const user = sessionUser() || currentUser();
         $("loginBtn").textContent = authenticated ? `${user?.name || user?.email || "Signed In"} | Sign Out` : "Sign In";
       }
-      if (!authenticated && $("loginEmail") && !$("loginEmail").value) $("loginEmail").value = safeStorageGet(REMEMBERED_EMAIL_KEY) || "master@classone.local";
-      if ($("rememberLogin")) $("rememberLogin").checked = Boolean(safeStorageGet(REMEMBERED_EMAIL_KEY));
+      let rememberedEmail = safeStorageGet(REMEMBERED_EMAIL_KEY);
+      const legacyRememberedEmail = safeStorageGet(LEGACY_REMEMBERED_EMAIL_KEY);
+      if (!rememberedEmail && legacyRememberedEmail) {
+        rememberedEmail = legacyRememberedEmail;
+        safeStorageSet(REMEMBERED_EMAIL_KEY, rememberedEmail);
+        safeStorageRemove(LEGACY_REMEMBERED_EMAIL_KEY);
+      }
+      if (!authenticated && $("loginEmail") && !$("loginEmail").value) $("loginEmail").value = rememberedEmail || "";
+      if ($("rememberLogin")) $("rememberLogin").checked = Boolean(rememberedEmail);
     }
 
     function effectiveAllowedTabs(user = currentUser()) {
@@ -2762,10 +2783,20 @@
 
     function load() {
       try {
-        const saved = safeStorageGet(DATA_BACKUP_KEY) || safeStorageGet(STORE_KEY);
+        const saved = safeStorageGet(DATA_CACHE_KEY) || safeStorageGet(DATA_BACKUP_KEY) || safeStorageGet(STORE_KEY);
         if (saved) {
           const parsed = JSON.parse(saved);
-          if (parsed && parsed.settings) state.settings = { ...(state.settings || {}), ...parsed.settings };
+          const settings = parsed?.settings || {};
+          state.settings = {
+            ...(state.settings || {}),
+            scriptUrl: settings.scriptUrl || "",
+            apiKey: settings.apiKey || "",
+            crmScriptUrl: settings.crmScriptUrl || "",
+            crmApiKey: settings.crmApiKey || "",
+            neonApiUrl: settings.neonApiUrl || "",
+            neonApiKey: settings.neonApiKey || "",
+            neonStateKey: settings.neonStateKey || ""
+          };
         }
       } catch (err) {
         setStatus(`Browser local backup could not load: ${err.message}. Continuing with built-in sync.`, "warn");
@@ -2834,23 +2865,23 @@
       });
     }
 
-    async function saveStateToIndexedDb() {
+    async function saveStateToIndexedDb(key = DATA_CACHE_KEY, payload = state) {
       const db = await openAppDb();
       await new Promise((resolve, reject) => {
         const tx = db.transaction(DB_STORE, "readwrite");
-        tx.objectStore(DB_STORE).put(JSON.parse(JSON.stringify(state)), STORE_KEY);
+        tx.objectStore(DB_STORE).put(JSON.parse(JSON.stringify(payload)), key);
         tx.oncomplete = resolve;
         tx.onerror = () => reject(tx.error || new Error("Unable to save browser database."));
       });
       db.close();
     }
 
-    async function loadStateFromIndexedDb() {
+    async function loadStateFromIndexedDb(key = DATA_CACHE_KEY) {
       try {
         const db = await openAppDb();
         const result = await new Promise((resolve, reject) => {
           const tx = db.transaction(DB_STORE, "readonly");
-          const request = tx.objectStore(DB_STORE).get(STORE_KEY);
+          const request = tx.objectStore(DB_STORE).get(key);
           request.onsuccess = () => resolve(request.result || null);
           request.onerror = () => reject(request.error || new Error("Unable to load browser database."));
         });
@@ -2859,6 +2890,19 @@
       } catch (err) {
         return null;
       }
+    }
+
+    async function deleteStateFromIndexedDb(key) {
+      try {
+        const db = await openAppDb();
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(DB_STORE, "readwrite");
+          tx.objectStore(DB_STORE).delete(key);
+          tx.oncomplete = resolve;
+          tx.onerror = () => reject(tx.error || new Error("Unable to clear browser database record."));
+        });
+        db.close();
+      } catch (err) {}
     }
 
     function localStorageSnapshot() {
@@ -2883,18 +2927,40 @@
     }
 
     function persistState() {
-      saveStateToIndexedDb().catch(err => setStatus(`Browser database save failed: ${err.message}`, "error"));
-      safeStorageSet(DATA_BACKUP_KEY, JSON.stringify(localStorageSnapshot()));
+      const hasDraft = Boolean(hasUnsavedBusinessChanges && state.settings.pendingLocalSync && state.settings.businessDirty);
+      const key = hasDraft ? UNSAVED_DRAFT_KEY : DATA_CACHE_KEY;
+      saveStateToIndexedDb(key, state)
+        .then(() => deleteStateFromIndexedDb(STORE_KEY))
+        .catch(err => setStatus(`Browser database save failed: ${err.message}`, "error"));
+      safeStorageSet(key, JSON.stringify({ ...localStorageSnapshot(), exists: true, savedAt: new Date().toISOString() }));
+      safeStorageRemove(DATA_BACKUP_KEY);
+      safeStorageRemove(STORE_KEY);
+      if (hasDraft) {
+        setRetrySaveVisible(lastNeonSaveFailed);
+      } else {
+        safeStorageRemove(UNSAVED_DRAFT_KEY);
+        deleteStateFromIndexedDb(UNSAVED_DRAFT_KEY);
+        setRetrySaveVisible(false);
+      }
     }
 
     async function hydratePersistentState() {
-      const saved = await loadStateFromIndexedDb();
+      const draftMarker = safeStorageGet(UNSAVED_DRAFT_KEY);
+      let saved = draftMarker ? await loadStateFromIndexedDb(UNSAVED_DRAFT_KEY) : null;
+      let recoveredDraft = Boolean(saved && draftMarker);
+      if (!saved) saved = await loadStateFromIndexedDb(DATA_CACHE_KEY);
+      if (!saved) {
+        const legacy = await loadStateFromIndexedDb(STORE_KEY);
+        // Legacy storage could not reliably distinguish a cache from a draft.
+        // Treat it as read-only cache so a clean device never pushes stale data.
+        if (legacy) saved = legacy;
+      }
       if (!saved) return;
       Object.assign(state, saved);
       state.settings ||= {};
-      state.settings.businessDirty = Boolean(state.settings.businessDirty);
-      state.settings.pendingLocalSync = Boolean(state.settings.pendingLocalSync && state.settings.businessDirty);
-      hasUnsavedBusinessChanges = Boolean(state.settings.businessDirty && state.settings.pendingLocalSync);
+      state.settings.businessDirty = recoveredDraft;
+      state.settings.pendingLocalSync = recoveredDraft;
+      hasUnsavedBusinessChanges = recoveredDraft;
       if (!hasUnsavedBusinessChanges) {
         state.settings.pendingLocalSync = false;
         state.settings.businessDirty = false;
@@ -3665,6 +3731,17 @@
       persistState();
     }
 
+    function clearUnsavedDraft() {
+      hasUnsavedBusinessChanges = false;
+      state.settings.businessDirty = false;
+      state.settings.pendingLocalSync = false;
+      state.settings.lastLocalChangeAt = "";
+      lastNeonSaveFailed = false;
+      safeStorageRemove(UNSAVED_DRAFT_KEY);
+      deleteStateFromIndexedDb(UNSAVED_DRAFT_KEY);
+      setRetrySaveVisible(false);
+    }
+
     function teacherViewIsOutdated() {
       return Boolean(state.settings?.teacherViewSyncOutdated || hasUnsavedBusinessChanges || state.settings?.pendingLocalSync || lastNeonSaveFailed);
     }
@@ -3691,7 +3768,7 @@
     }
 
     function requestConflictChoice() {
-      if (pendingConflictResolver) return Promise.resolve("cancel");
+      if (pendingConflictResolver) return Promise.resolve("keep");
       $("neonConflictModal").classList.remove("hide");
       return new Promise(resolve => { pendingConflictResolver = resolve; });
     }
@@ -9964,7 +10041,7 @@
     }
 
     async function recoverFromNeonConflictAndPush(localPayload, successMessage = "Saved.") {
-      setStatus(`${successMessage} Neon has newer data. Auto-loading latest and retrying sync...`, "warn");
+      setStatus("Syncing latest changes...", "success", false);
       await neonPull(false, { force: true });
       mergeLocalPayloadIntoCurrent(localPayload);
       await neonPush(false, `${successMessage} Synced to Neon database after auto-loading latest.`);
@@ -10050,7 +10127,9 @@
     async function loadWorkspaceAfterSignIn(email, signedInUser) {
       setWorkspaceLoading(true);
       try {
-        await neonPull(false);
+        await withTimeout(hydratePersistentState(), 3000, "Browser cache took too long.");
+        hydrateSelects();
+        await autoPullOnStart();
         const user = (state.users || []).find(item => String(item.email || "").toLowerCase() === email.toLowerCase());
         if (user) uiStateSet("CurrentUserId", user.id);
         renderAll();
@@ -10156,7 +10235,7 @@
           if (!fallback.data) throw chunkError || new Error("Neon state could not be loaded.");
           payload = fallback.data;
           manifest = { version: Number(fallback.version || 0) };
-          setStatus("Recovered Neon data through the complete-state endpoint.", "warn");
+          setStatus("Loaded Neon data through the recovery endpoint.", "success", false);
         }
         if (!options.force && !logManual && (isUserEditingForm || hasUnsavedBusinessChanges)) {
           setStatus("Editing in progress — Neon data loaded but not applied yet.", "warn", false);
@@ -10251,7 +10330,7 @@
         }
         persistState();
         if (logManual) logAction("Neon Saved", "Neon Database", "", "Saved latest app data", "Manual Neon save completed.");
-        setStatus(newerEditExists ? "Earlier changes synced. A newer edit is waiting to sync..." : `Saved at ${nowTimeLabel()}.`, newerEditExists ? "warn" : "success");
+        setStatus(newerEditExists ? "Earlier changes synced. A newer edit is waiting to sync..." : `Saved to Neon at ${nowTimeLabel()}. Synced to Teacher View.`, newerEditExists ? "warn" : "success");
         return !newerEditExists;
       } catch (error) {
         lastNeonSaveFailed = true;
@@ -10260,6 +10339,7 @@
         state.settings.pendingLocalSync = true;
         setRetrySaveVisible(true);
         markTeacherViewOutdated(`Save failed — Retry. ${error.message}`);
+        setStatus("Save failed. Your changes are safe in this browser. Not synced to Teacher View yet.", "error");
         throw error;
       } finally {
         isSavingToNeon = false;
@@ -10291,8 +10371,38 @@
       applySettingsInputs();
       if (neonConfigured()) {
         if (hasUnsavedBusinessChanges && state.settings.pendingLocalSync) {
-          setStatus("Recovered unsynced browser changes. Syncing them before loading Neon...", "warn");
-          await autoPushIfConfigured("Recovered browser changes.", true);
+          setStatus("Checking your saved browser draft against the latest Neon data...", "success", false);
+          try {
+            const manifest = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon version check", SYNC_READ_TIMEOUT_MS);
+            const remoteVersion = Number(manifest.version || 0);
+            const localVersion = Number(state.settings.neonVersion || 0);
+            if (!manifest.empty && remoteVersion > localVersion) {
+              const localPayload = cloneCurrentStatePayload();
+              const choice = await requestConflictChoice();
+              if (choice === "merge") {
+                setStatus("Syncing latest changes...", "success", false);
+                await recoverFromNeonConflictAndPush(localPayload, "Browser draft");
+                markTeacherViewSynced(state.settings.neonVersion);
+                setStatus("Saved to Neon. Synced to Teacher View.", "success");
+              } else if (choice === "discard") {
+                clearUnsavedDraft();
+                await neonPull(false, { force: true });
+                setStatus("Discarded local draft. Loaded latest data from Neon.", "success");
+              } else {
+                setStatus("Local draft kept in this browser. Not synced to Teacher View yet.", "warn");
+                setRetrySaveVisible(true);
+              }
+            } else {
+              await autoPushIfConfigured("Browser draft saved.", true);
+            }
+          } catch (error) {
+            setStatus("Could not connect to Neon. Your unsaved changes are safe in this browser.", "warn");
+            setRetrySaveVisible(true);
+            state.settings.teacherViewSyncOutdated = true;
+            state.settings.teacherViewSyncMessage = "Not synced to Teacher View yet.";
+            lastNeonSaveFailed = true;
+            persistState();
+          }
           initialDataLoadComplete = true;
           processExpiredReservations();
           renderAll();
@@ -10306,13 +10416,9 @@
           if (result?.paused) {
             setStatus("Editing in progress — sync will continue after save.", "warn");
           } else if (result?.empty) {
-            if (hasMeaningfulStateData()) {
-              await neonPush(false, "Neon database was empty. Current browser data saved as first Neon version.");
-            } else {
-              setStatus("Neon database is empty. Import old Google Sheet data first, then Save To Neon.", "warn");
-            }
+            setStatus("Neon database is empty. No local cache was uploaded automatically.", "warn");
           } else {
-            setStatus("Auto-loaded latest data from Neon database.");
+            setStatus("Loaded latest data from Neon.", "success");
           }
         } catch (err) {
           stopAutoLoadCountdown();
@@ -10360,12 +10466,28 @@
     }
 
     async function autoRefreshFromNeon({ force = false } = {}) {
-      return false;
+      if (!force && !canAutoRefreshFromNeon()) return false;
+      autoNeonRefreshInProgress = true;
+      try {
+        const manifest = await fetchNeonJson(`/api/state-chunk?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon background check", 15000);
+        const remoteVersion = Number(manifest.version || 0);
+        const localVersion = Number(state.settings.neonVersion || 0);
+        if (!manifest.empty && remoteVersion > localVersion) {
+          await neonPull(false, { force: true });
+          setStatus("Loaded latest data from Neon.", "success");
+          return true;
+        }
+        return false;
+      } catch (error) {
+        return false;
+      } finally {
+        autoNeonRefreshInProgress = false;
+      }
     }
 
     function startAutoNeonRefresh() {
       clearInterval(autoNeonRefreshTimer);
-      autoNeonRefreshTimer = null;
+      autoNeonRefreshTimer = setInterval(() => autoRefreshFromNeon(), AUTO_NEON_REFRESH_MS);
     }
 
     async function performQueuedNeonPush(successMessage, allowConflictPull = false) {
@@ -10378,8 +10500,15 @@
           markTeacherViewOutdated("Neon has a newer version. Resolve the conflict before sharing or opening Teacher View.");
           const choice = await requestConflictChoice();
           if (choice === "keep") {
-            setStatus("Kept in this browser only. Not synced to Teacher View yet.", "warn");
+            setStatus("Local draft kept in this browser. Not synced to Teacher View yet.", "warn");
+            setRetrySaveVisible(true);
             return false;
+          }
+          if (choice === "discard") {
+            clearUnsavedDraft();
+            await neonPull(false, { force: true });
+            setStatus("Discarded local draft. Loaded latest data from Neon.", "success");
+            return true;
           }
           if (choice !== "merge") {
             setStatus("Sync cancelled. Not synced to Teacher View yet.", "warn");
@@ -11861,7 +11990,7 @@
     $("saveBtn").onclick = () => save();
     $("conflictMergeBtn").onclick = () => resolveConflictChoice("merge");
     $("conflictKeepLocalBtn").onclick = () => resolveConflictChoice("keep");
-    $("conflictCancelBtn").onclick = () => resolveConflictChoice("cancel");
+    $("conflictDiscardBtn").onclick = () => resolveConflictChoice("discard");
     $("runSyncDebugBtn").onclick = () => runSyncDebug();
     $("retryNeonSaveBtn").onclick = () => animateClick($("retryNeonSaveBtn"), async () => {
       lastNeonSaveFailed = false;
@@ -12851,7 +12980,11 @@
       if (confirm("Clear all browser data for this app?")) {
         try { localStorage.removeItem(STORE_KEY); } catch (err) {}
         try { localStorage.removeItem(DATA_BACKUP_KEY); } catch (err) {}
+        try { localStorage.removeItem(DATA_CACHE_KEY); } catch (err) {}
+        try { localStorage.removeItem(UNSAVED_DRAFT_KEY); } catch (err) {}
         try { localStorage.removeItem(SESSION_KEY); } catch (err) {}
+        try { localStorage.removeItem(USER_KEY); } catch (err) {}
+        try { localStorage.removeItem(REMEMBERED_EMAIL_KEY); } catch (err) {}
         try { localStorage.removeItem(UI_STATE_KEY); } catch (err) {}
         if (window.indexedDB) indexedDB.deleteDatabase(DB_NAME);
         location.reload();
@@ -12930,18 +13063,32 @@
       event.preventDefault();
       event.returnValue = "";
     });
+    window.addEventListener("storage", event => {
+      if (event.key === SESSION_KEY || event.key === USER_KEY) {
+        renderAuthState();
+        return;
+      }
+      if (event.key !== DATA_CACHE_KEY || !event.newValue) return;
+      if (!isAuthenticated() || !initialDataLoadComplete || hasUnsavedBusinessChanges || isUserEditingForm) return;
+      autoRefreshFromNeon({ force: true });
+    });
 
     async function initApp() {
       try {
         symbolButtonObserver.observe(document.body, { childList: true, subtree: true });
         tableColumnObserver.observe(document.body, { childList: true, subtree: true });
         load();
+        renderAuthState();
         setSidebarCollapsed(uiStateGet("SidebarCollapsed", "0") === "1");
         initializeTabLayouts();
         hydrateSelects();
         setupMonths();
         renderAll();
         setupCompactSearchFields();
+        if (!isAuthenticated()) {
+          setRetrySaveVisible(false);
+          return;
+        }
         withTimeout(hydratePersistentState(), 3000, "Browser database took too long.")
           .then(() => {
             hydrateSelects();
