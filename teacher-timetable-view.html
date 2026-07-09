@@ -953,6 +953,7 @@
     function amendmentTime(record) {
       const candidates = [
         record?.slotRevisionAt,
+        record?.statusChangedAt,
         record?.updatedAt,
         record?.updated_at,
         record?.changedAt,

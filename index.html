@@ -2118,6 +2118,32 @@
     </div>
   </div>
 
+  <div id="neonConflictModal" class="modal hide">
+    <div class="modal-card">
+      <h2>Newer Data Found In Neon</h2>
+      <div class="subtle">Another device saved changes after this page loaded. Choose how to handle your local edits.</div>
+      <div class="grid three" style="margin-top:16px;">
+        <button class="btn mint" id="conflictMergeBtn">Pull Latest + Merge My Changes</button>
+        <button class="btn ghost" id="conflictKeepLocalBtn">Keep Local Only</button>
+        <button class="btn ghost" id="conflictCancelBtn">Cancel</button>
+      </div>
+      <div class="subtle" style="margin-top:12px;">Teacher View remains outdated until the merged state is successfully saved to Neon.</div>
+    </div>
+  </div>
+
+  <div id="syncDebugModal" class="modal hide">
+    <div class="modal-card" style="width:min(980px,100%);">
+      <div class="row spread"><h2>Teacher View Sync Check</h2><button class="btn ghost small" data-close>Close</button></div>
+      <div class="grid three" style="margin-top:14px;">
+        <div><label>Teacher</label><select id="syncDebugTeacher"></select></div>
+        <div><label>Date</label><input id="syncDebugDate" type="date"></div>
+        <div><label>Time</label><select id="syncDebugTime"></select></div>
+      </div>
+      <div class="row" style="margin-top:14px;"><button class="btn mint" id="runSyncDebugBtn">Check Sync</button></div>
+      <div id="syncDebugResult" style="margin-top:14px;"></div>
+    </div>
+  </div>
+
   <script>
     const SUBJECTS = ["CN", "BM", "PK", "SOK", "CREATIVE MATHS", "PHONICS"];
     const LEAD_SUBJECTS = ["BC", "BM", "PK", "SOK", "Phonics"];
@@ -2335,6 +2361,7 @@
     let loginRequestInFlight = false;
     let pendingSave = false;
     let lastNeonSaveFailed = false;
+    let pendingConflictResolver = null;
     let dirtyForms = {};
     let currentUserFormDraft = null;
     let initialDataLoadComplete = false;
@@ -3108,7 +3135,7 @@
           booking.supersededByBookingId = booking.rebookedByBookingId;
           booking.supersededAt = booking.supersededAt || booking.rebookedAt || booking.updatedAt || "";
         }
-        booking.slotRevisionAt ||= booking.updatedAt || booking.changedAt || booking.rebookedAt || booking.cancelledAt || booking.completedAt || booking.studentNotShowAt || booking.createdAt || "";
+        booking.slotRevisionAt ||= booking.statusChangedAt || booking.updatedAt || booking.changedAt || booking.rebookedAt || booking.cancelledAt || booking.completedAt || booking.studentNotShowAt || booking.createdAt || "";
         booking.studentName = cleanStudentName(booking.studentName);
         booking.date = dateOnly(booking.date || "");
         booking.time = normalizeTimeValue(booking.time) || booking.time;
@@ -3617,6 +3644,8 @@
         hasUnsavedBusinessChanges = true;
         state.settings.businessDirty = true;
         state.settings.pendingLocalSync = true;
+        state.settings.teacherViewSyncOutdated = true;
+        state.settings.teacherViewSyncMessage = "Local changes are waiting for Neon sync.";
         state.settings.lastLocalChangeAt = new Date().toISOString();
         state.settings.localRevision = Number(state.settings.localRevision || 0) + 1;
       }
@@ -3634,6 +3663,44 @@
       state.settings.pendingLocalSync = false;
       state.settings.lastLocalChangeAt = "";
       persistState();
+    }
+
+    function teacherViewIsOutdated() {
+      return Boolean(state.settings?.teacherViewSyncOutdated || hasUnsavedBusinessChanges || state.settings?.pendingLocalSync || lastNeonSaveFailed);
+    }
+
+    function markTeacherViewOutdated(message = "Not synced to Teacher View yet.") {
+      state.settings.teacherViewSyncOutdated = true;
+      state.settings.teacherViewSyncMessage = message;
+      lastNeonSaveFailed = true;
+      persistState();
+      renderSchedule();
+      renderTeacherOverview();
+      renderTeachers();
+      setStatus(`Not synced to Teacher View yet. ${message}`, "error");
+    }
+
+    function markTeacherViewSynced(version) {
+      state.settings.teacherViewSyncOutdated = false;
+      state.settings.teacherViewSyncMessage = "";
+      state.settings.teacherViewSyncedVersion = Number(version || state.settings.neonVersion || 0);
+      state.settings.teacherViewSyncedAt = new Date().toISOString();
+      lastNeonSaveFailed = false;
+      persistState();
+      notifyTeacherViews(state.settings.teacherViewSyncedVersion);
+    }
+
+    function requestConflictChoice() {
+      if (pendingConflictResolver) return Promise.resolve("cancel");
+      $("neonConflictModal").classList.remove("hide");
+      return new Promise(resolve => { pendingConflictResolver = resolve; });
+    }
+
+    function resolveConflictChoice(choice) {
+      $("neonConflictModal").classList.add("hide");
+      const resolve = pendingConflictResolver;
+      pendingConflictResolver = null;
+      if (resolve) resolve(choice);
     }
 
     function scheduleAutoPush() {
@@ -4557,13 +4624,18 @@
       }
       const link = teacherTimetableLink(teacher);
       const failed = teacherLinkFailed.has(teacher.id);
+      const outdated = teacherViewIsOutdated();
       $("overviewTeacherLinkStatus").textContent = link
-        ? `Permanent link ready for ${teacher.name}.`
+        ? outdated
+          ? `Not synced to Teacher View yet. ${state.settings.teacherViewSyncMessage || "Neon save is pending."}`
+          : `Permanent link ready for ${teacher.name}.`
         : failed
           ? `${teacher.name}'s link was not generated because database sync failed. Please retry.`
           : `${teacher.name} does not have a teacher view link yet.`;
       $("overviewTeacherLinkActions").innerHTML = link
-        ? `<a class="btn mint" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">Open Teacher View</a><button class="btn ghost" data-overview-copy-link="${teacher.id}">Copy Link</button><button class="btn ghost" data-overview-regenerate-link="${teacher.id}">Regenerate Link</button>`
+        ? outdated
+          ? `<button class="btn mint" disabled title="Save to Neon before opening Teacher View">Outdated</button><button class="btn ghost" data-retry-teacher-sync>Retry Sync</button>`
+          : `<a class="btn mint" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">Open Teacher View</a><button class="btn ghost" data-overview-copy-link="${teacher.id}">Copy Link</button><button class="btn ghost" data-overview-regenerate-link="${teacher.id}">Regenerate Link</button>`
         : `<button class="btn mint" data-overview-generate-link="${teacher.id}">${failed ? "Retry Generate" : "Generate Link"}</button>`;
     }
 
@@ -4597,12 +4669,14 @@
       teacherLinkFailed.delete(teacherId);
       logAction(regenerate ? "Teacher View Link Regenerated" : "Teacher View Link Generated", teacher.name, regenerate ? "Previous link invalidated" : "No link", "New permanent link", "Generated and synced from Teacher Overview.");
       save(false);
+      await autoPushIfConfigured("Teacher view link audit saved.");
       renderTeacherOverviewLink(teacher);
       renderTeachers();
       setStatus(`Teacher view link for ${teacher.name} is ready and synced.`);
     }
 
     async function copyOverviewTeacherLink(teacherId) {
+      if (teacherViewIsOutdated()) return setStatus("Not synced to Teacher View yet. Save to Neon successfully before copying the link.", "warn");
       const link = teacherTimetableLink(teacherById(teacherId));
       if (!link) return alert("Generate the teacher link first.");
       try { await navigator.clipboard.writeText(link); }
@@ -5285,10 +5359,8 @@
         studentNameKey(booking.studentName) === studentNameKey(recurringSlot.studentName || data.studentName) &&
         (booking.type || "regular class") === "regular class"
       ).forEach(booking => {
-        booking.status = "deleted";
+        stampBookingStatus(booking, "deleted", now);
         booking.archived = true;
-        booking.deletedAt = now;
-        booking.updatedAt = now;
       });
 
       const studentName = recurringSlot.studentName || data.studentName || "Student";
@@ -5659,10 +5731,8 @@
           studentNameKey(booking.studentName) === studentNameKey(sourceSlot.studentName) &&
           (booking.type || "regular class") === "regular class" && !slotHasPassed(booking.date, booking.time)
         ).forEach(booking => {
-          booking.status = "deleted";
+          stampBookingStatus(booking, "deleted", now);
           booking.archived = true;
-          booking.deletedAt = now;
-          booking.updatedAt = now;
         });
       }
       const undoAfter = snapshotCollections({ teachers: [sourceTeacher.id, targetTeacher.id], students: changedStudent ? [changedStudent.id] : [], bookings: affectedBookingIdsBefore });
@@ -5816,9 +5886,11 @@
 
     function renderSalesSummary(summary) {
       const selectedTeacher = teacherById($("teacherFilter")?.value);
-      const linkReady = Boolean(selectedTeacher && teacherTimetableLink(selectedTeacher));
+      const outdated = teacherViewIsOutdated();
+      const linkReady = Boolean(selectedTeacher && teacherTimetableLink(selectedTeacher) && !outdated);
       $("salesSummary").innerHTML = `
-        <button class="metric teacher-view-summary-link" data-open-filter-teacher-view ${linkReady ? "" : "disabled"} title="${selectedTeacher ? (linkReady ? `Open ${escapeHtml(selectedTeacher.name)} teacher view` : "Teacher view link not generated yet") : "Choose one teacher first"}" aria-label="Open selected teacher view link"><strong>&#128279;</strong><span class="subtle">${selectedTeacher ? escapeHtml(selectedTeacher.name) : "Choose teacher"}</span></button>
+        <button class="metric teacher-view-summary-link" data-open-filter-teacher-view ${linkReady ? "" : "disabled"} title="${selectedTeacher ? (linkReady ? `Open ${escapeHtml(selectedTeacher.name)} teacher view` : outdated ? "Not synced to Teacher View yet" : "Teacher view link not generated yet") : "Choose one teacher first"}" aria-label="Open selected teacher view link"><strong>&#128279;</strong><span class="subtle">${selectedTeacher ? (outdated ? "Outdated" : escapeHtml(selectedTeacher.name)) : "Choose teacher"}</span></button>
+        <button class="metric teacher-view-summary-link" data-open-sync-debug title="Compare local, Neon and Teacher View records" aria-label="Check Teacher View sync"><strong>&#128269;</strong><span class="subtle">Check Sync</span></button>
         <div class="metric"><span class="subtle">Open slots sales can propose</span><strong>${summary.open}</strong></div>
         <div class="metric"><span class="subtle">Booked special sessions</span><strong>${summary.booked}</strong></div>
         <div class="metric"><span class="subtle">Fixed regular classes</span><strong>${summary.fixed}</strong></div>
@@ -5859,6 +5931,7 @@
       $("teacherList").innerHTML = teacherPageData.items.map(t => {
         const linkSyncing = teacherLinkSyncing.has(t.id);
         const linkFailed = teacherLinkFailed.has(t.id);
+        const linkOutdated = teacherViewIsOutdated();
         return `
         <div class="card teacher-card">
           ${t.photo ? `<img class="avatar" src="${t.photo}" alt="">` : `<div class="avatar">${escapeHtml((t.name || "?").slice(0, 1))}</div>`}
@@ -5871,7 +5944,9 @@
               ${linkSyncing
                 ? `<span class="pill">Generating...</span><button class="btn small mint" disabled>Generating...</button>`
                 : t.viewToken
-                ? `<span class="pill available">Ready</span><a class="btn small mint" href="${escapeHtml(teacherTimetableLink(t))}" target="_blank" rel="noopener noreferrer">Open View</a><button class="btn small ghost" data-overview-copy-link="${t.id}">Copy Link</button>`
+                ? linkOutdated
+                  ? `<span class="pill cancelled">Outdated</span><button class="btn small mint" disabled title="Not synced to Teacher View yet">Open View</button><button class="btn small ghost" disabled>Copy Link</button>`
+                  : `<span class="pill available">Ready</span><a class="btn small mint" href="${escapeHtml(teacherTimetableLink(t))}" target="_blank" rel="noopener noreferrer">Open View</a><button class="btn small ghost" data-overview-copy-link="${t.id}">Copy Link</button>`
                 : `<span class="pill cancelled">${linkFailed ? "Sync Failed" : "Not Generated"}</span><button class="btn small mint" data-overview-generate-link="${t.id}">${linkFailed ? "Retry Generate" : "Generate Link"}</button>`}
             </div>
             ${teacherFeedbackSummaryHtml(t)}
@@ -5909,7 +5984,7 @@
         teacher.phone || "",
         teacher.zoomMeetingId || "",
         teacher.zoomLink || "",
-        teacherTimetableLink(teacher) || "Not generated"
+        teacherViewIsOutdated() ? "Outdated - sync to Neon first" : (teacherTimetableLink(teacher) || "Not generated")
       ]);
     }
 
@@ -5936,7 +6011,9 @@
           <td>${escapeHtml(teacher.zoomMeetingId || "-")}</td>
           <td>${passcode ? `<span>${escapeHtml(passcodeVisible ? passcode : "******")}</span><div class="row" style="margin-top:5px;"><button class="btn small ghost" data-reveal-teacher-passcode="${teacher.id}">${passcodeVisible ? "Hide" : "Show"}</button><button class="btn small ghost" data-copy-teacher-passcode="${teacher.id}">Copy</button></div>` : "-"}</td>
           <td>${zoomUrl ? `<a class="pill" href="${escapeHtml(zoomUrl)}" target="_blank" rel="noopener">Open Zoom</a>` : "-"}</td>
-          <td>${teacherViewUrl
+          <td>${teacherViewUrl && teacherViewIsOutdated()
+            ? `<span class="pill cancelled">Outdated</span><div class="subtle">Sync to Neon before copying or opening.</div>`
+            : teacherViewUrl
             ? `<input value="${escapeHtml(teacherViewUrl)}" readonly aria-label="${escapeHtml(`${teacher.name} teacher view link`)}" style="min-width:230px;"><div class="row" style="margin-top:5px;"><button class="btn small ghost" data-overview-copy-link="${teacher.id}" title="Copy teacher view link" aria-label="Copy ${escapeHtml(teacher.name)} teacher view link">&#10697;</button><a class="btn small ghost" href="${escapeHtml(teacherViewUrl)}" target="_blank" rel="noopener noreferrer" title="Open teacher view" aria-label="Open ${escapeHtml(teacher.name)} teacher view">&#8599;</a></div>`
             : `<span class="subtle">Not generated</span><div style="margin-top:5px;"><button class="btn small mint" data-overview-generate-link="${teacher.id}">Generate</button></div>`}</td>
           <td><button class="btn small ghost" data-edit-teacher="${teacher.id}">Edit</button></td>
@@ -6415,11 +6492,9 @@
       (state.bookings || []).forEach(booking => {
         const matchesStudent = (student?.id && booking.studentId === student.id) || studentNameKey(booking.studentName || "") === nameKey;
         if (!matchesStudent || dateOnly(booking.date) <= dropDate) return;
-        booking.status = "deleted";
+        stampBookingStatus(booking, "deleted", now);
         booking.archived = true;
         booking.deleted = true;
-        booking.deletedAt = now;
-        booking.updatedAt = now;
         booking.remark = [booking.remark, `Cleanup: dropped student future class deleted after ${dropDate}.`].filter(Boolean).join("\n");
         bookingCount += 1;
       });
@@ -6520,12 +6595,10 @@
         if (!bookingBelongsToStudent(booking, student, nameKey)) return;
         const bookingDate = dateOnly(booking.date);
         if (!bookingDate || bookingDate <= dropDate || isProtectedCompletedHistory(booking)) return;
-        booking.status = "deleted";
+        stampBookingStatus(booking, "deleted", now);
         booking.archived = true;
-        booking.deletedAt = now;
         booking.dropDate = dropDate;
         booking.remark = [booking.remark, `Student dropped after ${formatDateFromAny(dropDate)}; future class deleted from active timetable.`].filter(Boolean).join("\n");
-        booking.updatedAt = now;
       });
       state.teacherStudentNotes = (state.teacherStudentNotes || []).filter(note => note.studentId !== student.id && (!nameKey || studentNameKey(note.studentName || "") !== nameKey));
       state.replacementCredits = (state.replacementCredits || []).filter(credit => credit.studentId !== student.id && (!nameKey || studentNameKey(credit.studentName || "") !== nameKey));
@@ -6726,6 +6799,7 @@
       if (!booking) return 0;
       const times = [
         booking.slotRevisionAt,
+        booking.statusChangedAt,
         booking.updatedAt,
         booking.updated_at,
         booking.changedAt,
@@ -7337,7 +7411,9 @@
         minutes: 25,
         source: "crm-inline-booking",
         crmLeadId: lead.id,
-        updatedAt: now
+        updatedAt: now,
+        statusChangedAt: now,
+        slotRevisionAt: now
       });
       if (booking.status === "completed") booking.completedAt ||= slotDateTime(selection.date, selection.time).toISOString();
       else delete booking.completedAt;
@@ -8178,11 +8254,11 @@
       scheduleBookings().forEach(booking => {
         if (!dateIsWithinHoliday(booking.date, holiday) || !classCanBeAutoHolidayCancelled(booking)) return;
         const before = bookingLogSummary(booking);
-        booking.status = "public_holiday";
+        const now = new Date().toISOString();
+        stampBookingStatus(booking, "public_holiday", now);
         booking.archived = true;
         booking.publicHolidayId = holiday.id;
         booking.remark = [booking.remark, holiday.name].filter(Boolean).join("\n");
-        booking.updatedAt = new Date().toISOString();
         handleReplacementForOutcome(booking, holiday.replacementDefault || "yes");
         logAction("Public Holiday Applied", booking.studentName || booking.id, before, bookingLogSummary(booking), holiday.name || "");
         changed += 1;
@@ -8211,6 +8287,8 @@
     }
 
     function fixedSlotToBooking(data) {
+      const now = new Date().toISOString();
+      const status = slotHasPassed(data.date, data.time) ? "completed" : "booked";
       return {
         id: fixedSlotBookingId(data),
         teacherId: data.teacherId,
@@ -8221,10 +8299,14 @@
         date: data.date,
         day: data.day,
         time: data.time,
-        status: slotHasPassed(data.date, data.time) ? "completed" : "booked",
+        status,
         archived: slotHasPassed(data.date, data.time),
         minutes: 25,
-        createdAt: new Date().toISOString(),
+        createdAt: now,
+        updatedAt: now,
+        statusChangedAt: now,
+        slotRevisionAt: now,
+        ...(status === "completed" ? { completedAt: now } : {}),
         source: "fixed_regular_manual",
         sourceSlotId: data.slotId || ""
       };
@@ -8304,9 +8386,11 @@
       booking.day = slot.day;
       booking.time = slot.time;
       booking.subject = booking.subject || slot.subject || "";
-      booking.changedSlot = { ...original, changedAt: new Date().toISOString(), reason: remark || "Moved by drag and drop" };
+      const changedAt = new Date().toISOString();
+      booking.changedSlot = { ...original, changedAt, reason: remark || "Moved by drag and drop" };
       booking.archived = false;
-      booking.updatedAt = new Date().toISOString();
+      booking.updatedAt = changedAt;
+      booking.slotRevisionAt = changedAt;
       if (remark) booking.remark = [booking.remark, `Moved: ${remark}`].filter(Boolean).join("\n");
       logAction("Booking Moved", booking.studentName || booking.id, before, bookingLogSummary(booking), remark || "Moved by drag and drop.");
       pendingMoveDraftBookingId = "";
@@ -8395,8 +8479,10 @@
           booking.day = targetDay;
           booking.time = targetTime;
           booking.openedAvailabilityRuleId = openedRule?.id || "";
-          booking.changedSlot = { ...original, changedAt: new Date().toISOString(), reason: remark || "Edited time slot" };
-          booking.updatedAt = new Date().toISOString();
+          const changedAt = new Date().toISOString();
+          booking.changedSlot = { ...original, changedAt, reason: remark || "Edited time slot" };
+          booking.updatedAt = changedAt;
+          booking.slotRevisionAt = changedAt;
           if (remark) booking.remark = [booking.remark, `Time changed: ${remark}`].filter(Boolean).join("\n");
         } else {
           const sourceTeacher = teacherById(booking.teacherId);
@@ -8410,10 +8496,9 @@
             item.sourceSlotId === recurring.id && item.date >= startDate &&
             (mode !== "temporary" || item.date <= endDate) && !slotHasPassed(item.date, item.time)
           ).forEach(item => {
-            item.status = "deleted";
+            const now = new Date().toISOString();
+            stampBookingStatus(item, "deleted", now);
             item.archived = true;
-            item.deletedAt = new Date().toISOString();
-            item.updatedAt = new Date().toISOString();
           });
           syncStudentRegularSlotRange(booking.studentName, sourceTeacher, recurring, targetTeacher, targetSlot, startDate, endDate, mode === "temporary" ? "temporary" : "long_term");
         }
@@ -9373,6 +9458,78 @@
       return url.href;
     }
 
+    function bookingWinnerForSlot(bookings, teacherId, date, time) {
+      return (bookings || [])
+        .filter(booking => booking.teacherId === teacherId && dateOnly(booking.date) === date && normalizeTimeValue(booking.time) === normalizeTimeValue(time))
+        .reduce((winner, booking) => shouldUseBooking(booking, winner) ? booking : winner, null);
+    }
+
+    function syncDebugRecordHtml(title, record, version, loadedFrom) {
+      if (!record) return `<div class="card"><strong>${escapeHtml(title)}</strong><div class="subtle">No active booking found.</div><div class="subtle">Version: ${escapeHtml(String(version || 0))} | ${escapeHtml(loadedFrom)}</div></div>`;
+      return `<div class="card">
+        <strong>${escapeHtml(title)}</strong>
+        <div style="margin-top:8px;"><strong>${escapeHtml(record.studentName || "Class")}</strong> | ${escapeHtml(bookingStatusLabel(record.status || "booked"))} | ${escapeHtml(record.type || record.classType || "regular class")}</div>
+        <div class="subtle">Booking ID: ${escapeHtml(record.id || record.bookingId || record.sourceRecordId || "-")}</div>
+        <div class="subtle">Teacher ID: ${escapeHtml(record.teacherId || "-")} | Student ID: ${escapeHtml(record.studentId || "-")}</div>
+        <div class="subtle">Created: ${escapeHtml(formatDateTimeStamp(record.createdAt) || "-")}</div>
+        <div class="subtle">Updated: ${escapeHtml(formatDateTimeStamp(record.slotRevisionAt || record.updatedAt || record.statusChangedAt) || "-")}</div>
+        <div class="subtle">Version: ${escapeHtml(String(version || 0))} | ${escapeHtml(loadedFrom)}</div>
+      </div>`;
+    }
+
+    function openSyncDebugModal() {
+      const teacherOptions = activeTeachers().sort(byName).map(teacher => `<option value="${escapeHtml(teacher.id)}">${escapeHtml(teacher.name)}</option>`).join("");
+      $("syncDebugTeacher").innerHTML = teacherOptions;
+      const selected = teacherById($("teacherFilter")?.value);
+      if (selected) $("syncDebugTeacher").value = selected.id;
+      $("syncDebugDate").value = todayISO();
+      $("syncDebugTime").innerHTML = studentScheduleTimes().map(time => `<option value="${time}">${timeLabel(time)}</option>`).join("");
+      $("syncDebugResult").innerHTML = `<div class="subtle">Choose a teacher, date and time, then run the sync check.</div>`;
+      $("syncDebugModal").classList.remove("hide");
+    }
+
+    async function runSyncDebug() {
+      const teacher = teacherById($("syncDebugTeacher").value);
+      const date = dateOnly($("syncDebugDate").value);
+      const time = normalizeTimeValue($("syncDebugTime").value);
+      if (!teacher || !date || !time) return setStatus("Choose teacher, date and time for the sync check.", "warn");
+      $("syncDebugResult").innerHTML = `<div class="subtle">Checking browser, Neon and Teacher View...</div>`;
+      try {
+        const localWinner = bookingWinnerForSlot(state.bookings, teacher.id, date, time);
+        const neon = await fetchNeonJson(`/api/state?key=${encodeURIComponent(neonStateKey())}&_=${Date.now()}`, { method: "GET", cache: "no-store" }, "Sync debug Neon load", SYNC_READ_TIMEOUT_MS);
+        const neonWinner = bookingWinnerForSlot(neon.data?.bookings || [], teacher.id, date, time);
+        let teacherViewData = null;
+        let teacherViewWinner = null;
+        if (teacher.viewToken) {
+          const url = new URL(`${neonApiBase()}/api/teacher-view`);
+          url.searchParams.set("key", neonStateKey());
+          url.searchParams.set("teacherId", teacher.id);
+          url.searchParams.set("token", teacher.viewToken);
+          url.searchParams.set("from", date);
+          url.searchParams.set("to", date);
+          url.searchParams.set("debug", "1");
+          url.searchParams.set("_", String(Date.now()));
+          const response = await fetch(url.toString(), { method: "GET", cache: "no-store" });
+          teacherViewData = await response.json();
+          if (!response.ok || teacherViewData.ok === false) throw new Error(teacherViewData.error || `Teacher View HTTP ${response.status}`);
+          teacherViewWinner = (teacherViewData.bookings || []).find(booking => dateOnly(booking.date) === date && normalizeTimeValue(booking.time) === time) || null;
+        }
+        const localId = localWinner?.id || "";
+        const neonId = neonWinner?.id || "";
+        const viewId = teacherViewWinner?.id || "";
+        const outdated = teacherViewIsOutdated() || Number(neon.version || 0) !== Number(teacherViewData?.version || neon.version || 0) || localId !== neonId || (teacher.viewToken && neonId !== viewId);
+        $("syncDebugResult").innerHTML = `
+          <div class="status ${outdated ? "warn" : "success"}">${outdated ? "Teacher View is outdated or local changes are not synced." : "All three sources match."}</div>
+          <div class="grid three" style="margin-top:12px;">
+            ${syncDebugRecordHtml("Weekly Timetable / Local", localWinner, state.settings.neonVersion, "browser working state")}
+            ${syncDebugRecordHtml("Neon", neonWinner, neon.version, "neon.app_state.bookings")}
+            ${syncDebugRecordHtml("Teacher View API", teacherViewWinner, teacherViewData?.version, teacher.viewToken ? "api/teacher-view" : "No teacher link")}
+          </div>`;
+      } catch (error) {
+        $("syncDebugResult").innerHTML = `<div class="status error">${escapeHtml(error.message)}</div>`;
+      }
+    }
+
     function updateTeacherViewLinkField(teacher = null) {
       const current = teacher || teacherById($("teacherId").value);
       $("teacherViewToken").value = current?.viewToken || $("teacherViewToken").value || "";
@@ -9490,9 +9647,9 @@
       let changed = false;
       state.bookings.forEach(b => {
         if (b.status === "booked" && slotHasPassed(b.date, b.time)) {
-          b.status = "completed";
+          const now = new Date().toISOString();
+          stampBookingStatus(b, "completed", now);
           b.archived = true;
-          b.completedAt = b.completedAt || new Date().toISOString();
           const replacement = (state.replacements || []).find(item => item.replacementBookingId === b.id);
           if (replacement && replacement.status === "Replacement Booked") {
             const now = new Date().toISOString();
@@ -9515,6 +9672,7 @@
           const existing = scheduleBookings().find(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
           if (existing) return;
           const teacher = teacherById(slot.teacherId);
+          const now = new Date().toISOString();
           state.bookings.push({
             id: fixedSnapshotBookingId(slot),
             teacherId: slot.teacherId,
@@ -9528,7 +9686,10 @@
             status: "completed",
             archived: true,
             minutes: 25,
-            createdAt: new Date().toISOString(),
+            createdAt: now,
+            updatedAt: now,
+            statusChangedAt: now,
+            slotRevisionAt: now,
             completedAt: slotDateTime(slot.date, slot.time).toISOString(),
             source: "fixed_regular_snapshot"
           });
@@ -9689,6 +9850,8 @@
       payload.settings.pendingLocalSync = false;
       payload.settings.businessDirty = false;
       payload.settings.lastLocalChangeAt = "";
+      payload.settings.teacherViewSyncOutdated = false;
+      payload.settings.teacherViewSyncMessage = "";
       return payload;
     }
 
@@ -9800,7 +9963,7 @@
 
     async function recoverFromNeonConflictAndPush(localPayload, successMessage = "Saved.") {
       setStatus(`${successMessage} Neon has newer data. Auto-loading latest and retrying sync...`, "warn");
-      await neonPull(false);
+      await neonPull(false, { force: true });
       mergeLocalPayloadIntoCurrent(localPayload);
       await neonPush(false, `${successMessage} Synced to Neon database after auto-loading latest.`);
     }
@@ -9953,13 +10116,13 @@
       setStatus("Signed out. Please sign in to access the system.");
     }
 
-    async function neonPull(logManual = false) {
+    async function neonPull(logManual = false, options = {}) {
       if (!neonConfigured()) return alert("Neon API URL and API key are required.");
-      if (!logManual && isUserEditingForm) {
+      if (!options.force && !logManual && isUserEditingForm) {
         setStatus("Editing in progress — sync will continue after save.", "warn", false);
         return { paused: true };
       }
-      if (hasUnsavedBusinessChanges && !logManual) {
+      if (!options.force && hasUnsavedBusinessChanges && !logManual) {
         setStatus("Local changes are newer — background pull paused until save finishes.", "warn", false);
         return { paused: true };
       }
@@ -9993,7 +10156,7 @@
           manifest = { version: Number(fallback.version || 0) };
           setStatus("Recovered Neon data through the complete-state endpoint.", "warn");
         }
-        if (!logManual && (isUserEditingForm || hasUnsavedBusinessChanges)) {
+        if (!options.force && !logManual && (isUserEditingForm || hasUnsavedBusinessChanges)) {
           setStatus("Editing in progress — Neon data loaded but not applied yet.", "warn", false);
           return { paused: true };
         }
@@ -10001,6 +10164,7 @@
         state.settings.neonVersion = Number(manifest.version || 0);
         state.settings.lastSyncedAt = new Date().toISOString();
         clearPendingSyncFlag();
+        markTeacherViewSynced(state.settings.neonVersion);
         suppressAutoPush = true;
         save(false, { system: true });
         suppressAutoPush = false;
@@ -10027,8 +10191,8 @@
         return false;
       }
       if (!neonConfigured()) {
-        setStatus(`${successMessage} Saved in this browser only. Neon API is not configured.`, "warn");
-        return;
+        markTeacherViewOutdated("Neon API is not configured.");
+        return false;
       }
       isSavingToNeon = true;
       setRetrySaveVisible(false);
@@ -10067,7 +10231,6 @@
           })
         }, "Neon save complete", SYNC_SAVE_TIMEOUT_MS);
         state.settings.neonVersion = Number(data.version || currentVersion || 0);
-        notifyTeacherViews(state.settings.neonVersion);
         state.settings.lastSyncedRevision = Math.max(Number(state.settings.lastSyncedRevision || 0), pushedRevision);
         const newerEditExists = Number(state.settings.localRevision || 0) > pushedRevision || pendingSave;
         pendingSave = false;
@@ -10078,6 +10241,12 @@
         setRetrySaveVisible(false);
         if (!newerEditExists) state.settings.lastLocalChangeAt = "";
         state.settings.lastSyncedAt = new Date().toISOString();
+        if (newerEditExists) {
+          state.settings.teacherViewSyncOutdated = true;
+          state.settings.teacherViewSyncMessage = "A newer local edit is still waiting to sync.";
+        } else {
+          markTeacherViewSynced(state.settings.neonVersion);
+        }
         persistState();
         if (logManual) logAction("Neon Saved", "Neon Database", "", "Saved latest app data", "Manual Neon save completed.");
         setStatus(newerEditExists ? "Earlier changes synced. A newer edit is waiting to sync..." : `Saved at ${nowTimeLabel()}.`, newerEditExists ? "warn" : "success");
@@ -10087,9 +10256,8 @@
         hasUnsavedBusinessChanges = true;
         state.settings.businessDirty = true;
         state.settings.pendingLocalSync = true;
-        persistState();
         setRetrySaveVisible(true);
-        setStatus(`Save failed — Retry. ${error.message}`, "error");
+        markTeacherViewOutdated(`Save failed — Retry. ${error.message}`);
         throw error;
       } finally {
         isSavingToNeon = false;
@@ -10205,23 +10373,27 @@
         return true;
       } catch (err) {
         if (isNeonVersionConflict(err)) {
-          if (!allowConflictPull) {
-            hasUnsavedBusinessChanges = true;
-            state.settings.businessDirty = true;
-            state.settings.pendingLocalSync = true;
-            persistState();
-            setStatus("Neon has newer data. Your edit is saved locally. Refresh this page to merge and sync it safely.", "warn");
+          markTeacherViewOutdated("Neon has a newer version. Resolve the conflict before sharing or opening Teacher View.");
+          const choice = await requestConflictChoice();
+          if (choice === "keep") {
+            setStatus("Kept in this browser only. Not synced to Teacher View yet.", "warn");
+            return false;
+          }
+          if (choice !== "merge") {
+            setStatus("Sync cancelled. Not synced to Teacher View yet.", "warn");
             return false;
           }
           try {
             await recoverFromNeonConflictAndPush(localPayload, successMessage);
+            markTeacherViewSynced(state.settings.neonVersion);
+            setStatus("Synced to Teacher View.", "success");
             return true;
           } catch (retryErr) {
-            setStatus(`${successMessage} Saved in this browser only. Auto-sync retry failed: ${retryErr.message}`, "warn");
+            markTeacherViewOutdated(`Conflict merge failed: ${retryErr.message}`);
             return false;
           }
         } else {
-          setStatus(`${successMessage} Neon sync failed: ${err.message}`, "error");
+          markTeacherViewOutdated(`Neon sync failed: ${err.message}`);
           return false;
         }
       }
@@ -10319,6 +10491,18 @@
       $("outcomeScopeEndField").classList.toggle("hide", !cancellable || !recurring || $("outcomeScope").value !== "temporary");
     }
 
+    function stampBookingStatus(booking, status, now = new Date().toISOString()) {
+      booking.status = status;
+      booking.updatedAt = now;
+      booking.statusChangedAt = now;
+      booking.slotRevisionAt = now;
+      if (status === "student_not_show") booking.studentNotShowAt = now;
+      if (isCancelledStatus(status)) booking.cancelledAt = now;
+      if (status === "completed") booking.completedAt = booking.completedAt || now;
+      if (status === "deleted") booking.deletedAt = booking.deletedAt || now;
+      return booking;
+    }
+
     function applyOutcomeToBooking(booking, nextStatus, remark, replacementNeeded, options = {}) {
       const before = bookingLogSummary(booking);
       const replacementIdsBefore = (state.replacements || [])
@@ -10326,20 +10510,14 @@
         .map(item => item.id);
       const undoBefore = snapshotCollections({ bookings: [booking.id], replacements: replacementIdsBefore });
       const now = new Date().toISOString();
-      booking.status = nextStatus;
+      stampBookingStatus(booking, nextStatus, now);
       booking.remark = remark;
       if (nextStatus === "booked") booking.publicHolidayOverride = true;
       booking.archived = false;
-      booking.slotRevisionAt = now;
       if (booking.status === "booked" && slotHasPassed(booking.date, booking.time)) {
-        booking.status = "completed";
-        booking.completedAt = booking.completedAt || now;
+        stampBookingStatus(booking, "completed", now);
       }
-      if (booking.status === "completed") booking.completedAt = booking.completedAt || now;
-      if (booking.status === "student_not_show") booking.studentNotShowAt = now;
-      if (isCancelledStatus(booking.status)) booking.cancelledAt = now;
       booking.changedAt = now;
-      booking.updatedAt = now;
       if (replacementReasonForStatus(nextStatus)) handleReplacementForOutcome(booking, replacementNeeded);
       else if (nextStatus === "student_not_show" && options.createStudentNotShowReplacement) handleReplacementForOutcome(booking, "yes", "Student Not Show");
       else if (options.withdrawExistingReplacement) withdrawReplacementForBooking(booking);
@@ -10378,8 +10556,8 @@
         studentName: sourceBooking.studentName,
         slotId: recurringSlot.id
       });
-      booking.status = "booked";
       booking.archived = false;
+      stampBookingStatus(booking, "booked");
       state.bookings.push(booking);
       return booking;
     }
@@ -10402,9 +10580,9 @@
           (item.type || "regular class") === "regular class"
         ))
       ).forEach(item => {
-        item.status = "deleted";
+        const now = new Date().toISOString();
+        stampBookingStatus(item, "deleted", now);
         item.archived = true;
-        item.deletedAt = new Date().toISOString();
       });
       logAction("Regular Class Ended", booking.studentName || booking.id, before, `Ended from ${formatDateFromAny(startDate)}`, remark || "No future replacement credits created.");
     }
@@ -10525,10 +10703,8 @@
       const undoBefore = snapshotCollections({ bookings: [booking.id], replacements: replacementIdsBefore, replacementCredits: creditIdsBefore });
       const refundedCredit = refundReplacementCreditForBooking(booking);
       const restoredOff = restoreAutoOpenedSlotIfUnused(booking);
-      booking.status = "deleted";
+      stampBookingStatus(booking, "deleted");
       booking.archived = true;
-      booking.deletedAt = new Date().toISOString();
-      booking.updatedAt = booking.deletedAt;
       if (remark) booking.remark = [booking.remark, remark].filter(Boolean).join("\n");
       withdrawReplacementForBooking(booking);
       const replacementIdsAfter = (state.replacements || [])
@@ -10670,11 +10846,10 @@
           return;
         }
       const before = bookingLogSummary(booking);
-      booking.status = "booked";
+      stampBookingStatus(booking, "booked");
       booking.archived = false;
       booking.publicHolidayOverride = true;
       booking.remark = [booking.remark, "Cancellation withdrawn; original class restored."].filter(Boolean).join("\n");
-      booking.updatedAt = new Date().toISOString();
       withdrawReplacementForBooking(booking);
       logAction("Cancellation Withdrawn", booking.studentName || booking.id, before, bookingLogSummary(booking), replacement.reason || "");
         changed += 1;
@@ -11406,11 +11581,20 @@
       }
       const filterTeacherView = e.target.closest("[data-open-filter-teacher-view]");
       if (filterTeacherView) {
+        if (teacherViewIsOutdated()) return setStatus("Not synced to Teacher View yet. Save to Neon successfully first.", "warn");
         const teacher = teacherById($("teacherFilter").value);
         if (!teacher) return setStatus("Choose one teacher first.", "warn");
         const link = teacherTimetableLink(teacher);
         if (!link) return setStatus("Teacher view link not generated yet. Generate it in Teacher Overview or Teachers tab.", "warn");
         window.open(link, "_blank", "noopener,noreferrer");
+      }
+      if (e.target.closest("[data-open-sync-debug]")) {
+        openSyncDebugModal();
+        return;
+      }
+      if (e.target.closest("[data-retry-teacher-sync]")) {
+        autoPushIfConfigured("Teacher View sync retry completed.");
+        return;
       }
       const undoActivity = e.target.closest("[data-undo-activity]");
       if (undoActivity) {
@@ -11673,6 +11857,10 @@
     });
 
     $("saveBtn").onclick = () => save();
+    $("conflictMergeBtn").onclick = () => resolveConflictChoice("merge");
+    $("conflictKeepLocalBtn").onclick = () => resolveConflictChoice("keep");
+    $("conflictCancelBtn").onclick = () => resolveConflictChoice("cancel");
+    $("runSyncDebugBtn").onclick = () => runSyncDebug();
     $("retryNeonSaveBtn").onclick = () => animateClick($("retryNeonSaveBtn"), async () => {
       lastNeonSaveFailed = false;
       pendingSave = false;
@@ -12145,7 +12333,7 @@
             reusedCancelledBookingId: slot.reuseCancelledBookingId || "",
             recurrenceGroupId,
             recurrenceMode: period.mode, recurrenceStartDate: period.startDate, recurrenceEndDate: period.endDate,
-            openedAvailabilityRuleId: openedRule?.id || "", createdAt: now, updatedAt: now, slotRevisionAt: now
+            openedAvailabilityRuleId: openedRule?.id || "", createdAt: now, updatedAt: now, statusChangedAt: now, slotRevisionAt: now
           };
           const undoBefore = snapshotCollections({ bookings: [booking.id] });
           state.bookings.push(booking);
