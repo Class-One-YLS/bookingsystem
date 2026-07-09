@@ -390,6 +390,12 @@
   </header>
 
   <main>
+    <div class="status hide" id="statusText"></div>
+    <details class="status hide" id="apiDebugPanel">
+      <summary><strong>API Connection Details</strong></summary>
+      <div id="apiDebugDetails" class="subtle" style="margin-top:8px;"></div>
+    </details>
+    <div id="teacherDataContent" class="hide">
     <div class="view-tabs">
       <button class="view-tab active" data-view-tab="timetable">Timetable</button>
       <button class="view-tab" data-view-tab="students">Students</button>
@@ -402,8 +408,6 @@
       <div><label>Year</label><select id="yearSelect"></select></div>
       <button class="btn" id="refreshBtn">Refresh</button>
     </div>
-
-    <div class="status hide" id="statusText"></div>
 
     <div class="grid metrics">
       <div class="metric"><span>Classes In Selected Month</span><strong id="metricTotal">0</strong></div>
@@ -527,11 +531,18 @@
         </div>
       </section>
     </div>
+    </div>
   </main>
 
   <script>
-    const API_BASE = "https://classone-booking-api-yiit.vercel.app";
-    const STATE_KEY = "production";
+    const params = new URLSearchParams(window.location.search);
+    const DEFAULT_API_BASE = "https://classone-booking-api-yiit.vercel.app";
+    function storedApiBase() {
+      try { return localStorage.getItem("classone_api_base") || ""; }
+      catch (error) { return ""; }
+    }
+    const API_BASE = String(params.get("apiBase") || window.CLASS_ONE_API_BASE || storedApiBase() || DEFAULT_API_BASE).trim().replace(/\/+$/, "");
+    const STATE_KEY = String(params.get("stateKey") || "production").trim() || "production";
     const AUTO_SYNC_MS = 15000;
     const LIST_PAGE_SIZE = 10;
     const FIRST_VIEW_YEAR = 2026;
@@ -549,7 +560,6 @@
     };
     const CANCELLED = ["cancelled", "public_holiday", "teacher_leave"];
     const $ = id => document.getElementById(id);
-    const params = new URLSearchParams(window.location.search);
     let timetableData = null;
     let autoSyncTimer = null;
     let autoSyncInProgress = false;
@@ -564,6 +574,7 @@
     let incomeListPage = 1;
     let incentiveClaimLoadedKey = "";
     let incentiveClaimLoading = false;
+    let lastApiDebug = null;
 
     function escapeHtml(value) {
       return String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
@@ -697,11 +708,76 @@
       $("syncChip").textContent = message;
     }
 
-    function teacherLinkErrorMessage(message) {
-      if (/invalid|missing/i.test(message || "")) {
-        return "This teacher timetable link is not active yet. Please ask admin to open Teachers > Edit Teacher > Generate under Teacher Timetable View Link, wait for the Neon sync success message, then copy/share the new link.";
+    function safeApiUrl(url) {
+      try {
+        const parsed = new URL(url);
+        if (parsed.searchParams.has("token")) parsed.searchParams.set("token", "[hidden]");
+        return parsed.toString();
+      } catch (error) {
+        return String(url || "").replace(/([?&]token=)[^&]+/i, "$1[hidden]");
       }
-      return message;
+    }
+
+    function updateApiDebug({ url, teacherId, from = "", to = "", status = "pending", error = "" }) {
+      lastApiDebug = { url: safeApiUrl(url), teacherId, from, to, status, error };
+      const show = params.get("debug") === "1" || Boolean(error);
+      $("apiDebugPanel").classList.toggle("hide", !show);
+      $("apiDebugDetails").innerHTML = `
+        API URL: ${escapeHtml(lastApiDebug.url)}<br>
+        Teacher ID: ${escapeHtml(teacherId || "-")}<br>
+        Date range: ${escapeHtml(from || "-")} to ${escapeHtml(to || "-")}<br>
+        HTTP status: ${escapeHtml(String(status))}${error ? `<br>Error: ${escapeHtml(error)}` : ""}
+      `;
+    }
+
+    function teacherApiErrorMessage(error) {
+      const status = Number(error?.status || 0);
+      if (status === 401) return "Teacher link token is invalid or not synced yet.";
+      if (status === 404) return "Teacher timetable data not found.";
+      if (!status || /failed to fetch|networkerror|load failed/i.test(String(error?.message || ""))) {
+        return "Cannot connect to Class One API. Please check deployment/API URL.";
+      }
+      if (status >= 500) return `Cannot connect to Class One API. The deployed API returned HTTP ${status}.`;
+      return error?.message || "Unable to load timetable.";
+    }
+
+    async function fetchTeacherApi(url, { teacherId, from = "", to = "" } = {}) {
+      updateApiDebug({ url, teacherId, from, to, status: "pending" });
+      let response;
+      try {
+        response = await fetch(url, { method: "GET", cache: "no-store" });
+      } catch (error) {
+        updateApiDebug({ url, teacherId, from, to, status: 0, error: "Fetch failed" });
+        const wrapped = new Error("Cannot connect to Class One API. Please check deployment/API URL.");
+        wrapped.status = 0;
+        throw wrapped;
+      }
+      let data = {};
+      try {
+        const text = await response.text();
+        data = text ? JSON.parse(text) : {};
+      } catch (error) {
+        data = {};
+      }
+      if (!response.ok || data.ok === false) {
+        const wrapped = new Error(data.error || `HTTP ${response.status}`);
+        wrapped.status = response.status;
+        updateApiDebug({ url, teacherId, from, to, status: response.status, error: teacherApiErrorMessage(wrapped) });
+        throw wrapped;
+      }
+      updateApiDebug({ url, teacherId, from, to, status: response.status });
+      return data;
+    }
+
+    function showTimetableLoadFailure(error, autoSync = false) {
+      const message = teacherApiErrorMessage(error);
+      if (timetableData) {
+        $("teacherDataContent").classList.remove("hide");
+        setStatus(`Showing last loaded timetable. ${autoSync ? "Auto-sync failed. " : ""}${message}`, "warn");
+      } else {
+        $("teacherDataContent").classList.add("hide");
+        setStatus(`Unable to load timetable. ${message}`, "error");
+      }
     }
 
     function normalizeLoadedTimetable(data) {
@@ -841,7 +917,8 @@
       const token = params.get("token") || "";
       if (!teacherId || !token) {
         setStatus("Teacher timetable link is missing. Please ask admin to generate a teacher timetable view link.", "error");
-        return;
+        $("teacherDataContent").classList.add("hide");
+        throw new Error("Teacher link token is invalid or not synced yet.");
       }
       const range = selectedMonthRange();
       const url = new URL(`${API_BASE}/api/teacher-view`);
@@ -852,9 +929,12 @@
       url.searchParams.set("to", range.to);
       url.searchParams.set("_", String(Date.now()));
       if (!silent) setStatus("Loading latest timetable...");
-      const response = await fetch(url.toString(), { method: "GET", cache: "no-store" });
-      const data = await response.json();
-      if (!response.ok || data.ok === false) throw new Error(teacherLinkErrorMessage(data.error || `Load failed with HTTP ${response.status}`));
+      let data;
+      try {
+        data = await fetchTeacherApi(url.toString(), { teacherId, from: range.from, to: range.to });
+      } catch (error) {
+        throw new Error(teacherApiErrorMessage(error));
+      }
       timetableData = normalizeLoadedTimetable(data);
       lastLoadedVersion = Number(data.version || 0);
       $("teacherChip").textContent = data.teacher.name || "Teacher";
@@ -862,6 +942,7 @@
       setSyncChip(`Auto-sync: ${clockLabel(lastAutoSyncAt)}`);
       setStatus(`${silent ? "Auto-synced" : "Loaded latest timetable"} at ${clockLabel(lastAutoSyncAt)}.`);
       renderAll();
+      $("teacherDataContent").classList.remove("hide");
     }
 
     async function loadTeacherVersion() {
@@ -873,10 +954,11 @@
       url.searchParams.set("teacherId", teacherId);
       url.searchParams.set("token", token);
       url.searchParams.set("_", String(Date.now()));
-      const response = await fetch(url.toString(), { method: "GET", cache: "no-store" });
-      const data = await response.json();
-      if (!response.ok || data.ok === false) throw new Error(teacherLinkErrorMessage(data.error || `Version check failed with HTTP ${response.status}`));
-      return data;
+      try {
+        return await fetchTeacherApi(url.toString(), { teacherId });
+      } catch (error) {
+        throw new Error(teacherApiErrorMessage(error));
+      }
     }
 
     async function autoSyncTimetable() {
@@ -896,7 +978,7 @@
         }
       } catch (error) {
         setSyncChip("Auto-sync failed");
-        setStatus(`Auto-sync failed at ${clockLabel(new Date())}. Showing last loaded timetable. ${error.message}`, "warn");
+        showTimetableLoadFailure(error, true);
       } finally {
         autoSyncInProgress = false;
       }
@@ -1742,7 +1824,7 @@
       leaveListPage = 1;
       incomeListPage = 1;
       resetSelectedWeek(true);
-      loadTimetable().catch(error => setStatus(error.message, "error"));
+      loadTimetable().catch(error => showTimetableLoadFailure(error));
     });
     $("yearSelect").addEventListener("change", () => {
       monthListPage = 1;
@@ -1750,11 +1832,11 @@
       incomeListPage = 1;
       fillMonthSelect(Number($("yearSelect").value), Number($("monthSelect").value));
       resetSelectedWeek(true);
-      loadTimetable().catch(error => setStatus(error.message, "error"));
+      loadTimetable().catch(error => showTimetableLoadFailure(error));
     });
-    $("refreshBtn").addEventListener("click", () => loadTimetable().catch(error => setStatus(error.message, "error")));
-    $("previousWeekBtn").addEventListener("click", () => navigateWeek(-1).catch(error => setStatus(error.message, "error")));
-    $("nextWeekBtn").addEventListener("click", () => navigateWeek(1).catch(error => setStatus(error.message, "error")));
+    $("refreshBtn").addEventListener("click", () => loadTimetable().catch(error => showTimetableLoadFailure(error)));
+    $("previousWeekBtn").addEventListener("click", () => navigateWeek(-1).catch(error => showTimetableLoadFailure(error)));
+    $("nextWeekBtn").addEventListener("click", () => navigateWeek(1).catch(error => showTimetableLoadFailure(error)));
     $("monthCalendarSection").addEventListener("touchstart", event => {
       if (event.touches.length !== 1 || event.target.closest(".timetable-wrap")) {
         weekSwipeStart = null;
@@ -1852,7 +1934,7 @@
     fillControls();
     loadTimetable()
       .then(startAutoSync)
-      .catch(error => setStatus(error.message, "error"));
+      .catch(error => showTimetableLoadFailure(error));
   </script>
 </body>
 </html>

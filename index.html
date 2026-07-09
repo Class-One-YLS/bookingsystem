@@ -9455,6 +9455,8 @@
       const url = new URL("teacher-timetable-view.html", window.location.href);
       url.searchParams.set("teacherId", teacher.id);
       url.searchParams.set("token", teacher.viewToken);
+      url.searchParams.set("apiBase", neonApiBase());
+      url.searchParams.set("stateKey", neonStateKey());
       return url.href;
     }
 
