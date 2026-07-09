@@ -532,7 +532,7 @@
   <script>
     const API_BASE = "https://classone-booking-api-yiit.vercel.app";
     const STATE_KEY = "production";
-    const AUTO_SYNC_MS = 60000;
+    const AUTO_SYNC_MS = 15000;
     const LIST_PAGE_SIZE = 10;
     const FIRST_VIEW_YEAR = 2026;
     const FIRST_VIEW_MONTH = 5;
@@ -850,6 +850,7 @@
       url.searchParams.set("token", token);
       url.searchParams.set("from", range.from);
       url.searchParams.set("to", range.to);
+      url.searchParams.set("_", String(Date.now()));
       if (!silent) setStatus("Loading latest timetable...");
       const response = await fetch(url.toString(), { method: "GET", cache: "no-store" });
       const data = await response.json();
@@ -871,6 +872,7 @@
       url.searchParams.set("key", STATE_KEY);
       url.searchParams.set("teacherId", teacherId);
       url.searchParams.set("token", token);
+      url.searchParams.set("_", String(Date.now()));
       const response = await fetch(url.toString(), { method: "GET", cache: "no-store" });
       const data = await response.json();
       if (!response.ok || data.ok === false) throw new Error(teacherLinkErrorMessage(data.error || `Version check failed with HTTP ${response.status}`));
@@ -884,9 +886,14 @@
         return;
       }
       autoSyncInProgress = true;
-      setSyncChip("Auto-sync: refreshing...");
+      setSyncChip("Auto-sync: checking...");
       try {
-        await loadTimetable({ silent: true });
+        const latest = await loadTeacherVersion();
+        if (Number(latest.version || 0) > lastLoadedVersion) {
+          await loadTimetable({ silent: true });
+        } else {
+          setSyncChip(`Auto-sync: ${clockLabel(new Date())}`);
+        }
       } catch (error) {
         setSyncChip("Auto-sync failed");
         setStatus(`Auto-sync failed at ${clockLabel(new Date())}. Showing last loaded timetable. ${error.message}`, "warn");
@@ -897,7 +904,7 @@
 
     function startAutoSync() {
       clearInterval(autoSyncTimer);
-      setSyncChip("Auto-sync: every 1 min");
+      setSyncChip("Auto-sync: every 15 sec");
       autoSyncTimer = setInterval(autoSyncTimetable, AUTO_SYNC_MS);
     }
 
@@ -945,6 +952,7 @@
 
     function amendmentTime(record) {
       const candidates = [
+        record?.slotRevisionAt,
         record?.updatedAt,
         record?.updated_at,
         record?.changedAt,
@@ -977,6 +985,7 @@
     function visibleTeacherViewBooking(booking) {
       const status = String(booking?.status || "booked").toLowerCase();
       if (!booking || status === "deleted" || booking.deleted === true) return false;
+      if (booking.supersededByBookingId || booking.rebookedByBookingId || booking.superseded === true) return false;
       return true;
     }
 
@@ -1012,14 +1021,14 @@
     }
 
     function scheduleBookings() {
+      const bookings = (timetableData?.bookings || []).filter(visibleTeacherViewBooking);
+      if (timetableData?.bookingResolution === "canonical_latest_active_revision") return bookings;
       const byTime = new Map();
-      (timetableData?.bookings || [])
-        .filter(visibleTeacherViewBooking)
-        .forEach(booking => {
-          const key = bookingKey(booking);
-          const existing = byTime.get(key);
-          if (shouldUseBooking(booking, existing)) byTime.set(key, booking);
-        });
+      bookings.forEach(booking => {
+        const key = bookingKey(booking);
+        const existing = byTime.get(key);
+        if (shouldUseBooking(booking, existing)) byTime.set(key, booking);
+      });
       return [...byTime.values()];
     }
 
@@ -1829,6 +1838,15 @@
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) autoSyncTimetable();
     });
+    window.addEventListener("storage", event => {
+      if (event.key === "classone_teacher_view_version") autoSyncTimetable();
+    });
+    if ("BroadcastChannel" in window) {
+      const timetableChannel = new BroadcastChannel("classone_timetable_updates");
+      timetableChannel.addEventListener("message", event => {
+        if (Number(event.data?.version || 0) > lastLoadedVersion) autoSyncTimetable();
+      });
+    }
 
     fillControls();
     loadTimetable()

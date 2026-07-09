@@ -2174,6 +2174,7 @@
     const DATA_BACKUP_KEY = "classone_data_backup";
     const SESSION_KEY = "classone_session";
     const UI_STATE_KEY = "classone_ui_state";
+    const SYNC_DEBUG = new URLSearchParams(window.location.search).get("debugSync") === "1";
     const loginMascots = [
       { src: "classone-mascot-transparent.png", pose: "floating", alt: "" }
     ];
@@ -3103,6 +3104,11 @@
       });
       state.bookings.forEach(booking => {
         repairFixedSnapshotBooking(booking);
+        if (booking.rebookedByBookingId && !booking.supersededByBookingId) {
+          booking.supersededByBookingId = booking.rebookedByBookingId;
+          booking.supersededAt = booking.supersededAt || booking.rebookedAt || booking.updatedAt || "";
+        }
+        booking.slotRevisionAt ||= booking.updatedAt || booking.changedAt || booking.rebookedAt || booking.cancelledAt || booking.completedAt || booking.studentNotShowAt || booking.createdAt || "";
         booking.studentName = cleanStudentName(booking.studentName);
         booking.date = dateOnly(booking.date || "");
         booking.time = normalizeTimeValue(booking.time) || booking.time;
@@ -4016,7 +4022,7 @@
     }
 
     function scheduleBookings() {
-      return state.bookings.filter(b => b.status !== "deleted");
+      return state.bookings.filter(booking => !isDeletedBookingRecord(booking) && !isSupersededBookingRecord(booking));
     }
 
     function activeBookings() {
@@ -4025,7 +4031,28 @@
 
     function findBooking(slot) {
       const matches = scheduleBookings().filter(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
-      return matches.reduce((winner, booking) => shouldUseBooking(booking, winner) ? booking : winner, null);
+      const winner = matches.reduce((selected, booking) => shouldUseBooking(booking, selected) ? booking : selected, null);
+      if (SYNC_DEBUG && matches.length) {
+        console.info("[weekly-timetable canonical booking]", {
+          slotKey: `${slot.teacherId}|${slot.date}|${slot.time}`,
+          stateVersion: Number(state.settings?.neonVersion || 0),
+          loadedFrom: "browser working state",
+          records: matches.map(booking => ({
+            sourceRecordId: booking.id || "",
+            teacherId: booking.teacherId || "",
+            studentId: booking.studentId || "",
+            bookingId: booking.id || "",
+            status: booking.status || "booked",
+            classType: booking.type || "regular class",
+            createdAt: booking.createdAt || "",
+            updatedAt: booking.updatedAt || "",
+            slotRevisionAt: booking.slotRevisionAt || "",
+            selectedWinner: booking === winner,
+            reason: booking === winner ? "canonical active slot winner" : (isSupersededBookingRecord(booking) ? `superseded by ${booking.supersededByBookingId || booking.rebookedByBookingId}` : "older active amendment")
+          }))
+        });
+      }
+      return winner;
     }
 
     function weeklyDatesInRange(startDate, endDate, day) {
@@ -6698,6 +6725,7 @@
     function bookingAmendmentTime(booking) {
       if (!booking) return 0;
       const times = [
+        booking.slotRevisionAt,
         booking.updatedAt,
         booking.updated_at,
         booking.changedAt,
@@ -6713,6 +6741,14 @@
       return times.length ? Math.max(...times) : 0;
     }
 
+    function isDeletedBookingRecord(booking) {
+      return !booking || String(booking.status || "").toLowerCase() === "deleted" || booking.deleted === true;
+    }
+
+    function isSupersededBookingRecord(booking) {
+      return Boolean(booking && (booking.supersededByBookingId || booking.rebookedByBookingId || booking.superseded === true));
+    }
+
     function bookingTieRank(booking) {
       const status = String(booking?.status || "booked").toLowerCase();
       if (status === "deleted" || booking?.deleted === true) return -100;
@@ -6725,7 +6761,9 @@
     }
 
     function shouldUseBooking(candidate, existing) {
+      if (isDeletedBookingRecord(candidate) || isSupersededBookingRecord(candidate)) return false;
       if (!existing) return true;
+      if (isDeletedBookingRecord(existing) || isSupersededBookingRecord(existing)) return true;
       const candidateTime = bookingAmendmentTime(candidate);
       const existingTime = bookingAmendmentTime(existing);
       if (candidateTime !== existingTime) return candidateTime > existingTime;
@@ -9623,6 +9661,18 @@
       return Boolean(neonApiBase() && neonApiKey());
     }
 
+    function notifyTeacherViews(version) {
+      const message = { version: Number(version || 0), updatedAt: new Date().toISOString() };
+      try {
+        localStorage.setItem("classone_teacher_view_version", JSON.stringify(message));
+      } catch (error) {}
+      if ("BroadcastChannel" in window) {
+        const channel = new BroadcastChannel("classone_timetable_updates");
+        channel.postMessage(message);
+        channel.close();
+      }
+    }
+
     function safeApiUrlForDisplay(url) {
       try {
         const parsed = new URL(url);
@@ -10017,6 +10067,7 @@
           })
         }, "Neon save complete", SYNC_SAVE_TIMEOUT_MS);
         state.settings.neonVersion = Number(data.version || currentVersion || 0);
+        notifyTeacherViews(state.settings.neonVersion);
         state.settings.lastSyncedRevision = Math.max(Number(state.settings.lastSyncedRevision || 0), pushedRevision);
         const newerEditExists = Number(state.settings.localRevision || 0) > pushedRevision || pendingSave;
         pendingSave = false;
@@ -10279,6 +10330,7 @@
       booking.remark = remark;
       if (nextStatus === "booked") booking.publicHolidayOverride = true;
       booking.archived = false;
+      booking.slotRevisionAt = now;
       if (booking.status === "booked" && slotHasPassed(booking.date, booking.time)) {
         booking.status = "completed";
         booking.completedAt = booking.completedAt || now;
@@ -12093,7 +12145,7 @@
             reusedCancelledBookingId: slot.reuseCancelledBookingId || "",
             recurrenceGroupId,
             recurrenceMode: period.mode, recurrenceStartDate: period.startDate, recurrenceEndDate: period.endDate,
-            openedAvailabilityRuleId: openedRule?.id || "", createdAt: now, updatedAt: now
+            openedAvailabilityRuleId: openedRule?.id || "", createdAt: now, updatedAt: now, slotRevisionAt: now
           };
           const undoBefore = snapshotCollections({ bookings: [booking.id] });
           state.bookings.push(booking);
@@ -12108,10 +12160,12 @@
         const cancelledBooking = state.bookings.find(item => item.id === slot.reuseCancelledBookingId);
         if (cancelledBooking) {
           const undoBefore = snapshotCollections({ bookings: [cancelledBooking.id, booking.id] });
+          const rebookedAt = booking.slotRevisionAt || booking.updatedAt || booking.createdAt || new Date().toISOString();
           cancelledBooking.rebookedByBookingId = booking.id;
           cancelledBooking.rebookedStudentName = booking.studentName;
-          cancelledBooking.rebookedAt = new Date().toISOString();
-          cancelledBooking.updatedAt = cancelledBooking.rebookedAt;
+          cancelledBooking.rebookedAt = rebookedAt;
+          cancelledBooking.supersededByBookingId = booking.id;
+          cancelledBooking.supersededAt = rebookedAt;
           cancelledBooking.remark = [cancelledBooking.remark, `Slot reused by ${booking.studentName}.`].filter(Boolean).join("\n");
           logAction("Cancelled Slot Rebooked", cancelledBooking.studentName || cancelledBooking.id, bookingLogSummary(cancelledBooking), bookingLogSummary(booking), `New student: ${booking.studentName}`, {
             undo: makeUndoSnapshot(undoBefore, snapshotCollections({ bookings: [cancelledBooking.id, booking.id] }))
