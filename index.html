@@ -834,6 +834,7 @@
       <button class="nav-btn" data-tab="crm" data-short="CRM">CRM Leads</button>
       <button class="nav-btn" data-tab="tutorCrm" data-short="TCRM">Tutor CRM</button>
       <button class="nav-btn" data-tab="publicHoliday" data-short="PH">Public Holiday</button>
+      <button class="nav-btn" data-tab="policySettings" data-short="Policy">Policy Settings</button>
       <button class="nav-btn" data-tab="reports" data-short="Rpt">Reports</button>
       <button class="nav-btn" data-tab="activity" data-short="Log">Activity Log</button>
       <button class="nav-btn" data-tab="users" data-short="Users">Users</button>
@@ -869,8 +870,10 @@
             <div><label>Status</label><div class="field-actions"><select id="statusFilter"><option value="all">All</option><option value="open">Open only</option><option value="booked">Booked/Fixed only</option></select><button class="btn ghost" data-clear-filter="statusFilter">Clear</button></div></div>
             <div><label>Class Type</label><div class="field-actions"><select id="typeFilter"></select><button class="btn ghost" data-clear-filter="typeFilter">Clear</button></div></div>
             <div><label>&nbsp;</label><button class="btn ghost" id="clearSalesFiltersBtn">Clear Filters</button></div>
+            <div><label>&nbsp;</label><button class="btn mint" id="addTeacherLeaveBtn">Add Teacher On Leave</button></div>
           </div>
           <div class="sales-summary" id="salesSummary"></div>
+          <div id="pendingReplacementBanner" class="panel hide" style="margin-top:12px;"></div>
         </div>
         <div class="schedule-wrap"><div id="scheduleGrid" class="schedule"></div></div>
       </section>
@@ -1248,7 +1251,7 @@
               <div class="flow-steps">
                 <div><span>&gt;</span><p><strong>Teacher setup:</strong> Open Teachers &gt; Add profile &gt; Add subjects/tier/rate &gt; Add timetable slots &gt; Save.</p></div>
                 <div><span>&gt;</span><p><strong>Student regular slot:</strong> Open Students &gt; Edit student &gt; Add teacher/day/time/subject &gt; Save.</p></div>
-                <div><span>&gt;</span><p><strong>Student not show:</strong> Click class &gt; Set Student Not Show &gt; Add remark &gt; Save. It turns red and pays RM5 allowance.</p></div>
+              <div><span>&gt;</span><p><strong>Student not show:</strong> Click class &gt; Set Student Not Show &gt; Add remark &gt; Save. It turns red and pays the allowance set in Policy Settings.</p></div>
                 <div><span>&gt;</span><p><strong>Class cancelled:</strong> Click class &gt; Choose Cancelled/Public Holiday/Teacher Leave &gt; Add remark &gt; Save. It turns grey and is not counted for payout.</p></div>
                 <div><span>&gt;</span><p><strong>Undo wrong cancellation:</strong> Open Replacement Classes &gt; Find the case &gt; Click Undo Cancellation &gt; Original class returns to booked.</p></div>
                 <div><span>&gt;</span><p><strong>Teacher partial leave:</strong> Mark only affected class slots as Teacher Leave.</p></div>
@@ -1511,6 +1514,25 @@
         </div>
       </section>
 
+      <section id="policySettings" class="tab hide">
+        <div class="panel">
+          <div class="row spread">
+            <div>
+              <h2>Policy Settings</h2>
+              <div class="subtle">Shared rules used for payout, not-show allowance, cancellation handling, and replacement class decisions.</div>
+            </div>
+            <button class="btn mint small" id="savePolicySettingsBtn">Save Policy</button>
+          </div>
+          <div class="grid three" style="margin-top:14px;">
+            <div><label>Student Not Show Allowance (RM)</label><input id="policyNotShowAllowance" type="number" min="0" step="0.01"></div>
+            <div><label>Cancelled Class Teacher Pay</label><select id="policyCancelledPay"><option value="none">No pay</option><option value="full">Full class rate</option></select></div>
+            <div><label>Public Holiday Default Replacement</label><select id="policyPublicHolidayReplacement"><option value="yes">Replacement needed</option><option value="no">No replacement needed</option></select></div>
+          </div>
+          <div class="subtle" style="margin-top:12px;">Finalized bookings keep a policy snapshot so future rule changes do not rewrite historical payout records.</div>
+          <div id="policyRuleList" class="list" style="margin-top:14px;"></div>
+        </div>
+      </section>
+
       <section id="activity" class="tab hide">
         <div class="panel">
           <div class="row spread">
@@ -1556,7 +1578,7 @@
             <div><label>Access</label><div class="card subtle">Only master_admin can open this tab.</div></div>
           </div>
           <div class="grid two" style="margin-top:16px;">
-            <div class="card">
+            <div class="card hide" id="userProfileCard">
               <h3>User Profile</h3>
               <input id="userId" type="hidden">
               <div class="grid two">
@@ -2108,6 +2130,23 @@
     </div>
   </div>
 
+  <div id="teacherLeaveModal" class="modal hide">
+    <div class="modal-card">
+      <div class="row spread"><h2>Add Teacher On Leave</h2><button class="btn ghost small" data-close>Close</button></div>
+      <div class="grid two" style="margin-top:14px;">
+        <div><label>Teacher</label><select id="teacherLeaveTeacher"></select></div>
+        <div><label>Leave Type</label><select id="teacherLeaveType"><option value="teacher_leave">Teacher Leave</option><option value="unavailable">Unavailable Only</option></select></div>
+        <div><label>Start Date</label><input id="teacherLeaveStartDate" type="date"></div>
+        <div><label>End Date</label><input id="teacherLeaveEndDate" type="date"></div>
+        <div><label>From Time</label><select id="teacherLeaveFromTime"></select></div>
+        <div><label>To Time</label><select id="teacherLeaveToTime"></select></div>
+      </div>
+      <label class="pill" style="margin-top:12px;"><input id="teacherLeaveCancelBooked" type="checkbox" checked style="width:auto;min-height:0;margin-right:6px;"> Cancel affected booked classes and create replacement records when required</label>
+      <div style="margin-top:12px;"><label>Remark</label><input id="teacherLeaveRemark" placeholder="Reason or admin note"></div>
+      <div class="row" style="margin-top:14px;"><button class="btn mint" id="saveTeacherLeaveBtn">Save Teacher Leave</button></div>
+    </div>
+  </div>
+
   <div id="publicHolidayModal" class="modal hide">
     <div class="modal-card">
       <div class="row spread"><h2>Add Public Holiday</h2><button class="btn ghost small" data-close>Close</button></div>
@@ -2193,7 +2232,7 @@
       apiKey: "73a5baa8e4a70be55d79615e2dfbf4e843fa04b57ec04764",
       stateKey: "production"
     };
-    const FRONTEND_BUILD = "2026.07.10-sync-safety.2";
+    const FRONTEND_BUILD = "2026.07.10-ops-policy.1";
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
     const LOGIN_TIMEOUT_MS = 8000;
@@ -2231,6 +2270,7 @@
       { id: "crm", label: "CRM Leads" },
       { id: "tutorCrm", label: "Tutor CRM" },
       { id: "publicHoliday", label: "Public Holiday" },
+      { id: "policySettings", label: "Policy Settings" },
       { id: "reports", label: "Reports" },
       { id: "activity", label: "Activity Log" },
       { id: "settings", label: "Settings" },
@@ -2262,13 +2302,16 @@
       bookings: [],
       replacements: [],
       replacementCredits: [],
+      teacherLeaves: [],
       publicHolidays: [],
+      policyRules: [],
       revenueEntries: [],
       teacherStudentNotes: [],
       teacherFeedback: [],
       activityLogs: [],
       users: [],
       roles: [],
+      ui: {},
       settings: { scriptUrl: "", apiKey: "", crmScriptUrl: "", crmApiKey: "", neonApiUrl: "", neonApiKey: "", neonStateKey: "", replyTemplates: [] }
     };
 
@@ -2362,6 +2405,7 @@
     let teacherFeedbackPage = 1;
     let leadColumnFilterTimer = null;
     let openColumnFilterId = "";
+    let isLoggingOut = false;
     let replacementViewMode = uiStateGet("ReplacementViewMode", "board") || "board";
     let replacementPage = 1;
     const REPLACEMENT_PAGE_SIZE = LIST_PAGE_SIZE;
@@ -2378,7 +2422,9 @@
       "crmHistoricalMonthlyStats",
       "replacements",
       "replacementCredits",
+      "teacherLeaves",
       "publicHolidays",
+      "policyRules",
       "revenueEntries",
       "teacherStudentNotes",
       "teacherFeedback",
@@ -2432,6 +2478,45 @@
     const $ = (id) => document.getElementById(id);
     const uid = (prefix) => prefix + "_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
     const localISO = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+    function pendingReplacementContext() {
+      state.ui ||= {};
+      return state.ui.pendingReplacementBooking || null;
+    }
+
+    function setPendingReplacementContext(context = null) {
+      state.ui ||= {};
+      state.ui.pendingReplacementBooking = context ? {
+        ...context,
+        startedAt: context.startedAt || new Date().toISOString()
+      } : null;
+      pendingReplacementId = context?.replacementId || "";
+      pendingReplacementCreditId = context?.creditId || "";
+      persistUiStateOnly();
+      renderPendingReplacementBanner();
+    }
+
+    function clearPendingReplacementContext() {
+      setPendingReplacementContext(null);
+    }
+
+    function persistUiStateOnly() {
+      try {
+        const ui = JSON.parse(safeStorageGet(UI_STATE_KEY) || "{}") || {};
+        ui.pendingReplacementBooking = state.ui?.pendingReplacementBooking || null;
+        safeStorageSet(UI_STATE_KEY, JSON.stringify(ui));
+      } catch (err) {}
+    }
+
+    function hydrateUiStateOnly() {
+      state.ui ||= {};
+      try {
+        const ui = JSON.parse(safeStorageGet(UI_STATE_KEY) || "{}") || {};
+        state.ui.pendingReplacementBooking = ui.pendingReplacementBooking || null;
+        pendingReplacementId = state.ui.pendingReplacementBooking?.replacementId || "";
+        pendingReplacementCreditId = state.ui.pendingReplacementBooking?.creditId || "";
+      } catch (err) {}
+    }
 
     function roleByName(name) {
       return (state.roles || []).find(role => role.name === name) || null;
@@ -2611,6 +2696,7 @@
     }
 
     function denyPermission(message = "You do not have permission to access this section.") {
+      if (isLoggingOut) return false;
       setStatus(message, "error");
       alert(message);
       return false;
@@ -3317,13 +3403,17 @@
       state.bookings ||= [];
       state.replacements ||= [];
       state.replacementCredits ||= [];
+      state.teacherLeaves ||= [];
       state.publicHolidays ||= [];
+      state.policyRules ||= [];
       state.revenueEntries ||= [];
       state.teacherStudentNotes ||= [];
       state.teacherFeedback ||= [];
       state.activityLogs ||= [];
       state.users ||= [];
       state.roles ||= [];
+      state.ui ||= {};
+      hydrateUiStateOnly();
       if (!Array.isArray(state.roles) || !state.roles.length) {
         state.roles = DEFAULT_ROLES.map(role => ({ ...role, allowedTabs: [...role.allowedTabs], permissions: [...role.permissions] }));
       } else {
@@ -3464,6 +3554,43 @@
         item.amount = Number(item.amount || 0);
         item.used = Number(item.used || 0);
         item.createdAt ||= new Date().toISOString();
+      });
+      state.teacherLeaves.forEach(item => {
+        item.id ||= uid("leave");
+        item.teacherId ||= "";
+        item.startDate = dateOnly(item.startDate || item.date || todayISO());
+        item.endDate = dateOnly(item.endDate || item.startDate);
+        item.fromTime = normalizeTimeValue(item.fromTime || "08:00") || "08:00";
+        item.toTime = normalizeTimeValue(item.toTime || "21:30") || "21:30";
+        item.type ||= "teacher_leave";
+        item.status = item.status === "cancelled" ? "cancelled" : "active";
+        item.remark ||= "";
+        item.createdAt ||= new Date().toISOString();
+        item.updatedAt ||= item.createdAt;
+      });
+      if (!state.policyRules.length) {
+        state.policyRules.push({
+          id: "policy_default_teacher_pay",
+          name: "Default Teacher Pay Rules",
+          notShowAllowance: 5,
+          cancelledPay: "none",
+          publicHolidayReplacementDefault: "yes",
+          effectiveFrom: "2026-01-01",
+          status: "active",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+      state.policyRules.forEach(rule => {
+        rule.id ||= uid("policy");
+        rule.name ||= "Policy Rule";
+        rule.notShowAllowance = Number(rule.notShowAllowance ?? 5);
+        rule.cancelledPay ||= "none";
+        rule.publicHolidayReplacementDefault ||= "yes";
+        rule.effectiveFrom = dateOnly(rule.effectiveFrom || "2026-01-01");
+        rule.status ||= "active";
+        rule.createdAt ||= new Date().toISOString();
+        rule.updatedAt ||= rule.createdAt;
       });
       state.publicHolidays.forEach(item => {
         item.startDate = dateOnly(item.startDate || item.date);
@@ -3944,7 +4071,7 @@
         const notShows = monthBookings.filter(b => b.status === "student_not_show");
         const cancelled = monthBookings.filter(b => isCancelledStatus(b.status));
         const lessonPay = completed.reduce((sum, booking) => sum + completedClassPayout(booking, teacher), 0);
-        const notShowPay = notShows.length * 5;
+        const notShowPay = notShows.reduce((sum, booking) => sum + applyPolicyRules(booking, { teacher }).notShowAllowance, 0);
         return [teacher.name || "", teacher.category === "micro_franchisee" ? "Micro Franchisee" : "Freelance Tutor", teacher.tier || "", Number(teacher.rate || 0).toFixed(2), `${Number(teacher.profitShare || 0).toFixed(2)}%`, completed.length, notShows.length, cancelled.length, lessonPay.toFixed(2), notShowPay.toFixed(2), (lessonPay + notShowPay).toFixed(2)];
       });
     }
@@ -4440,12 +4567,15 @@
       const packageOptions = [...new Set(state.students.map(s => s.package).filter(Boolean))].sort();
       ["monthSelect", "reportMonth", "businessDashboardMonth"].forEach(id => fillSelect($(id), Array.from({ length: 12 }, (_, i) => ({ value: i, label: new Date(2026, i, 1).toLocaleString("en", { month: "long" }) }))));
       ["teacherFilter", "teacherStudentRecordTeacher"].forEach(id => fillSelect($(id), teacherOptions, "All Teachers"));
+      fillSelect($("teacherLeaveTeacher"), teacherOptions, "Choose teacher");
       ["overviewTeacherFilter"].forEach(id => fillSelect($(id), teacherOptions, "Choose Teacher"));
       ["slotTeacher", "bulkTeacher", "overrideTeacher", "editTimeSlotTeacher"].forEach(id => fillSelect($(id), teacherOptions));
       fillSelect($("reportTeacher"), reportTeacherOptions);
       ["assessmentTeacher", "trialTeacher"].forEach(id => fillSelect($(id), teacherOptions, "Choose teacher"));
       ["subjectFilter", "teacherDirectorySubject"].forEach(id => fillSelect($(id), SUBJECTS, "All Subjects"));
-      ["timeFromFilter", "timeToFilter"].forEach(id => fillSelect($(id), halfHourOptions()));
+      ["timeFromFilter", "timeToFilter", "teacherLeaveFromTime", "teacherLeaveToTime"].forEach(id => fillSelect($(id), halfHourOptions()));
+      if ($("teacherLeaveFromTime")) $("teacherLeaveFromTime").value = "08:00";
+      if ($("teacherLeaveToTime")) $("teacherLeaveToTime").value = "21:30";
       fillSelect($("typeFilter"), BOOKING_TYPES.map(type => ({ value: type, label: type.replace(/\b\w/g, char => char.toUpperCase()) })), "All Types");
       ["slotSubject", "bulkSubject", "overrideSubject", "studentRegularSubject", "bookingSubject", "assessmentSubject", "trialSubject", "openSlotSubject"].forEach(id => fillSelect($(id), SUBJECTS));
       fillSelect($("leadStatus"), LEAD_STATUSES);
@@ -4710,6 +4840,173 @@
       return slots;
     }
 
+    function activePolicyRule(date = todayISO()) {
+      return [...(state.policyRules || [])]
+        .filter(rule => rule.status !== "archived" && (!rule.effectiveFrom || rule.effectiveFrom <= date))
+        .sort((a, b) => String(b.effectiveFrom || "").localeCompare(String(a.effectiveFrom || "")) || activityTime(b.updatedAt) - activityTime(a.updatedAt))[0] || {
+          notShowAllowance: 5,
+          cancelledPay: "none",
+          publicHolidayReplacementDefault: "yes"
+        };
+    }
+
+    function notShowAllowanceForDate(date = todayISO()) {
+      return Number(activePolicyRule(date).notShowAllowance ?? 5);
+    }
+
+    function applyPolicyRules(booking, context = {}) {
+      const rule = activePolicyRule(booking?.date || todayISO());
+      const status = booking?.status || "booked";
+      const cancelled = isCancelledStatus(status);
+      const notShow = status === "student_not_show";
+      const paidCompleted = isPaidCompletedClass(booking);
+      const teacher = context.teacher || teacherById(booking?.teacherId);
+      return {
+        ruleId: rule.id || "policy_default_teacher_pay",
+        notShowAllowance: Number(rule.notShowAllowance ?? 5),
+        teacherPay: notShow ? Number(rule.notShowAllowance ?? 5) : (paidCompleted ? completedClassPayout(booking, teacher) : (cancelled && rule.cancelledPay === "full" ? completedClassPayout(booking, teacher) : 0)),
+        replacementNeeded: status === "cancelled" || status === "teacher_leave" || (status === "public_holiday" && (rule.publicHolidayReplacementDefault || "yes") === "yes")
+      };
+    }
+
+    function teacherLeaveForSlot(teacherId, date, time) {
+      const targetTime = normalizeTimeValue(time) || time;
+      return (state.teacherLeaves || []).find(leave =>
+        leave.status !== "cancelled" &&
+        leave.teacherId === teacherId &&
+        leave.startDate <= date &&
+        leave.endDate >= date &&
+        minutes(leave.fromTime) <= minutes(targetTime) &&
+        minutes(targetTime) <= minutes(leave.toTime)
+      ) || null;
+    }
+
+    function teacherLeavePseudoBooking(slot, leave) {
+      return {
+        id: `leave_${leave.id}_${slot.date}_${slot.time}`,
+        teacherId: slot.teacherId,
+        date: slot.date,
+        day: slot.day || dayFromISO(slot.date),
+        time: slot.time,
+        subject: slot.subject || "",
+        studentName: "Teacher Leave",
+        type: "teacher leave",
+        status: "teacher_leave",
+        remark: leave.remark || "",
+        source: "teacher_leave_record",
+        updatedAt: leave.updatedAt || leave.createdAt || "",
+        slotRevisionAt: leave.updatedAt || leave.createdAt || ""
+      };
+    }
+
+    function datesBetweenInclusive(startDate, endDate) {
+      const dates = [];
+      let current = parseISODate(startDate);
+      const end = parseISODate(endDate || startDate);
+      if (Number.isNaN(current.getTime()) || Number.isNaN(end.getTime())) return dates;
+      while (current <= end) {
+        dates.push(localISO(current));
+        current.setDate(current.getDate() + 1);
+      }
+      return dates;
+    }
+
+    function timesBetweenInclusive(fromTime, toTime) {
+      const from = minutes(fromTime);
+      const to = minutes(toTime);
+      return TIME_OPTIONS.filter(time => {
+        const value = minutes(time);
+        return value >= from && value <= to;
+      });
+    }
+
+    function openTeacherLeaveModal() {
+      if (!requireActionPermission("edit")) return;
+      populateSelects();
+      const selectedTeacher = $("teacherFilter")?.value && $("teacherFilter").value !== "all" ? $("teacherFilter").value : ($("overviewTeacherFilter")?.value || "");
+      $("teacherLeaveTeacher").value = selectedTeacher || activeTeachers()[0]?.id || "";
+      $("teacherLeaveType").value = "whole_day";
+      $("teacherLeaveStartDate").value = $("weekDateInput")?.value || todayISO();
+      $("teacherLeaveEndDate").value = $("teacherLeaveStartDate").value;
+      $("teacherLeaveFromTime").value = "08:00";
+      $("teacherLeaveToTime").value = "21:30";
+      $("teacherLeaveCancelBooked").checked = true;
+      $("teacherLeaveRemark").value = "";
+      $("teacherLeaveModal").classList.remove("hide");
+    }
+
+    function teacherLeaveSummary(leave) {
+      const teacher = teacherById(leave.teacherId);
+      const range = leave.startDate === leave.endDate ? formatDateFromAny(leave.startDate) : `${formatDateFromAny(leave.startDate)} to ${formatDateFromAny(leave.endDate)}`;
+      const time = leave.type === "whole_day" ? "Whole day" : `${timeLabel(leave.fromTime)} - ${timeLabel(leave.toTime)}`;
+      return `${teacher?.name || "-"} | ${range} | ${time}`;
+    }
+
+    function applyTeacherLeaveToBookings(leave) {
+      const leaveDates = new Set(datesBetweenInclusive(leave.startDate, leave.endDate));
+      const leaveTimes = new Set(timesBetweenInclusive(leave.fromTime, leave.toTime));
+      let changed = 0;
+      scheduleBookings().forEach(booking => {
+        if (booking.teacherId !== leave.teacherId) return;
+        if (!leaveDates.has(dateOnly(booking.date))) return;
+        if (!leaveTimes.has(normalizeTimeValue(booking.time) || booking.time)) return;
+        if (booking.status !== "booked" && booking.status !== "completed") return;
+        const before = bookingLogSummary(booking);
+        const now = new Date().toISOString();
+        stampBookingStatus(booking, "teacher_leave", now);
+        booking.archived = true;
+        booking.teacherLeaveId = leave.id;
+        booking.remark = [booking.remark, leave.remark || "Teacher on leave"].filter(Boolean).join("\n");
+        handleReplacementForOutcome(booking, "yes");
+        logAction("Teacher Leave Applied", booking.studentName || booking.id, before, bookingLogSummary(booking), leave.remark || "Teacher on leave");
+        changed += 1;
+      });
+      return changed;
+    }
+
+    async function saveTeacherLeave() {
+      if (!requireActionPermission("edit")) return;
+      const teacherId = $("teacherLeaveTeacher").value;
+      const type = $("teacherLeaveType").value || "whole_day";
+      const startDate = $("teacherLeaveStartDate").value;
+      const endDate = $("teacherLeaveEndDate").value || startDate;
+      const fromTime = type === "whole_day" ? "08:00" : $("teacherLeaveFromTime").value;
+      const toTime = type === "whole_day" ? "21:30" : $("teacherLeaveToTime").value;
+      if (!teacherId) return alert("Choose teacher first.");
+      if (!startDate) return alert("Choose leave start date.");
+      if (endDate < startDate) return alert("End date cannot be before start date.");
+      if (minutes(fromTime) > minutes(toTime)) return alert("Leave start time cannot be after end time.");
+      const latestLoaded = await autoLoadLatestNeonIfNeeded("saving teacher leave");
+      if (!latestLoaded) return;
+      const now = new Date().toISOString();
+      const leave = {
+        id: uid("leave"),
+        teacherId,
+        type,
+        startDate,
+        endDate,
+        fromTime,
+        toTime,
+        status: "active",
+        remark: $("teacherLeaveRemark").value.trim(),
+        createdAt: now,
+        updatedAt: now,
+        updatedBy: currentUser()?.email || currentUser()?.name || "",
+        deviceId: DEVICE_ID
+      };
+      state.teacherLeaves ||= [];
+      state.teacherLeaves.push(leave);
+      const changed = $("teacherLeaveCancelBooked").checked ? applyTeacherLeaveToBookings(leave) : 0;
+      logAction("Teacher Leave Added", teacherById(teacherId)?.name || teacherId, "", `${teacherLeaveSummary(leave)} | ${changed} booked class${changed === 1 ? "" : "es"} cancelled`, leave.remark || "");
+      $("teacherLeaveModal").classList.add("hide");
+      save(false);
+      renderSchedule();
+      renderTeacherOverview();
+      renderActivityLog();
+      const synced = await autoPushIfConfigured(`Teacher leave saved. ${changed} class${changed === 1 ? "" : "es"} updated.`);
+      setStatus(synced ? `Teacher leave saved and synced. ${changed} class${changed === 1 ? "" : "es"} updated.` : `Teacher leave saved locally. ${changed} class${changed === 1 ? "" : "es"} updated. Not synced to Teacher View yet.`, synced ? "success" : "warn");
+    }
+
     function scheduleBookings() {
       return state.bookings.filter(booking => !isDeletedBookingRecord(booking) && !isSupersededBookingRecord(booking));
     }
@@ -4778,6 +5075,14 @@
         ? state.bookings.find(booking => booking.id === options.reuseCancelledBookingId && isCancelledStatus(booking.status) && booking.teacherId === teacherId && booking.date === date && booking.time === time)
         : null;
       if (reusedCancellation) return { kind: "open", reusedCancellation };
+      const leave = teacherLeaveForSlot(teacherId, date, time);
+      if (leave) {
+        return {
+          kind: "conflict",
+          reason: `${teacher.name} is on leave/unavailable on ${formatClassDateTime(date, time)}${leave.remark ? `: ${leave.remark}` : "."}`,
+          leave
+        };
+      }
       const slots = collectSlotsForDate(parseISODate(date)).filter(slot => slot.teacherId === teacherId && slot.time === time);
       const fixed = slots.find(slot => slot.locked && slot.id !== options.excludeSlotId);
       if (fixed) {
@@ -4871,7 +5176,11 @@
           slots = slots.filter(s => teacherFilter === "all" || s.teacherId === teacherFilter);
           slots = slots.filter(s => slotMatchesSubject(s, subjectFilter));
           slots = slots.filter(s => slotMatchesTimeRange(s, timeFrom, timeTo));
-          const items = slots.map(s => ({ slot: s, booking: findBooking(s) }));
+          const items = slots.map(s => {
+            const booking = findBooking(s);
+            const leave = !booking ? teacherLeaveForSlot(s.teacherId, s.date, s.time) : null;
+            return { slot: s, booking: booking || (leave ? teacherLeavePseudoBooking(s, leave) : null) };
+          });
           let filtered = items.filter(x => {
             const isBooked = Boolean(x.booking || x.slot.locked);
             const matchesStatus = statusFilter === "all" || (statusFilter === "open" && !isBooked) || (statusFilter === "booked" && isBooked);
@@ -4891,6 +5200,31 @@
       });
       $("scheduleGrid").innerHTML = html || `<div class="empty">No slots yet.</div>`;
       renderSalesSummary(summary);
+      renderPendingReplacementBanner();
+    }
+
+    function renderPendingReplacementBanner() {
+      const banner = $("pendingReplacementBanner");
+      if (!banner) return;
+      const context = pendingReplacementContext();
+      if (!context) {
+        banner.classList.add("hide");
+        banner.innerHTML = "";
+        return;
+      }
+      const replacement = context.replacementId ? (state.replacements || []).find(item => item.id === context.replacementId) : null;
+      const credit = context.creditId ? (state.replacementCredits || []).find(item => item.id === context.creditId) : null;
+      const studentName = context.studentName || replacement?.studentName || credit?.studentName || "student";
+      const subject = context.subject || replacement?.subject || "";
+      banner.classList.remove("hide");
+      banner.innerHTML = `
+        <div class="row spread">
+          <div>
+            <strong>Arranging replacement class for ${escapeHtml(studentName)}</strong>
+            <div class="subtle">${escapeHtml(subject || "Subject not set")} | Click an available slot to book this as a replacement class.</div>
+          </div>
+          <button class="btn ghost small" data-clear-pending-replacement>Cancel Arrangement</button>
+        </div>`;
     }
 
     function teacherOverviewActiveSlot(teacher, day, time, date = todayISO()) {
@@ -6086,8 +6420,10 @@
     }
 
     function applyPendingReplacementBookingDefaults() {
-      if (pendingReplacementId) {
-        const replacement = (state.replacements || []).find(item => item.id === pendingReplacementId);
+      const context = pendingReplacementContext();
+      if (context?.replacementId || pendingReplacementId) {
+        const replacementId = context?.replacementId || pendingReplacementId;
+        const replacement = (state.replacements || []).find(item => item.id === replacementId);
         if (replacement) {
           $("bookingStudentName").value = replacement.studentName || "";
           const student = (state.students || []).find(item => studentNameKey(item.name) === studentNameKey(replacement.studentName));
@@ -6097,10 +6433,11 @@
         }
         return;
       }
-      if (!pendingReplacementCreditId) return;
-      const credit = (state.replacementCredits || []).find(item => item.id === pendingReplacementCreditId && item.status !== "void");
+      const creditId = context?.creditId || pendingReplacementCreditId;
+      if (!creditId) return;
+      const credit = (state.replacementCredits || []).find(item => item.id === creditId && item.status !== "void");
       if (!credit || Number(credit.amount || 0) - Number(credit.used || 0) <= 0) {
-        pendingReplacementCreditId = "";
+        clearPendingReplacementContext();
         return;
       }
       const student = studentById(credit.studentId) || (state.students || []).find(item => studentNameKey(item.name) === studentNameKey(credit.studentName));
@@ -6482,8 +6819,38 @@
         .sort((a, b) => `${a.date || ""}${a.time || ""}`.localeCompare(`${b.date || ""}${b.time || ""}`));
     }
 
+    function teacherLeaveRuleRows(teacher) {
+      const year = Number($("overviewLeaveYear").value || new Date().getFullYear());
+      return (state.teacherLeaves || [])
+        .filter(leave => leave.teacherId === teacher.id && leave.status !== "cancelled")
+        .filter(leave => {
+          const start = Number((leave.startDate || "").slice(0, 4));
+          const end = Number((leave.endDate || leave.startDate || "").slice(0, 4));
+          return start <= year && end >= year;
+        })
+        .sort((a, b) => `${a.startDate || ""}${a.fromTime || ""}`.localeCompare(`${b.startDate || ""}${b.fromTime || ""}`));
+    }
+
+    async function cancelTeacherLeave(leaveId) {
+      if (!requireActionPermission("edit")) return;
+      const leave = (state.teacherLeaves || []).find(item => item.id === leaveId && item.status !== "cancelled");
+      if (!leave) return;
+      if (!confirm("Cancel this teacher leave/unavailable block? Existing cancelled class records will remain for history until admin edits them.")) return;
+      const before = cloneForUndo(leave);
+      leave.status = "cancelled";
+      leave.cancelledAt = new Date().toISOString();
+      leave.updatedAt = leave.cancelledAt;
+      logAction("Teacher Leave Cancelled", teacherById(leave.teacherId)?.name || leave.teacherId, before, cloneForUndo(leave), teacherLeaveSummary(leave));
+      save(false);
+      renderSchedule();
+      renderTeacherOverview();
+      renderActivityLog();
+      await autoPushIfConfigured("Teacher leave cancelled.");
+    }
+
     function renderTeacherLeaveSummary(teacher) {
       const rows = teacherLeaveRows(teacher);
+      const leaveRules = teacherLeaveRuleRows(teacher);
       const future = rows.filter(row => `${row.date || ""}T${row.time || "00:00"}` >= `${todayISO()}T00:00`).length;
       $("teacherLeaveSummary").innerHTML = `
         <details class="panel">
@@ -6492,6 +6859,19 @@
             <span class="pill">${rows.length}</span>
           </summary>
           <div style="margin-top:12px;">
+            <h3>Leave Blocks</h3>
+            ${leaveRules.map(leave => `
+              <div class="overview-item">
+                <div class="row spread">
+                  <div>
+                    <strong>${escapeHtml(teacherLeaveSummary(leave))}</strong>
+                    <div class="subtle">${escapeHtml(leave.remark || "Teacher unavailable")}</div>
+                  </div>
+                  <button class="btn danger small" data-cancel-teacher-leave="${escapeHtml(leave.id)}">Cancel Leave</button>
+                </div>
+              </div>
+            `).join("") || `<div class="subtle">No active leave blocks.</div>`}
+            <h3 style="margin-top:14px;">Cancelled Class Records</h3>
             ${tableHtml(["Date", "Time", "Student", "Subject", "Remark"], rows.map(row => [formatDateFromAny(row.date), timeLabel(row.time), row.studentName || "", row.subject || "", row.remark || ""]))}
           </div>
         </details>
@@ -6525,6 +6905,9 @@
       if (!teacher) return "";
       const subject = slot.subject || (teacher.subjects || [])[0] || "";
       if (booking) {
+        if (booking.source === "teacher_leave_record") {
+          return `<button class="slot booked ${statusClass(booking.status)}" disabled>${escapeHtml(teacher.name)}<small>Teacher Leave${booking.remark ? ` | ${escapeHtml(booking.remark)}` : ""}</small></button>`;
+        }
         const reserveClass = booking.type === "reserve" ? " reserve" : "";
         const typeClass = ` type-${String(booking.type || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
         const statusText = booking.changedSlot ? "Booked | Changed Slot" : bookingStatusLabel(booking.status);
@@ -8601,11 +8984,12 @@
       const lessonCount = completed.length;
       const lessonPay = lessonCount * Number(teacher.rate || 0);
       const variableLessonPay = completed.reduce((sum, booking) => sum + completedClassPayout(booking, teacher), 0);
-      const notShowPay = notShows.length * 5;
+      const notShowPay = notShows.reduce((sum, booking) => sum + applyPolicyRules(booking, { teacher }).notShowAllowance, 0);
+      const notShowRateLabel = notShows.length ? money(notShowPay / notShows.length) : money(notShowAllowanceForDate(`${year}-${String(month + 1).padStart(2, "0")}-01`));
       const amount = variableLessonPay + notShowPay;
       const monthLabel = new Date(year, month, 1).toLocaleString("en", { month: "long", year: "numeric" });
-      $("reportStats").innerHTML = `<h3>${escapeHtml(teacher.name)}</h3><p><strong>${lessonCount}</strong> completed lessons</p><p>Student not show: <strong>${notShows.length}</strong> x RM5.00</p><p>Cancelled/holiday/leave: <strong>${cancelled.length}</strong> not counted</p><p>Estimated payout: <strong>${money(amount)}</strong></p><p>Current tier: <strong>${escapeHtml(teacher.tier)}</strong></p>`;
-      $("reportText").textContent = teacherReportText(teacher, monthLabel, lessonCount, variableLessonPay, notShows.length, notShowPay, cancelled.length, amount);
+      $("reportStats").innerHTML = `<h3>${escapeHtml(teacher.name)}</h3><p><strong>${lessonCount}</strong> completed lessons</p><p>Student not show: <strong>${notShows.length}</strong> x ${notShowRateLabel}</p><p>Cancelled/holiday/leave: <strong>${cancelled.length}</strong> not counted</p><p>Estimated payout: <strong>${money(amount)}</strong></p><p>Current tier: <strong>${escapeHtml(teacher.tier)}</strong></p>`;
+      $("reportText").textContent = teacherReportText(teacher, monthLabel, lessonCount, variableLessonPay, notShows.length, notShowPay, cancelled.length, amount, notShowRateLabel);
       $("teacherReportChart").innerHTML = chartHtml([
         { label: "Completed", value: lessonCount, display: lessonCount },
         { label: "Not show", value: notShows.length, display: notShows.length, color: "#e5484d" },
@@ -8615,8 +8999,8 @@
       renderAllTeacherPayoutSummary();
     }
 
-    function teacherReportText(teacher, monthLabel, lessonCount, lessonPay, notShowCount, notShowPay, cancelledCount, amount) {
-      return `Hi ${teacher.name},\n\nHere is your ${monthLabel} teaching summary.\n\nCurrent tier: ${teacher.tier}\nPayout method: ${teacher.category === "micro_franchisee" ? `Micro Franchisee profit share (${Number(teacher.profitShare || 0).toFixed(2)}%)` : `Freelance approved rate RM ${Number(teacher.rate || 0).toFixed(2)}`}\n\nCompleted lesson payout: RM ${lessonPay.toFixed(2)}\nStudent not show allowance: ${notShowCount} x RM 5.00 = RM ${notShowPay.toFixed(2)}\nCancelled / public holiday / teacher leave: ${cancelledCount} class(es), not counted for payout\n\nEstimated payout: RM ${amount.toFixed(2)}\n\nThis summary is based on finalized timetable records for the selected month.`;
+    function teacherReportText(teacher, monthLabel, lessonCount, lessonPay, notShowCount, notShowPay, cancelledCount, amount, notShowRateLabel) {
+      return `Hi ${teacher.name},\n\nHere is your ${monthLabel} teaching summary.\n\nCurrent tier: ${teacher.tier}\nPayout method: ${teacher.category === "micro_franchisee" ? `Micro Franchisee profit share (${Number(teacher.profitShare || 0).toFixed(2)}%)` : `Freelance approved rate RM ${Number(teacher.rate || 0).toFixed(2)}`}\n\nCompleted lesson payout: RM ${lessonPay.toFixed(2)}\nStudent not show allowance: ${notShowCount} x ${notShowRateLabel} = RM ${notShowPay.toFixed(2)}\nCancelled / public holiday / teacher leave: ${cancelledCount} class(es), not counted for payout\n\nEstimated payout: RM ${amount.toFixed(2)}\n\nThis summary is based on finalized timetable records for the selected month.`;
     }
 
     function currentTeacherReportRows() {
@@ -8630,7 +9014,7 @@
       return state.bookings
         .filter(b => b.teacherId === teacher.id && new Date(b.date + "T00:00:00").getMonth() === month && new Date(b.date + "T00:00:00").getFullYear() === year)
         .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`))
-        .map(b => [b.date, timeLabel(b.time), b.studentName || "", b.subject || "", b.type || "", bookingStatusLabel(b.status), b.status === "completed" ? completedClassPayout(b, teacher).toFixed(2) : (b.status === "student_not_show" ? "5.00" : "0.00"), b.remark || ""]);
+        .map(b => [b.date, timeLabel(b.time), b.studentName || "", b.subject || "", b.type || "", bookingStatusLabel(b.status), b.status === "completed" ? completedClassPayout(b, teacher).toFixed(2) : (b.status === "student_not_show" ? applyPolicyRules(b, { teacher }).notShowAllowance.toFixed(2) : "0.00"), b.remark || ""]);
     }
 
     function renderAllTeacherPayoutSummary() {
@@ -8798,7 +9182,7 @@
       $("publicHolidayCalendar").className = "holiday-calendar-grid";
       $("publicHolidayCalendar").innerHTML = Array.from({ length: 12 }, (_, month) => {
         const monthName = new Date(year, month, 1).toLocaleString("en", { month: "long" });
-        const monthHolidays = holidays.filter(item => holidayTouchesMonth(item, year, month)).sort((a, b) => holidayStartDate(item).localeCompare(holidayStartDate(b)));
+        const monthHolidays = holidays.filter(item => holidayTouchesMonth(item, year, month)).sort((a, b) => holidayStartDate(a).localeCompare(holidayStartDate(b)));
         return `<div class="month-calendar">
           <h3>${monthName}</h3>
           ${monthCalendarHtml(year, month, monthHolidays)}
@@ -8813,6 +9197,52 @@
           </div>
         </div>`;
       }).join("");
+    }
+
+    function renderPolicySettings() {
+      if (!$("policySettings")) return;
+      const rule = activePolicyRule(todayISO());
+      if ($("policyNotShowAllowance")) $("policyNotShowAllowance").value = Number(rule.notShowAllowance ?? 5).toFixed(2);
+      if ($("policyCancelledPay")) $("policyCancelledPay").value = rule.cancelledPay || "none";
+      if ($("policyPublicHolidayReplacement")) $("policyPublicHolidayReplacement").value = rule.publicHolidayReplacementDefault || "yes";
+      if ($("policyRuleList")) {
+        $("policyRuleList").innerHTML = [...(state.policyRules || [])]
+          .filter(item => item.status !== "archived")
+          .sort((a, b) => String(b.effectiveFrom || "").localeCompare(String(a.effectiveFrom || "")))
+          .map(item => `
+            <div class="overview-item">
+              <strong>${escapeHtml(item.name || "Policy Rule")}</strong>
+              <div class="subtle">Effective ${escapeHtml(formatDateFromAny(item.effectiveFrom || ""))} | Not show ${money(Number(item.notShowAllowance ?? 5))} | Cancelled pay: ${escapeHtml(item.cancelledPay || "none")}</div>
+            </div>
+          `).join("") || `<div class="empty">No policy rules yet.</div>`;
+      }
+    }
+
+    async function savePolicySettings() {
+      if (!requireActionPermission("edit")) return;
+      const latestLoaded = await autoLoadLatestNeonIfNeeded("saving policy settings");
+      if (!latestLoaded) return;
+      const rule = activePolicyRule(todayISO());
+      const existing = (state.policyRules || []).find(item => item.id === rule.id) || rule;
+      const before = cloneForUndo(existing);
+      const now = new Date().toISOString();
+      existing.id ||= "policy_default_teacher_pay";
+      existing.name ||= "Default Teacher Pay Rules";
+      existing.effectiveFrom ||= "2026-01-01";
+      existing.status = "active";
+      existing.notShowAllowance = Number($("policyNotShowAllowance").value || 5);
+      existing.cancelledPay = $("policyCancelledPay").value || "none";
+      existing.publicHolidayReplacementDefault = $("policyPublicHolidayReplacement").value || "yes";
+      existing.updatedAt = now;
+      existing.updatedBy = currentUser()?.email || currentUser()?.name || "";
+      existing.deviceId = DEVICE_ID;
+      if (!(state.policyRules || []).some(item => item.id === existing.id)) state.policyRules.push(existing);
+      logAction("Policy Settings Updated", existing.name, before, cloneForUndo(existing), "Teacher pay and replacement policy updated.");
+      save(false);
+      renderPolicySettings();
+      renderReport();
+      const synced = await autoPushIfConfigured("Policy settings saved.");
+      setStatus(synced ? "Policy settings saved and synced to Neon." : "Policy settings saved locally. Not synced to Teacher View yet.", synced ? "success" : "warn");
     }
 
     function monthCalendarHtml(year, month, holidays) {
@@ -9597,6 +10027,7 @@
     function selectUserForEdit(id, options = {}) {
       const user = (state.users || []).find(item => item.id === id);
       if (!user) return;
+      $("userProfileCard")?.classList.remove("hide");
       if (options.respectDirty && dirtyForms.users) return restoreUserFormDraft(currentUserFormDraft);
       if (!options.keepDirty) clearUserFormDirty();
       $("userId").value = user.id;
@@ -9610,6 +10041,7 @@
     }
 
     function clearUserForm(options = {}) {
+      $("userProfileCard")?.classList.remove("hide");
       if (options.respectDirty && dirtyForms.users) return restoreUserFormDraft(currentUserFormDraft);
       if (!options.keepDirty) clearUserFormDirty();
       $("userId").value = "";
@@ -9652,6 +10084,7 @@
       if (dirtyForms.users && currentUserFormDraft) restoreUserFormDraft(currentUserFormDraft);
       else if (existingUserId && (state.users || []).some(item => item.id === existingUserId)) selectUserForEdit(existingUserId, { respectDirty: true });
       else clearUserForm({ respectDirty: true });
+      if (!dirtyForms.users && !$("userId").value) $("userProfileCard")?.classList.add("hide");
       const users = [...(state.users || [])].sort((a, b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || "")));
       $("userList").innerHTML = users.map(item => `
         <div class="card" style="margin-bottom:10px;">
@@ -9717,6 +10150,7 @@
       const synced = await autoPushIfConfigured(existing ? "User updated." : "User created.");
       if (dirtyForms.users && currentUserFormDraft) restoreUserFormDraft(currentUserFormDraft);
       else selectUserForEdit(id);
+      if (!dirtyForms.users) $("userProfileCard")?.classList.add("hide");
       setStatus(synced ? (existing ? "User updated and synced to Neon." : "User created and synced to Neon.") : (existing ? "User updated locally. Neon sync is still pending." : "User created locally. Neon sync is still pending."), synced ? "success" : "warn");
     }
 
@@ -10037,6 +10471,7 @@
       renderReplacements();
       renderReplacementCredits();
       renderPublicHolidayCalendar();
+      renderPolicySettings();
       renderActivityLog();
       renderUsers();
       renderSyncHealth();
@@ -10950,13 +11385,17 @@
     }
 
     function signOutUser() {
-      clearSessionRecord();
-      $("loginPassword").value = "";
-      setLoginMessage("");
-      setWorkspaceLoading(false);
-      renderAuthState();
-      renderAll();
-      setStatus("Signed out. Please sign in to access the system.");
+      isLoggingOut = true;
+      try {
+        clearSessionRecord();
+        $("loginPassword").value = "";
+        setLoginMessage("");
+        setWorkspaceLoading(false);
+        renderAuthState();
+        setStatus("Signed out. Please sign in to access the system.");
+      } finally {
+        setTimeout(() => { isLoggingOut = false; }, 0);
+      }
     }
 
     async function neonPull(logManual = false, options = {}) {
@@ -12554,19 +12993,35 @@
       }
       const bookReplacement = e.target.closest("[data-book-replacement]");
       if (bookReplacement) {
-        pendingReplacementId = bookReplacement.dataset.bookReplacement;
-        pendingReplacementCreditId = "";
+        const replacement = (state.replacements || []).find(item => item.id === bookReplacement.dataset.bookReplacement);
+        setPendingReplacementContext({
+          kind: "replacement",
+          replacementId: bookReplacement.dataset.bookReplacement,
+          studentName: replacement?.studentName || "",
+          subject: replacement?.subject || ""
+        });
         document.querySelector('[data-tab="schedule"]').click();
-        setStatus("Choose an open teacher slot to book the replacement class.");
+        setStatus(`Choose an open teacher slot to book ${replacement?.studentName || "the student"}'s replacement class.`);
       }
       const arrangeReplacementCredit = e.target.closest("[data-arrange-replacement-credit]");
       if (arrangeReplacementCredit) {
         const credit = (state.replacementCredits || []).find(item => item.id === arrangeReplacementCredit.dataset.arrangeReplacementCredit && item.status !== "void");
         if (!credit || Number(credit.amount || 0) - Number(credit.used || 0) <= 0) return alert("This replacement credit is no longer available.");
-        pendingReplacementId = "";
-        pendingReplacementCreditId = credit.id;
+        setPendingReplacementContext({
+          kind: "replacement_credit",
+          creditId: credit.id,
+          studentId: credit.studentId || "",
+          studentName: credit.studentName || "",
+          subject: credit.subject || ""
+        });
         document.querySelector('[data-tab="schedule"]').click();
         setStatus(`Choose an open teacher slot for ${credit.studentName}'s replacement class.`);
+      }
+      const cancelTeacherLeaveBtn = e.target.closest("[data-cancel-teacher-leave]");
+      if (cancelTeacherLeaveBtn) cancelTeacherLeave(cancelTeacherLeaveBtn.dataset.cancelTeacherLeave);
+      if (e.target.closest("[data-clear-pending-replacement]")) {
+        clearPendingReplacementContext();
+        setStatus("Replacement arrangement cancelled.");
       }
       const deleteReplacementCredit = e.target.closest("[data-delete-replacement-credit]");
       if (deleteReplacementCredit) removeReplacementCredit(deleteReplacementCredit.dataset.deleteReplacementCredit);
@@ -13214,11 +13669,14 @@
       }
       const openedRule = confirmAndOpenOffBookingSlots(slot, period, validation, subject);
       if (openedRule === false) return;
-      if (type === "replacement class" && replacementCreditBalance(student ? student.id : "", studentName) <= 0) {
+      const replacementContext = pendingReplacementContext();
+      const selectedReplacementCreditId = replacementContext?.creditId || pendingReplacementCreditId;
+      const selectedReplacementId = replacementContext?.replacementId || pendingReplacementId;
+      if (type === "replacement class" && !selectedReplacementId && !selectedReplacementCreditId && replacementCreditBalance(student ? student.id : "", studentName) <= 0) {
         return alert("This student has no available replacement class credit. Add credit first before booking a replacement class.");
       }
-      if (type === "replacement class" && pendingReplacementCreditId) {
-        const selectedCredit = (state.replacementCredits || []).find(item => item.id === pendingReplacementCreditId && item.status !== "void");
+      if (type === "replacement class" && selectedReplacementCreditId) {
+        const selectedCredit = (state.replacementCredits || []).find(item => item.id === selectedReplacementCreditId && item.status !== "void");
         if (!selectedCredit || Number(selectedCredit.amount || 0) - Number(selectedCredit.used || 0) <= 0) {
           return alert("The selected replacement credit is no longer available. Please choose another credit.");
         }
@@ -13280,9 +13738,9 @@
           });
         }
       }
-      if (booking?.type === "replacement class") {
-        const deducted = pendingReplacementCreditId
-          ? deductSelectedReplacementCredit(pendingReplacementCreditId, booking.id)
+      if (booking?.type === "replacement class" && !selectedReplacementId) {
+        const deducted = selectedReplacementCreditId
+          ? deductSelectedReplacementCredit(selectedReplacementCreditId, booking.id)
           : deductReplacementCredit(booking.studentId, booking.studentName, booking.id);
         if (!deducted) {
           state.bookings = state.bookings.filter(item => item.id !== booking.id);
@@ -13293,8 +13751,8 @@
           return alert("The selected replacement credit is no longer available. Please choose another credit.");
         }
       }
-      if (pendingReplacementId && booking) {
-        const replacement = (state.replacements || []).find(item => item.id === pendingReplacementId);
+      if (selectedReplacementId && booking) {
+        const replacement = (state.replacements || []).find(item => item.id === selectedReplacementId);
         const teacher = teacherById(booking.teacherId);
         if (replacement) {
           const undoBefore = snapshotCollections({ replacements: [replacement.id], bookings: [booking.id] });
@@ -13313,10 +13771,9 @@
             undo: makeUndoSnapshot(undoBefore, snapshotCollections({ replacements: [replacement.id], bookings: [booking.id] }))
           });
         }
-        pendingReplacementId = "";
       }
       if (booking) syncMatchingLeadFromBooking(booking);
-      pendingReplacementCreditId = "";
+      clearPendingReplacementContext();
       $("bookingModal").classList.add("hide");
       save(false);
       renderAll();
@@ -13370,9 +13827,18 @@
       $("holidayStartDate").value = "";
       $("holidayEndDate").value = "";
       $("holidayName").value = "";
-      $("holidayReplacementDefault").value = "yes";
+      $("holidayReplacementDefault").value = activePolicyRule(todayISO()).publicHolidayReplacementDefault || "yes";
       $("publicHolidayModal").classList.remove("hide");
     };
+    $("addTeacherLeaveBtn").onclick = openTeacherLeaveModal;
+    $("saveTeacherLeaveBtn").onclick = () => animateClick($("saveTeacherLeaveBtn"), saveTeacherLeave).catch(err => {
+      setStatus(`Teacher leave save failed: ${err.message}`, "error");
+      alert(err.message);
+    });
+    $("savePolicySettingsBtn").onclick = () => animateClick($("savePolicySettingsBtn"), savePolicySettings).catch(err => {
+      setStatus(`Policy save failed: ${err.message}`, "error");
+      alert(err.message);
+    });
     $("savePublicHolidayBtn").onclick = async () => {
       const startDate = $("holidayStartDate").value;
       const endDate = $("holidayEndDate").value || startDate;
@@ -13726,7 +14192,7 @@
       renderAll();
       setStatus("Current user changed for this browser.");
     };
-    $("newUserBtn").onclick = clearUserForm;
+    $("newUserBtn").onclick = () => clearUserForm();
     $("saveUserBtn").onclick = () => animateClick($("saveUserBtn"), saveUserProfile).catch(err => {
       setStatus(`User save failed: ${err.message}`, "error");
       alert(err.message);

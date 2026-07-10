@@ -1249,7 +1249,7 @@
       const meta = entryMeta(entry);
       const type = String(meta.type || "").toLowerCase();
       if (CANCELLED.includes(meta.status) || type === "cancelled") return 0;
-      if (meta.status === "student_not_show") return 5;
+      if (meta.status === "student_not_show") return Number(meta.estimatedPay || 5);
       if (type === "practical class") return 0;
       if (meta.status === "completed") return Number(meta.estimatedPay || 0);
       return 0;
@@ -1278,7 +1278,8 @@
       const cancelled = entries.filter(isCancelledEntry);
       const teacherLeaveCount = entries.filter(entry => entryMeta(entry).status === "teacher_leave").length;
       const lessonPay = completed.reduce((sum, entry) => sum + Number(entryMeta(entry).estimatedPay || 0), 0);
-      const notShowPay = notShows.length * 5;
+      const notShowPay = notShows.reduce((sum, entry) => sum + Number(entryMeta(entry).estimatedPay || 5), 0);
+      const notShowRate = notShows.length ? notShowPay / notShows.length : 5;
       return {
         entries,
         completed,
@@ -1286,6 +1287,7 @@
         cancelled,
         completedCount: completed.length,
         notShowCount: notShows.length,
+        notShowRate,
         cancelledCount: cancelled.length,
         teacherLeaveCount,
         lessonPay,
@@ -1383,7 +1385,7 @@
         },
         {
           project: "Online class incentive (waiting without inform)",
-          description: `${automatic.notShowCount} lesson${automatic.notShowCount === 1 ? "" : "s"} x RM5`,
+          description: `${automatic.notShowCount} lesson${automatic.notShowCount === 1 ? "" : "s"} x ${money(automatic.notShowRate || 5)}`,
           amount: automatic.notShowPay,
           automatic: true
         },
@@ -1410,7 +1412,7 @@
         ["Item", "Calculation", "Amount"],
         [
           ["Completed lessons", `${automatic.completedCount} lessons`, money(automatic.lessonPay)],
-          ["Student not show", `${automatic.notShowCount} x RM5`, money(automatic.notShowPay)],
+          ["Student not show", `${automatic.notShowCount} x ${money(automatic.notShowRate || 5)}`, money(automatic.notShowPay)],
           ["Full attendance", automatic.teacherLeaveCount ? `Not eligible (${automatic.teacherLeaveCount} teacher leave)` : `${automatic.completedCount} completed lessons`, money(automatic.attendancePay)]
         ]
       );
