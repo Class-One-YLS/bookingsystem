@@ -1170,7 +1170,7 @@
               <div class="flow-path">Auto-load &gt; Edit data &gt; Auto-save &gt; Pull manually if needed</div>
               <div class="flow-steps">
                 <div><span>&gt;</span><p>The Apps Script URLs and API keys are already filled by default.</p></div>
-                <div><span>&gt;</span><p>The system checks Neon before saving. If another device has newer data, choose Merge, Keep Local Draft, or Discard Local Draft in the conflict window.</p></div>
+                <div><span>&gt;</span><p>The system automatically checks the latest Neon version before saving. If another device has newer data, your changed records are safely merged with the latest data and synced automatically.</p></div>
                 <div><span>&gt;</span><p>If auto-sync fails, check internet connection and use manual Pull/Push after connection returns.</p></div>
               </div>
             </div>
@@ -1614,6 +1614,7 @@
         <div class="panel">
           <h2>Neon Database Sync</h2>
           <div class="subtle">The app loads the latest Neon version after sign-in and checks for newer versions in the background. Every real edit saves as a browser draft first, then uses one ordered sync queue.</div>
+          <div class="subtle" style="margin-top:8px;">Frontend build: <strong id="frontendBuildNumber">loading...</strong></div>
           <div class="grid three" style="margin-top:14px;">
             <div><label>API URL</label><input id="neonApiUrl" placeholder="https://classone-booking-api.vercel.app"></div>
             <div><label>API Key</label><input id="neonApiKey" placeholder="Private API key"></div>
@@ -2192,6 +2193,7 @@
       apiKey: "73a5baa8e4a70be55d79615e2dfbf4e843fa04b57ec04764",
       stateKey: "production"
     };
+    const FRONTEND_BUILD = "2026.07.10-sync-safety.2";
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
     const LOGIN_TIMEOUT_MS = 8000;
@@ -4079,6 +4081,7 @@
 
     function renderSyncHealth() {
       const container = $("syncHealthIndicator");
+      if ($("frontendBuildNumber")) $("frontendBuildNumber").textContent = FRONTEND_BUILD;
       if (!container) return;
       const draftExists = hasUnsavedDraftMarker();
       const neonVersion = Math.max(Number(lastObservedNeonVersion || 0), Number(state.settings.neonVersion || 0));
@@ -4093,6 +4096,7 @@
         <div class="metric"><span class="subtle">Last Saved</span><strong style="font-size:16px;">${escapeHtml(lastSavedAt)}</strong><span class="subtle">${escapeHtml(teacherStatus)}</span></div>
         <div class="metric"><span class="subtle">Pending Unsaved Draft</span><strong>${draftExists ? "Yes" : "No"}</strong><span class="subtle">${draftExists ? "Safe in this browser" : "Cache only"}</span></div>
         <div class="metric"><span class="subtle">Current Device ID</span><strong style="font-size:14px;word-break:break-all;">${escapeHtml(currentDeviceId())}</strong><span class="subtle">Unique to this browser</span></div>
+        <div class="metric"><span class="subtle">Frontend Build</span><strong style="font-size:14px;">${escapeHtml(FRONTEND_BUILD)}</strong><span class="subtle">Upload this file to update live</span></div>
       `;
     }
 
