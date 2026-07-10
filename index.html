@@ -2200,6 +2200,7 @@
     const NEON_CHUNK_SIZE = 600000;
     const NEON_CHUNK_UPLOAD_CONCURRENCY = 4;
     const NEON_CHUNK_DOWNLOAD_CONCURRENCY = 6;
+    const MAX_NEON_AUTO_CONFLICT_RETRIES = 2;
     const MAX_REMOTE_UNDO_SNAPSHOTS = 2500;
     const STORE_KEY = "classOneBookingRevamp.v1";
     const DATA_BACKUP_KEY = "classone_data_backup";
@@ -3040,7 +3041,8 @@
       };
     }
 
-    function buildRecordPatchFromPayload(currentPayload, baselinePayload = null) {
+    function buildRecordPatchFromPayload(currentPayload, baselinePayload = null, options = {}) {
+      const includeDeletions = options.includeDeletions !== false;
       const now = new Date().toISOString();
       const patch = {
         format: "classone_record_patch_v1",
@@ -3063,7 +3065,7 @@
             changes.push(ensureDraftRecordMeta(record, baselineRecord, now));
           }
         });
-        if (collectionName !== "activityLogs") {
+        if (includeDeletions && collectionName !== "activityLogs") {
           baselineById.forEach((record, id) => {
             if (!currentById.has(id)) changes.push(createDeletedDraftRecord(record, now));
           });
@@ -3072,9 +3074,15 @@
       });
       const currentSettings = currentPayload?.settings || {};
       const baselineSettings = baselinePayload?.settings || {};
-      if (recordSignature(currentSettings) !== recordSignature(baselineSettings)) {
+      const changedSettings = {};
+      Object.keys(currentSettings).forEach(key => {
+        if (recordSignature(currentSettings[key]) !== recordSignature(baselineSettings[key])) {
+          changedSettings[key] = stripInlineMedia(cloneJson(currentSettings[key]));
+        }
+      });
+      if (Object.keys(changedSettings).length) {
         patch.settings = {
-          ...stripInlineMedia(cloneJson(currentSettings)),
+          fields: changedSettings,
           id: "system_settings",
           updatedAt: now,
           updatedBy: currentUser()?.email || currentUser()?.name || "Class One Admin",
@@ -3107,10 +3115,10 @@
       });
       if (patch.settings) {
         const remoteSettings = merged.settings || {};
-        merged.settings = compareDraftRecords(patch.settings, remoteSettings) >= 0
-          ? { ...remoteSettings, ...stripInlineMedia(cloneJson(patch.settings)) }
-          : remoteSettings;
-        delete merged.settings.id;
+        const changedFields = patch.settings.fields || Object.fromEntries(
+          Object.entries(patch.settings).filter(([key]) => !["id", "updatedAt", "updatedBy", "deviceId"].includes(key))
+        );
+        merged.settings = { ...remoteSettings, ...stripInlineMedia(cloneJson(changedFields)) };
       }
       return merged;
     }
@@ -4080,6 +4088,37 @@
 
     function nowTimeLabel() {
       return new Date().toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" });
+    }
+
+    function captureOpenFormDrafts() {
+      const drafts = { generic: [] };
+      if (dirtyForms.users && currentUserFormDraft) drafts.users = { ...currentUserFormDraft };
+      document.querySelectorAll(".modal:not(.hide) input[id], .modal:not(.hide) select[id], .modal:not(.hide) textarea[id], #users input[id], #users select[id], #users textarea[id]").forEach(el => {
+        if (!el.id || el.type === "file") return;
+        drafts.generic.push({
+          id: el.id,
+          type: el.type || el.tagName.toLowerCase(),
+          checked: Boolean(el.checked),
+          value: el.value
+        });
+      });
+      return drafts;
+    }
+
+    function restoreOpenFormDrafts(drafts = {}) {
+      (drafts.generic || []).forEach(item => {
+        const el = $(item.id);
+        if (!el || el.type === "file") return;
+        if (item.type === "checkbox" || item.type === "radio") el.checked = item.checked;
+        else el.value = item.value;
+      });
+      if (drafts.users) restoreUserFormDraft(drafts.users);
+    }
+
+    function applyPayloadPreservingForms(payload) {
+      const drafts = captureOpenFormDrafts();
+      applyPulledPayload(payload);
+      restoreOpenFormDrafts(drafts);
     }
 
     function readUserFormDraft() {
@@ -10725,7 +10764,7 @@
           setStatus("Editing in progress — Neon data loaded but not applied yet.", "warn", false);
           return { paused: true };
         }
-        applyPulledPayload(payload);
+        applyPayloadPreservingForms(payload);
         state.settings.neonVersion = Number(manifest.version || 0);
         lastObservedNeonVersion = state.settings.neonVersion;
         lastObservedNeonUpdatedAt = manifest.updatedAt || new Date().toISOString();
@@ -10803,27 +10842,50 @@
         }
         let mergedPayload = mergePatchIntoPayload(basePayload, draftPatch);
         let data;
-        try {
-          data = await uploadBusinessPayloadToNeon(mergedPayload, expectedVersion, "Neon save");
-        } catch (uploadError) {
-          if (!isNeonVersionConflict(uploadError)) throw uploadError;
-          const snapshot = await fetchNeonStateSnapshot("Neon retry auto-merge");
-          expectedVersion = Number(snapshot.manifest?.version || 0);
-          mergedPayload = mergePatchIntoPayload(snapshot.payload || {}, draftPatch);
-          data = await uploadBusinessPayloadToNeon(mergedPayload, expectedVersion, "Neon merged save");
-          mergedWithNewerRemote = true;
+        let autoConflictRetryCount = 0;
+        while (true) {
+          try {
+            data = await uploadBusinessPayloadToNeon(
+              mergedPayload,
+              expectedVersion,
+              autoConflictRetryCount ? "Neon merged save" : "Neon save"
+            );
+            break;
+          } catch (uploadError) {
+            if (!isNeonVersionConflict(uploadError) || autoConflictRetryCount >= MAX_NEON_AUTO_CONFLICT_RETRIES) throw uploadError;
+            autoConflictRetryCount += 1;
+            const snapshot = await fetchNeonStateSnapshot(`Neon retry auto-merge ${autoConflictRetryCount}`);
+            expectedVersion = Number(snapshot.manifest?.version || 0);
+            mergedPayload = mergePatchIntoPayload(snapshot.payload || {}, draftPatch);
+            mergedWithNewerRemote = true;
+          }
+        }
+        const workingPayloadBeforeApply = remoteStatePayload();
+        const localRevisionAfterUpload = Number(state.settings.localRevision || 0);
+        const newerEditExists = localRevisionAfterUpload > pushedRevision || pendingSave;
+        if (newerEditExists) {
+          confirmedRemotePayload = businessPayloadFrom(mergedPayload);
+          let residualPatch = currentDraftPatch || await loadUnsavedDraftPatch();
+          if (!residualPatch) {
+            residualPatch = buildRecordPatchFromPayload(workingPayloadBeforeApply, confirmedRemotePayload, { includeDeletions: false });
+          }
+          const workingPayload = residualPatch ? mergePatchIntoPayload(confirmedRemotePayload, residualPatch) : confirmedRemotePayload;
+          applyPayloadPreservingForms(workingPayload);
+          state.settings.pendingLocalSync = true;
+          state.settings.businessDirty = true;
+          hasUnsavedBusinessChanges = true;
+        } else {
+          confirmedRemotePayload = businessPayloadFrom(mergedPayload);
+          applyPayloadPreservingForms(mergedPayload);
+          state.settings.pendingLocalSync = false;
+          state.settings.businessDirty = false;
+          hasUnsavedBusinessChanges = false;
         }
         state.settings.neonVersion = Number(data.version || currentVersion || 0);
         lastObservedNeonVersion = state.settings.neonVersion;
         lastObservedNeonUpdatedAt = data.updatedAt || new Date().toISOString();
         state.settings.lastSyncedRevision = Math.max(Number(state.settings.lastSyncedRevision || 0), pushedRevision);
-        confirmedRemotePayload = businessPayloadFrom(mergedPayload);
-        applyPulledPayload(mergedPayload);
-        const newerEditExists = Number(state.settings.localRevision || 0) > pushedRevision || pendingSave;
         pendingSave = false;
-        state.settings.pendingLocalSync = newerEditExists;
-        state.settings.businessDirty = newerEditExists;
-        hasUnsavedBusinessChanges = newerEditExists;
         lastNeonSaveFailed = false;
         setRetrySaveVisible(false);
         if (!newerEditExists) state.settings.lastLocalChangeAt = "";
@@ -10846,15 +10908,15 @@
       } catch (error) {
         if (isNeonVersionConflict(error)) {
           pendingSave = false;
-          lastNeonSaveFailed = false;
+          lastNeonSaveFailed = true;
           hasUnsavedBusinessChanges = true;
           state.settings.businessDirty = true;
           state.settings.pendingLocalSync = true;
           state.settings.teacherViewSyncOutdated = true;
-          state.settings.teacherViewSyncMessage = "Not synced to Teacher View yet. Automatic merge will retry.";
+          state.settings.teacherViewSyncMessage = "Not synced to Teacher View yet. Automatic merge reached the retry limit.";
           persistState();
-          setStatus("Unable to sync. Your changes are safe and will retry automatically.", "warn");
-          scheduleAutoPush();
+          setRetrySaveVisible(true);
+          setStatus("Unable to sync. Your changes are safe in this browser. Please use Retry Save.", "warn");
           return false;
         }
         lastNeonSaveFailed = true;
@@ -10965,6 +11027,7 @@
     function canAutoRefreshFromNeon() {
       if (!neonConfigured()) return false;
       if (document.hidden) return false;
+      if (isUserEditingForm) return false;
       if (autoNeonRefreshInProgress) return false;
       if (hasUnsavedBusinessChanges || state.settings.pendingLocalSync) return false;
       if (modalIsOpen()) return false;
@@ -11001,15 +11064,8 @@
         await neonPush(false, `${successMessage} Synced to Neon database.`);
         return true;
       } catch (err) {
-        if (isNeonVersionConflict(err)) {
-          keepBrowserDraftOffline = false;
-          setStatus("Syncing changes with latest Neon data...", "success", false);
-          const retried = await neonPush(false, `${successMessage} Latest changes merged.`);
-          return retried;
-        } else {
-          markTeacherViewOutdated(`Neon sync failed: ${err.message}`);
-          return false;
-        }
+        markTeacherViewOutdated(`Neon sync failed: ${err.message}`);
+        return false;
       }
     }
 
@@ -13555,6 +13611,19 @@
       const hidden = new Set();
       saveHiddenTableColumns(key, hidden);
       applyTableColumnVisibility(table, hidden);
+    });
+    document.addEventListener("focusin", event => {
+      if (!event.target?.matches?.("input, textarea, select")) return;
+      if (event.target.closest("#loginPage")) return;
+      isUserEditingForm = true;
+    });
+    document.addEventListener("focusout", event => {
+      if (!event.target?.matches?.("input, textarea, select")) return;
+      setTimeout(() => {
+        if (document.activeElement?.matches?.("input, textarea, select") && !document.activeElement.closest("#loginPage")) return;
+        if (dirtyForms.users) return;
+        isUserEditingForm = false;
+      }, 250);
     });
     window.addEventListener("beforeunload", event => {
       if (!hasUnsavedBusinessChanges && !state.settings.pendingLocalSync) return;
