@@ -784,7 +784,16 @@
       data.regularSlots = (data.regularSlots || []).map(slot => ({ ...slot, time: normalizeTime(slot.time) || slot.time }));
       data.overrideSlots = (data.overrideSlots || []).map(slot => ({ ...slot, time: normalizeTime(slot.time) || slot.time }));
       data.bookings = (data.bookings || []).map(booking => ({ ...booking, time: normalizeTime(booking.time) || booking.time }));
-      data.cells = (data.cells || []).map(cell => ({ ...cell, time: normalizeTime(cell.time) || cell.time }));
+      const seenCellKeys = new Set();
+      const duplicateCellKeys = new Set();
+      data.cells = (data.cells || []).map(cell => {
+        const time = normalizeTime(cell.time) || cell.time;
+        const cellKey = cell.cellKey || `${cell.teacherId || data.teacher?.id || ""}|${cell.date || ""}|${time}`;
+        if (seenCellKeys.has(cellKey)) duplicateCellKeys.add(cellKey);
+        seenCellKeys.add(cellKey);
+        return { ...cell, time, cellKey };
+      });
+      if (duplicateCellKeys.size) console.warn("[Teacher View] duplicate resolved cell keys returned by API", [...duplicateCellKeys]);
       data.students = (data.students || []).map((student, index) => ({
         ...student,
         no: index + 1,
@@ -990,109 +999,6 @@
       autoSyncTimer = setInterval(autoSyncTimetable, AUTO_SYNC_MS);
     }
 
-    function slotRank(slot) {
-      if (slot.unavailable) return 5;
-      if (slot.locked && slot.studentName) return 4;
-      if (slot.locked) return 3;
-      if (slot.source === "override") return 2;
-      return 1;
-    }
-
-    function uniqueSlots(slots) {
-      const byTime = new Map();
-      slots.forEach(slot => {
-        const key = `${slot.date || ""}|${slot.time || ""}`;
-        const existing = byTime.get(key);
-        if (!existing || slotRank(slot) > slotRank(existing)) byTime.set(key, slot);
-      });
-      return [...byTime.values()];
-    }
-
-    function overrideAppliesOnDate(slot, dateStr, day) {
-      if (slot.date) return slot.date === dateStr;
-      return slot.day === day && (!slot.startDate || slot.startDate <= dateStr) && (!slot.endDate || slot.endDate >= dateStr);
-    }
-
-    function latestOverridesForDate(dateStr, day) {
-      const byTime = new Map();
-      (timetableData?.overrideSlots || [])
-        .filter(slot => overrideAppliesOnDate(slot, dateStr, day))
-        .forEach(slot => byTime.set(slot.time, slot));
-      return byTime;
-    }
-
-    function bookingRank(booking) {
-      const status = String(booking?.status || "booked").toLowerCase();
-      if (status === "deleted" || booking?.deleted === true) return -100;
-      if (booking?.changedSlot) return 8;
-      if (status === "student_not_show") return 7;
-      if (status === "booked") return 6;
-      if (status === "completed") return 5;
-      if (CANCELLED.includes(status)) return 4;
-      return 1;
-    }
-
-    function amendmentTime(record) {
-      const candidates = [
-        record?.slotRevisionAt,
-        record?.statusChangedAt,
-        record?.updatedAt,
-        record?.updated_at,
-        record?.changedAt,
-        record?.changedSlot?.changedAt,
-        record?.rebookedAt,
-        record?.cancelledAt,
-        record?.completedAt,
-        record?.studentNotShowAt,
-        record?.deletedAt,
-        record?.createdAt,
-        record?.created_at
-      ];
-      const times = candidates
-        .map(value => Date.parse(value || ""))
-        .filter(value => Number.isFinite(value));
-      return times.length ? Math.max(...times) : 0;
-    }
-
-    function shouldUseBooking(candidate, existing) {
-      if (!existing) return true;
-      const candidateTime = amendmentTime(candidate);
-      const existingTime = amendmentTime(existing);
-      if (candidateTime !== existingTime) return candidateTime > existingTime;
-      const candidateRank = bookingRank(candidate);
-      const existingRank = bookingRank(existing);
-      if (candidateRank !== existingRank) return candidateRank > existingRank;
-      return String(candidate.id || "") > String(existing.id || "");
-    }
-
-    function visibleTeacherViewBooking(booking) {
-      const status = String(booking?.status || "booked").toLowerCase();
-      if (!booking || status === "deleted" || booking.deleted === true) return false;
-      if (booking.supersededByBookingId || booking.rebookedByBookingId || booking.superseded === true) return false;
-      return true;
-    }
-
-    function bookingKey(booking) {
-      return `${booking.teacherId || timetableData?.teacher?.id || ""}|${booking.date || ""}|${booking.time || ""}`;
-    }
-
-    function collectSlotsForDate(date) {
-      if (!timetableData) return [];
-      const dateStr = localISO(date);
-      const day = DAYS[(date.getDay() + 6) % 7];
-      const regularSlots = timetableData.regularSlots || [];
-      const latestOverrides = latestOverridesForDate(dateStr, day);
-      const regular = regularSlots
-        .filter(slot => slot.day === day)
-        .filter(slot => (!slot.startDate || slot.startDate <= dateStr) && (!slot.endDate || slot.endDate >= dateStr))
-        .filter(slot => !latestOverrides.has(slot.time))
-        .map(slot => ({ ...slot, date: dateStr, source: slot.source || "regular" }));
-      const overrides = [...latestOverrides.values()]
-        .filter(slot => !slot.unavailable)
-        .map(slot => ({ ...slot, date: dateStr, day, source: "override" }));
-      return uniqueSlots([...regular, ...overrides]);
-    }
-
     function scheduleCells() {
       return (timetableData?.cells || [])
         .filter(cell => cell.time)
@@ -1103,22 +1009,6 @@
       return scheduleCells().find(cell => cell.date === dateISO && cell.time === time);
     }
 
-    function scheduleBookings() {
-      const bookings = (timetableData?.bookings || []).filter(visibleTeacherViewBooking);
-      if (timetableData?.bookingResolution === "canonical_latest_active_revision") return bookings;
-      const byTime = new Map();
-      bookings.forEach(booking => {
-        const key = bookingKey(booking);
-        const existing = byTime.get(key);
-        if (shouldUseBooking(booking, existing)) byTime.set(key, booking);
-      });
-      return [...byTime.values()];
-    }
-
-    function findBooking(dateISO, time) {
-      return scheduleBookings().find(booking => booking.date === dateISO && booking.time === time);
-    }
-
     function weekTimes(dates) {
       const values = new Set();
       for (let total = 8 * 60; total <= 21 * 60 + 30; total += 30) {
@@ -1127,12 +1017,7 @@
       dates.forEach(date => {
         const dateISO = localISO(date);
         const cells = scheduleCells().filter(cell => cell.date === dateISO);
-        if (cells.length) {
-          cells.forEach(cell => values.add(cell.time));
-        } else {
-          collectSlotsForDate(date).forEach(slot => values.add(slot.time));
-          scheduleBookings().filter(booking => booking.date === dateISO).forEach(booking => values.add(booking.time));
-        }
+        cells.forEach(cell => values.add(cell.time));
       });
       return [...values].sort((a, b) => minutes(a) - minutes(b));
     }
@@ -1150,18 +1035,6 @@
         const cellClass = cell.kind === "fixed" ? "cell-fixed" : "cell-booking";
         return `<td class="${cellClass} ${typeClass(cell.type)} ${statusClass(displayStatus)}${outsideClass}">${escapeHtml(cell.studentName || "Class")}${cell.subject ? ` (${escapeHtml(cell.subject)})` : ""}<span class="cell-small">${escapeHtml(statusText)}</span></td>`;
       }
-      const booking = findBooking(dateISO, time);
-      if (booking) {
-        const displayStatus = statusForDisplay(booking);
-        const detail = displayStatus === "completed" ? (booking.type || "class") : `${statusLabel(displayStatus)} | ${booking.type || "class"}`;
-        return `<td class="cell-booking ${typeClass(booking.type)} ${statusClass(displayStatus)}${outsideClass}">${escapeHtml(booking.studentName || "Class")}${booking.subject ? ` (${escapeHtml(booking.subject)})` : ""}<span class="cell-small">${escapeHtml(detail)}</span></td>`;
-      }
-      const slot = collectSlotsForDate(date).find(item => item.time === time);
-      if (slot?.locked) {
-        const completedClass = slotHasPassed(dateISO, time) ? " status-completed" : "";
-        return `<td class="cell-fixed${completedClass}${outsideClass}">${escapeHtml(slot.studentName || "Fixed Regular")}${slot.subject ? ` (${escapeHtml(slot.subject)})` : ""}<span class="cell-small">regular class</span></td>`;
-      }
-      if (slot) return `<td class="cell-open${outsideClass}"><span class="cell-small">${escapeHtml(slot.subject || "Open")}</span></td>`;
       return `<td class="cell-off${outsideClass}">OFF</td>`;
     }
 
@@ -1188,26 +1061,8 @@
 
     function classEntries(fromISO, toISO) {
       const cells = scheduleCells().filter(cell => cell.date >= fromISO && cell.date <= toISO && !["open", "reserved"].includes(cell.kind));
-      if (cells.length) {
-        return cells.map(cell => ({ kind: "cell", date: cell.date, time: cell.time, cell }))
-          .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
-      }
-      const entries = [];
-      for (let dateISO = fromISO; dateISO <= toISO; dateISO = dateOffsetISO(dateISO, 1)) {
-        const date = parseISODate(dateISO);
-        const slots = collectSlotsForDate(date);
-        const bookings = scheduleBookings().filter(booking => booking.date === dateISO);
-        const occupiedTimes = new Set();
-        bookings.forEach(booking => {
-          occupiedTimes.add(booking.time);
-          entries.push({ kind: "booking", date: dateISO, time: booking.time, booking });
-        });
-        slots
-          .filter(slot => slot.locked && !slot.reserved)
-          .filter(slot => !occupiedTimes.has(slot.time))
-          .forEach(slot => entries.push({ kind: "fixed", date: dateISO, time: slot.time, slot }));
-      }
-      return entries.sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+      return cells.map(cell => ({ kind: "cell", date: cell.date, time: cell.time, cell }))
+        .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
     }
 
     function entryMeta(entry) {

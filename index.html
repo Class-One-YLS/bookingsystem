@@ -1645,8 +1645,10 @@
           <div class="row" style="margin-top:14px;">
             <button class="btn mint" id="neonPullBtn">Load From Neon</button>
             <button class="btn ghost" id="neonPushBtn">Save To Neon</button>
+            <button class="btn ghost" id="teacherViewParityBtn">Check Teacher View Match</button>
           </div>
           <div id="syncHealthIndicator" class="sales-summary" style="margin-top:14px;"></div>
+          <div id="teacherViewParityResult" class="card subtle hide" style="margin-top:12px;"></div>
           <div class="subtle" style="margin-top:10px;">Teacher View will not update until Neon sync succeeds.</div>
           <hr style="border:0;border-top:1px solid var(--line);margin:18px 0;">
           <h2>Start From Zero</h2>
@@ -2232,7 +2234,7 @@
       apiKey: "73a5baa8e4a70be55d79615e2dfbf4e843fa04b57ec04764",
       stateKey: "production"
     };
-    const FRONTEND_BUILD = "2026.07.10-ops-policy.1";
+    const FRONTEND_BUILD = "2026.07.10-calendar-mirror.1";
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
     const LOGIN_TIMEOUT_MS = 8000;
@@ -5011,12 +5013,16 @@
       return state.bookings.filter(booking => !isDeletedBookingRecord(booking) && !isSupersededBookingRecord(booking));
     }
 
+    function bookingRecordsForResolution() {
+      return state.bookings.filter(booking => !isSupersededBookingRecord(booking));
+    }
+
     function activeBookings() {
       return scheduleBookings().filter(b => !b.archived && !b.deleted && !isCancelledStatus(b.status));
     }
 
     function findBooking(slot) {
-      const matches = scheduleBookings().filter(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
+      const matches = bookingRecordsForResolution().filter(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
       const winner = matches.reduce((selected, booking) => shouldUseBooking(booking, selected) ? booking : selected, null);
       if (SYNC_DEBUG && matches.length) {
         console.info("[weekly-timetable canonical booking]", {
@@ -5038,7 +5044,125 @@
           }))
         });
       }
-      return winner;
+      return isDeletedBookingRecord(winner) ? null : winner;
+    }
+
+    function canonicalBookingForSlot(teacherId, date, time) {
+      const matches = bookingRecordsForResolution().filter(b => b.teacherId === teacherId && b.date === date && b.time === time);
+      return matches.reduce((selected, booking) => shouldUseBooking(booking, selected) ? booking : selected, null);
+    }
+
+    function calendarCellFromBooking(booking, teacher, slot = null) {
+      const status = booking.status || "booked";
+      return {
+        cellKey: `${booking.teacherId || teacher?.id || ""}|${dateOnly(booking.date)}|${normalizeTimeValue(booking.time) || booking.time}`,
+        teacherId: booking.teacherId || teacher?.id || "",
+        teacherName: teacher?.name || "",
+        date: dateOnly(booking.date),
+        day: booking.day || dayFromISO(booking.date),
+        time: normalizeTimeValue(booking.time) || booking.time,
+        kind: "booking",
+        id: booking.id || "",
+        bookingId: booking.id || "",
+        slotId: slot?.id || booking.sourceSlotId || "",
+        studentId: booking.studentId || "",
+        studentName: booking.studentName || "",
+        subject: booking.subject || slot?.subject || "",
+        type: booking.type || "regular class",
+        status,
+        minutes: Number(booking.minutes || 25),
+        remark: booking.remark || "",
+        locked: true,
+        available: false,
+        source: booking.source || "booking",
+        sourceRecordId: booking.id || "",
+        estimatedPay: applyPolicyRules(booking, { teacher }).teacherPay,
+        createdAt: booking.createdAt || "",
+        updatedAt: booking.updatedAt || booking.statusChangedAt || booking.slotRevisionAt || "",
+        resolvedAt: new Date().toISOString(),
+        booking,
+        slot
+      };
+    }
+
+    function calendarCellFromSlot(slot, teacher) {
+      const locked = Boolean(slot.locked || slot.reserved);
+      return {
+        cellKey: `${slot.teacherId || teacher?.id || ""}|${dateOnly(slot.date)}|${normalizeTimeValue(slot.time) || slot.time}`,
+        teacherId: slot.teacherId || teacher?.id || "",
+        teacherName: teacher?.name || "",
+        date: dateOnly(slot.date),
+        day: slot.day || dayFromISO(slot.date),
+        time: normalizeTimeValue(slot.time) || slot.time,
+        kind: slot.reserved ? "reserved" : (slot.locked ? "fixed" : "open"),
+        id: slot.id || "",
+        bookingId: "",
+        slotId: slot.id || "",
+        studentId: slot.studentId || "",
+        studentName: slot.reserved ? (slot.reservationName || slot.studentName || "") : (slot.studentName || ""),
+        subject: slot.subject || "",
+        type: slot.reserved ? "reserve" : (slot.locked ? "regular class" : "open slot"),
+        status: slot.locked || slot.reserved ? "booked" : "available",
+        minutes: 25,
+        remark: slot.remark || "",
+        locked,
+        available: !locked,
+        source: slot.source || "",
+        sourceRecordId: slot.id || "",
+        estimatedPay: locked ? Number(teacher?.rate || 0) : 0,
+        createdAt: slot.createdAt || "",
+        updatedAt: slot.updatedAt || slot.slotRevisionAt || "",
+        resolvedAt: new Date().toISOString(),
+        booking: null,
+        slot
+      };
+    }
+
+    function resolveTeacherCalendar(_state, { teacherId, from, to } = {}) {
+      const teacher = teacherById(teacherId);
+      if (!teacher || !from || !to) return { teacherId, from, to, generatedAt: new Date().toISOString(), stateVersion: Number(state.settings?.neonVersion || 0), cells: [] };
+      const cells = [];
+      datesBetween(parseISODate(from), parseISODate(to)).forEach(date => {
+        const dateISO = localISO(date);
+        const slots = collectSlotsForDate(date).filter(slot => slot.teacherId === teacherId);
+        const slotByTime = new Map(slots.map(slot => [slot.time, slot]));
+        const bookingTimes = new Set(bookingRecordsForResolution()
+          .filter(booking => booking.teacherId === teacherId && booking.date === dateISO)
+          .map(booking => normalizeTimeValue(booking.time) || booking.time)
+          .filter(Boolean));
+        const times = new Set([...slotByTime.keys(), ...bookingTimes]);
+        times.forEach(time => {
+          const slot = slotByTime.get(time);
+          const booking = canonicalBookingForSlot(teacherId, dateISO, time);
+          if (booking) {
+            if (isDeletedBookingRecord(booking)) {
+              if (slot && !slot.locked && !slot.reserved) cells.push(calendarCellFromSlot(slot, teacher));
+              return;
+            }
+            cells.push(calendarCellFromBooking(booking, teacher, slot));
+            return;
+          }
+          const leave = slot ? teacherLeaveForSlot(teacherId, dateISO, time) : null;
+          if (leave && slot) {
+            cells.push(calendarCellFromBooking(teacherLeavePseudoBooking(slot, leave), teacher, slot));
+            return;
+          }
+          if (slot) cells.push(calendarCellFromSlot(slot, teacher));
+        });
+      });
+      return {
+        teacherId,
+        from,
+        to,
+        generatedAt: new Date().toISOString(),
+        stateVersion: Number(state.settings?.neonVersion || 0),
+        cells: cells.sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`))
+      };
+    }
+
+    function resolvedCellsForDate(date) {
+      const dateISO = localISO(date);
+      return activeTeachers().flatMap(teacher => resolveTeacherCalendar(state, { teacherId: teacher.id, from: dateISO, to: dateISO }).cells);
     }
 
     function weeklyDatesInRange(startDate, endDate, day) {
@@ -5156,10 +5280,8 @@
       const dates = weekDates();
       finalizePassedClassesForRange(dates[0], dates[dates.length - 1]);
       const times = new Set();
-      dates.flatMap(collectSlotsForDate).forEach(s => times.add(s.time));
-      scheduleBookings().forEach(b => {
-        if (dates.some(d => localISO(d) === b.date)) times.add(b.time);
-      });
+      const resolvedByDate = new Map(dates.map(date => [localISO(date), resolvedCellsForDate(date)]));
+      [...resolvedByDate.values()].flat().forEach(cell => times.add(cell.time));
       const sortedTimes = [...times].sort((a, b) => minutes(a) - minutes(b));
       const summary = { open: 0, booked: 0, fixed: 0, visibleTeachers: new Set() };
       let html = `<div class="cell head schedule-corner"></div>${dates.map(d => `<div class="cell head">${DAYS[(d.getDay() + 6) % 7].slice(0, 3)}<br><span class="subtle">${d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span></div>`).join("")}`;
@@ -5172,23 +5294,20 @@
           const typeFilter = $("typeFilter").value;
           const timeFrom = $("timeFromFilter").value;
           const timeTo = $("timeToFilter").value;
-          let slots = collectSlotsForDate(d).filter(s => s.time === t);
-          slots = slots.filter(s => teacherFilter === "all" || s.teacherId === teacherFilter);
-          slots = slots.filter(s => slotMatchesSubject(s, subjectFilter));
-          slots = slots.filter(s => slotMatchesTimeRange(s, timeFrom, timeTo));
-          const items = slots.map(s => {
-            const booking = findBooking(s);
-            const leave = !booking ? teacherLeaveForSlot(s.teacherId, s.date, s.time) : null;
-            return { slot: s, booking: booking || (leave ? teacherLeavePseudoBooking(s, leave) : null) };
-          });
+          let items = (resolvedByDate.get(localISO(d)) || [])
+            .filter(cell => cell.time === t)
+            .filter(cell => teacherFilter === "all" || cell.teacherId === teacherFilter)
+            .filter(cell => subjectFilter === "all" || cell.subject === subjectFilter || (teacherById(cell.teacherId)?.subjects || []).includes(subjectFilter))
+            .filter(cell => slotMatchesTimeRange({ time: cell.time }, timeFrom, timeTo))
+            .map(cell => ({ cell, slot: cell.slot || { id: cell.slotId, teacherId: cell.teacherId, date: cell.date, day: cell.day, time: cell.time, subject: cell.subject, locked: cell.kind === "fixed", reserved: cell.kind === "reserved", studentName: cell.studentName, source: cell.source }, booking: cell.booking || (cell.kind === "booking" ? cell : null) }));
           let filtered = items.filter(x => {
-            const isBooked = Boolean(x.booking || x.slot.locked);
+            const isBooked = Boolean(x.booking || x.slot.locked || x.slot.reserved);
             const matchesStatus = statusFilter === "all" || (statusFilter === "open" && !isBooked) || (statusFilter === "booked" && isBooked);
             const matchesType = typeFilter === "all" || scheduleItemType(x.slot, x.booking) === typeFilter;
             return matchesStatus && matchesType;
           });
           filtered.forEach(x => {
-            summary.visibleTeachers.add(x.slot.teacherId);
+            summary.visibleTeachers.add(x.cell.teacherId);
             if (x.booking) summary.booked += 1;
             else if (x.slot.locked) summary.fixed += 1;
             else summary.open += 1;
@@ -7840,9 +7959,9 @@
     }
 
     function shouldUseBooking(candidate, existing) {
-      if (isDeletedBookingRecord(candidate) || isSupersededBookingRecord(candidate) || candidate?.archived === true) return false;
+      if (isSupersededBookingRecord(candidate)) return false;
       if (!existing) return true;
-      if (isDeletedBookingRecord(existing) || isSupersededBookingRecord(existing) || existing?.archived === true) return true;
+      if (isSupersededBookingRecord(existing)) return true;
       const candidateTime = bookingAmendmentTime(candidate);
       const existingTime = bookingAmendmentTime(existing);
       if (candidateTime !== existingTime) return candidateTime > existingTime;
@@ -10538,6 +10657,114 @@
       </div>`;
     }
 
+    function cellParitySnapshot(cell) {
+      if (!cell) return null;
+      return {
+        bookingId: cell.bookingId || cell.id || "",
+        studentId: cell.studentId || "",
+        studentName: cleanStudentName(cell.studentName || ""),
+        subject: cell.subject || "",
+        type: cell.type || "",
+        status: cell.status || "",
+        minutes: Number(cell.minutes || 0),
+        remark: cell.remark || ""
+      };
+    }
+
+    function cellParityDiff(localCell, remoteCell) {
+      const local = cellParitySnapshot(localCell);
+      const remote = cellParitySnapshot(remoteCell);
+      const fields = ["bookingId", "studentId", "studentName", "subject", "type", "status", "minutes", "remark"];
+      return fields.filter(field => String(local?.[field] ?? "") !== String(remote?.[field] ?? ""));
+    }
+
+    async function fetchTeacherViewCells(teacher, from, to) {
+      if (!teacher?.viewToken) throw new Error("Teacher view link has not been generated for this teacher.");
+      const url = new URL(`${neonApiBase()}/api/teacher-view`);
+      url.searchParams.set("key", neonStateKey());
+      url.searchParams.set("teacherId", teacher.id);
+      url.searchParams.set("token", teacher.viewToken);
+      url.searchParams.set("from", from);
+      url.searchParams.set("to", to);
+      url.searchParams.set("_", String(Date.now()));
+      const response = await fetch(url.toString(), { method: "GET", cache: "no-store" });
+      let data = {};
+      try { data = await response.json(); } catch (error) {}
+      if (!response.ok || data.ok === false) throw new Error(data.error || `Teacher View HTTP ${response.status}`);
+      return data;
+    }
+
+    async function compareWeeklyAndTeacherView({ teacherId, from, to } = {}) {
+      const teacher = teacherById(teacherId);
+      if (!teacher) throw new Error("Choose a teacher first.");
+      const localCalendar = resolveTeacherCalendar(state, { teacherId, from, to });
+      const teacherViewData = await fetchTeacherViewCells(teacher, from, to);
+      const remoteCells = teacherViewData.resolvedCalendar?.cells || teacherViewData.cells || [];
+      const localByKey = new Map(localCalendar.cells.map(cell => [cell.cellKey, cell]));
+      const remoteByKey = new Map(remoteCells.map(cell => [cell.cellKey || `${cell.teacherId || teacherId}|${cell.date}|${normalizeTimeValue(cell.time) || cell.time}`, cell]));
+      const allKeys = new Set([...localByKey.keys(), ...remoteByKey.keys()]);
+      const mismatches = [];
+      allKeys.forEach(key => {
+        const localCell = localByKey.get(key);
+        const remoteCell = remoteByKey.get(key);
+        const fields = cellParityDiff(localCell, remoteCell);
+        if (!localCell || !remoteCell || fields.length) {
+          mismatches.push({ key, localCell, remoteCell, fields });
+        }
+      });
+      return {
+        ok: mismatches.length === 0,
+        teacher,
+        from,
+        to,
+        localVersion: Number(state.settings?.neonVersion || 0),
+        teacherViewVersion: Number(teacherViewData.version || 0),
+        mismatches,
+        localCount: localCalendar.cells.length,
+        remoteCount: remoteCells.length
+      };
+    }
+
+    function renderParityResult(result) {
+      const box = $("teacherViewParityResult");
+      if (!box) return;
+      box.classList.remove("hide");
+      if (result.ok) {
+        box.innerHTML = `<div class="status success">MATCH: Weekly Timetable and Teacher View return the same resolved cells for ${escapeHtml(result.teacher.name)} (${formatDateFromAny(result.from)} to ${formatDateFromAny(result.to)}).</div><div class="subtle">Weekly cells: ${result.localCount} | Teacher View cells: ${result.remoteCount} | Local version: ${result.localVersion} | Teacher View version: ${result.teacherViewVersion}</div>`;
+        return;
+      }
+      box.innerHTML = `
+        <div class="status warn">MISMATCH: ${result.mismatches.length} resolved cell${result.mismatches.length === 1 ? "" : "s"} differ.</div>
+        ${result.mismatches.slice(0, 8).map(item => {
+          const local = cellParitySnapshot(item.localCell);
+          const remote = cellParitySnapshot(item.remoteCell);
+          const [teacherId, date, time] = item.key.split("|");
+          return `<div class="card" style="margin-top:10px;">
+            <strong>${escapeHtml(result.teacher.name)} | ${escapeHtml(formatDateFromAny(date))} | ${escapeHtml(timeLabel(time || ""))}</strong>
+            <div class="subtle">Different fields: ${escapeHtml(item.fields.join(", ") || "missing cell")}</div>
+            <div class="grid two" style="margin-top:8px;">
+              <div><strong>Weekly value</strong><pre style="white-space:pre-wrap;">${escapeHtml(JSON.stringify(local, null, 2))}</pre></div>
+              <div><strong>Teacher View value</strong><pre style="white-space:pre-wrap;">${escapeHtml(JSON.stringify(remote, null, 2))}</pre></div>
+            </div>
+          </div>`;
+        }).join("")}
+        ${result.mismatches.length > 8 ? `<div class="subtle">Showing first 8 mismatches only.</div>` : ""}
+      `;
+    }
+
+    async function runTeacherViewParityCheck() {
+      const selectedTeacher = teacherById($("teacherFilter")?.value) || teacherById($("overviewTeacherFilter")?.value) || activeTeachers()[0];
+      if (!selectedTeacher) return alert("Add or choose a teacher first.");
+      const dates = weekDates();
+      const from = localISO(dates[0]);
+      const to = localISO(dates[dates.length - 1]);
+      $("teacherViewParityResult").classList.remove("hide");
+      $("teacherViewParityResult").innerHTML = `<div class="subtle">Checking resolved Weekly Timetable cells against Teacher View API...</div>`;
+      const result = await compareWeeklyAndTeacherView({ teacherId: selectedTeacher.id, from, to });
+      renderParityResult(result);
+      setStatus(result.ok ? "Teacher View match check passed." : "Teacher View mismatch found. See Sync Settings.", result.ok ? "success" : "warn");
+    }
+
     function openSyncDebugModal() {
       const teacherOptions = activeTeachers().sort(byName).map(teacher => `<option value="${escapeHtml(teacher.id)}">${escapeHtml(teacher.name)}</option>`).join("");
       $("syncDebugTeacher").innerHTML = teacherOptions;
@@ -10554,37 +10781,35 @@
       const date = dateOnly($("syncDebugDate").value);
       const time = normalizeTimeValue($("syncDebugTime").value);
       if (!teacher || !date || !time) return setStatus("Choose teacher, date and time for the sync check.", "warn");
-      $("syncDebugResult").innerHTML = `<div class="subtle">Checking browser, Neon and Teacher View...</div>`;
+      $("syncDebugResult").innerHTML = `<div class="subtle">Checking resolved Weekly Timetable and Teacher View cells...</div>`;
       try {
-        const localWinner = bookingWinnerForSlot(state.bookings, teacher.id, date, time);
-        const neon = await fetchNeonJson(`/api/state?key=${encodeURIComponent(neonStateKey())}&_=${Date.now()}`, { method: "GET", cache: "no-store" }, "Sync debug Neon load", SYNC_READ_TIMEOUT_MS);
-        const neonWinner = bookingWinnerForSlot(neon.data?.bookings || [], teacher.id, date, time);
+        const cellKey = `${teacher.id}|${date}|${time}`;
+        const localCalendar = resolveTeacherCalendar(state, { teacherId: teacher.id, from: date, to: date });
+        const localCell = localCalendar.cells.find(cell => cell.cellKey === cellKey) || null;
         let teacherViewData = null;
-        let teacherViewWinner = null;
-        if (teacher.viewToken) {
-          const url = new URL(`${neonApiBase()}/api/teacher-view`);
-          url.searchParams.set("key", neonStateKey());
-          url.searchParams.set("teacherId", teacher.id);
-          url.searchParams.set("token", teacher.viewToken);
-          url.searchParams.set("from", date);
-          url.searchParams.set("to", date);
-          url.searchParams.set("debug", "1");
-          url.searchParams.set("_", String(Date.now()));
-          const response = await fetch(url.toString(), { method: "GET", cache: "no-store" });
-          teacherViewData = await response.json();
-          if (!response.ok || teacherViewData.ok === false) throw new Error(teacherViewData.error || `Teacher View HTTP ${response.status}`);
-          teacherViewWinner = (teacherViewData.bookings || []).find(booking => dateOnly(booking.date) === date && normalizeTimeValue(booking.time) === time) || null;
-        }
-        const localId = localWinner?.id || "";
-        const neonId = neonWinner?.id || "";
-        const viewId = teacherViewWinner?.id || "";
-        const outdated = teacherViewIsOutdated() || Number(neon.version || 0) !== Number(teacherViewData?.version || neon.version || 0) || localId !== neonId || (teacher.viewToken && neonId !== viewId);
+        let teacherViewCell = null;
+        if (!teacher.viewToken) throw new Error("Teacher view link has not been generated for this teacher.");
+        const url = new URL(`${neonApiBase()}/api/teacher-view`);
+        url.searchParams.set("key", neonStateKey());
+        url.searchParams.set("teacherId", teacher.id);
+        url.searchParams.set("token", teacher.viewToken);
+        url.searchParams.set("from", date);
+        url.searchParams.set("to", date);
+        url.searchParams.set("debug", "1");
+        url.searchParams.set("_", String(Date.now()));
+        const response = await fetch(url.toString(), { method: "GET", cache: "no-store" });
+        teacherViewData = await response.json();
+        if (!response.ok || teacherViewData.ok === false) throw new Error(teacherViewData.error || `Teacher View HTTP ${response.status}`);
+        const teacherCells = teacherViewData.resolvedCalendar?.cells || teacherViewData.cells || [];
+        teacherViewCell = teacherCells.find(cell => (cell.cellKey || `${cell.teacherId || teacher.id}|${cell.date}|${normalizeTimeValue(cell.time) || cell.time}`) === cellKey) || null;
+        const diffFields = cellParityDiff(localCell, teacherViewCell);
+        const outdated = teacherViewIsOutdated() || Number(state.settings?.neonVersion || 0) !== Number(teacherViewData?.version || 0) || !localCell || !teacherViewCell || diffFields.length;
         $("syncDebugResult").innerHTML = `
-          <div class="status ${outdated ? "warn" : "success"}">${outdated ? "Teacher View is outdated or local changes are not synced." : "All three sources match."}</div>
-          <div class="grid three" style="margin-top:12px;">
-            ${syncDebugRecordHtml("Weekly Timetable / Local", localWinner, state.settings.neonVersion, "browser working state")}
-            ${syncDebugRecordHtml("Neon", neonWinner, neon.version, "neon.app_state.bookings")}
-            ${syncDebugRecordHtml("Teacher View API", teacherViewWinner, teacherViewData?.version, teacher.viewToken ? "api/teacher-view" : "No teacher link")}
+          <div class="status ${outdated ? "warn" : "success"}">${outdated ? "Resolved cells differ or local changes are not synced to Teacher View." : "Resolved Weekly Timetable and Teacher View cells match."}</div>
+          ${diffFields.length ? `<div class="subtle">Different fields: ${escapeHtml(diffFields.join(", "))}</div>` : ""}
+          <div class="grid two" style="margin-top:12px;">
+            ${syncDebugRecordHtml("Weekly Timetable Resolved Cell", localCell, state.settings.neonVersion, "browser resolveTeacherCalendar")}
+            ${syncDebugRecordHtml("Teacher View Resolved Cell", teacherViewCell, teacherViewData?.version, "api/teacher-view resolvedCalendar")}
           </div>`;
       } catch (error) {
         $("syncDebugResult").innerHTML = `<div class="status error">${escapeHtml(error.message)}</div>`;
@@ -14222,6 +14447,11 @@
       keepBrowserDraftOffline = false;
       await autoPushIfConfigured("Manual Neon save completed.");
     }).catch(err => alert(err.message));
+    $("teacherViewParityBtn").onclick = () => animateClick($("teacherViewParityBtn"), runTeacherViewParityCheck).catch(err => {
+      $("teacherViewParityResult").classList.remove("hide");
+      $("teacherViewParityResult").innerHTML = `<div class="status error">${escapeHtml(err.message)}</div>`;
+      setStatus(`Teacher View match check failed: ${err.message}`, "error");
+    });
     $("resetOperationalDataBtn").onclick = () => animateClick($("resetOperationalDataBtn"), resetOperationalDataFromZero).catch(err => {
       setStatus(`Start From Zero failed: ${err.message}`, "error");
       alert(err.message);
