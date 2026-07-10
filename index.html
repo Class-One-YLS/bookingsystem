@@ -2399,6 +2399,7 @@
     let isSavingToNeon = false;
     let isPullingFromNeon = false;
     let isUserEditingForm = false;
+    let isAnyFormEditing = false;
     let loginRequestInFlight = false;
     let pendingSave = false;
     let lastNeonSaveFailed = false;
@@ -2987,15 +2988,43 @@
       return JSON.parse(JSON.stringify(value ?? null));
     }
 
+    const LOCAL_ONLY_SETTING_KEYS = new Set([
+      "scriptUrl", "apiKey", "crmScriptUrl", "crmApiKey",
+      "neonApiUrl", "neonApiKey", "neonStateKey", "neonVersion",
+      "localRevision", "lastSyncedRevision", "pendingLocalSync", "businessDirty",
+      "lastLocalChangeAt", "lastSyncedAt", "teacherViewSyncOutdated",
+      "teacherViewSyncMessage", "teacherViewSyncedAt", "teacherViewSyncedVersion",
+      "currentDeviceId", "currentTab", "collapsedSidebar", "sidebarCollapsed",
+      "filters", "uiFilters", "layout", "formDrafts", "cacheState",
+      "retryState", "session", "loginSession", "pendingSave", "pendingLocalDraft"
+    ]);
+
+    function sharedBusinessSettings(settings = {}) {
+      const source = settings || {};
+      const shared = {};
+      Object.entries(source).forEach(([key, value]) => {
+        if (LOCAL_ONLY_SETTING_KEYS.has(key)) return;
+        if (/^(ui|local|cache|draft|session|login|retry)/i.test(key)) return;
+        shared[key] = stripInlineMedia(cloneJson(value));
+      });
+      const revisions = source.settingsFieldRevisions || {};
+      const sharedRevisions = {};
+      Object.keys(shared).forEach(key => {
+        if (key === "settingsFieldRevisions") return;
+        if (revisions[key]) sharedRevisions[key] = stripInlineMedia(cloneJson(revisions[key]));
+      });
+      if (Object.keys(sharedRevisions).length) shared.settingsFieldRevisions = sharedRevisions;
+      else delete shared.settingsFieldRevisions;
+      return shared;
+    }
+
     function businessPayloadFrom(value = {}) {
       const payload = {};
       BUSINESS_COLLECTIONS.forEach(key => {
         payload[key] = stripInlineMedia(cloneJson(value[key] || []));
       });
       payload.activityLogs = compactRemoteActivityLogs(value.activityLogs || []);
-      payload.settings = value.settings
-        ? stripInlineMedia(cloneJson(value.settings))
-        : {};
+      payload.settings = sharedBusinessSettings(value.settings || {});
       return payload;
     }
 
@@ -3015,6 +3044,49 @@
       const localTie = `${localRecord?.deviceId || ""}|${recordIdForDraft(localRecord, "record")}`;
       const remoteTie = `${remoteRecord?.deviceId || ""}|${recordIdForDraft(remoteRecord, "record")}`;
       return localTie >= remoteTie ? 1 : -1;
+    }
+
+    function settingRevisionTime(revision) {
+      return activityTime(revision?.updatedAt || revision?.changedAt || revision?.createdAt || "");
+    }
+
+    function compareSettingFieldRevision(localRevision = {}, remoteRevision = {}, fieldKey = "") {
+      const localTime = settingRevisionTime(localRevision);
+      const remoteTime = settingRevisionTime(remoteRevision);
+      if (localTime !== remoteTime) return localTime > remoteTime ? 1 : -1;
+      const localTie = `${localRevision?.deviceId || ""}|${fieldKey}|${localRevision?.updatedBy || ""}`;
+      const remoteTie = `${remoteRevision?.deviceId || ""}|${fieldKey}|${remoteRevision?.updatedBy || ""}`;
+      return localTie >= remoteTie ? 1 : -1;
+    }
+
+    function settingFieldRevision(settings = {}, fieldKey = "", fallback = {}) {
+      return settings?.settingsFieldRevisions?.[fieldKey] || {
+        updatedAt: fallback.updatedAt || settings.updatedAt || settings.lastUpdatedAt || settings.createdAt || "",
+        updatedBy: fallback.updatedBy || settings.updatedBy || "",
+        deviceId: fallback.deviceId || settings.deviceId || ""
+      };
+    }
+
+    function mergeSharedSettings(remoteSettings = {}, localSettings = {}, fallbackRevision = {}) {
+      const remote = sharedBusinessSettings(remoteSettings || {});
+      const local = sharedBusinessSettings(localSettings || {});
+      const merged = { ...remote };
+      const mergedRevisions = { ...(remote.settingsFieldRevisions || {}) };
+      Object.entries(local).forEach(([key, value]) => {
+        if (key === "settingsFieldRevisions" || LOCAL_ONLY_SETTING_KEYS.has(key)) return;
+        const localRevision = settingFieldRevision(local, key, fallbackRevision);
+        const remoteRevision = settingFieldRevision(remote, key);
+        if (!(key in remote) || compareSettingFieldRevision(localRevision, remoteRevision, key) >= 0) {
+          merged[key] = stripInlineMedia(cloneJson(value));
+          mergedRevisions[key] = stripInlineMedia(cloneJson(localRevision));
+        }
+      });
+      Object.keys(mergedRevisions).forEach(key => {
+        if (!(key in merged) || key === "settingsFieldRevisions" || LOCAL_ONLY_SETTING_KEYS.has(key)) delete mergedRevisions[key];
+      });
+      if (Object.keys(mergedRevisions).length) merged.settingsFieldRevisions = mergedRevisions;
+      else delete merged.settingsFieldRevisions;
+      return merged;
     }
 
     function ensureDraftRecordMeta(record, baselineRecord = null, now = new Date().toISOString()) {
@@ -3077,14 +3149,22 @@
       const currentSettings = currentPayload?.settings || {};
       const baselineSettings = baselinePayload?.settings || {};
       const changedSettings = {};
+      const changedSettingRevisions = {};
       Object.keys(currentSettings).forEach(key => {
+        if (key === "settingsFieldRevisions" || LOCAL_ONLY_SETTING_KEYS.has(key)) return;
         if (recordSignature(currentSettings[key]) !== recordSignature(baselineSettings[key])) {
           changedSettings[key] = stripInlineMedia(cloneJson(currentSettings[key]));
+          changedSettingRevisions[key] = {
+            updatedAt: now,
+            updatedBy: currentUser()?.email || currentUser()?.name || "Class One Admin",
+            deviceId: currentDeviceId()
+          };
         }
       });
       if (Object.keys(changedSettings).length) {
         patch.settings = {
           fields: changedSettings,
+          fieldRevisions: changedSettingRevisions,
           id: "system_settings",
           updatedAt: now,
           updatedBy: currentUser()?.email || currentUser()?.name || "Class One Admin",
@@ -3096,12 +3176,12 @@
 
     function mergePatchIntoPayload(remotePayload = {}, patch = null) {
       const merged = businessPayloadFrom(remotePayload || {});
-      if (!patch?.changes) return merged;
+      if (!patch) return merged;
       BUSINESS_COLLECTIONS.forEach(collectionName => {
         const remoteList = Array.isArray(merged[collectionName]) ? merged[collectionName] : [];
         const result = remoteList.map(record => stripInlineMedia(cloneJson(record)));
         const indexById = new Map(result.map((record, index) => [recordIdForDraft(record, collectionName), index]));
-        (patch.changes[collectionName] || []).forEach(localRecord => {
+        (patch.changes?.[collectionName] || []).forEach(localRecord => {
           const clone = stripInlineMedia(cloneJson(localRecord));
           const id = recordIdForDraft(clone, collectionName);
           if (!indexById.has(id)) {
@@ -3118,9 +3198,16 @@
       if (patch.settings) {
         const remoteSettings = merged.settings || {};
         const changedFields = patch.settings.fields || Object.fromEntries(
-          Object.entries(patch.settings).filter(([key]) => !["id", "updatedAt", "updatedBy", "deviceId"].includes(key))
+          Object.entries(patch.settings).filter(([key]) => !["id", "updatedAt", "updatedBy", "deviceId", "fieldRevisions"].includes(key))
         );
-        merged.settings = { ...remoteSettings, ...stripInlineMedia(cloneJson(changedFields)) };
+        merged.settings = mergeSharedSettings(remoteSettings, {
+          ...stripInlineMedia(cloneJson(changedFields)),
+          settingsFieldRevisions: patch.settings.fieldRevisions || {}
+        }, {
+          updatedAt: patch.settings.updatedAt,
+          updatedBy: patch.settings.updatedBy,
+          deviceId: patch.settings.deviceId
+        });
       }
       return merged;
     }
@@ -3128,7 +3215,7 @@
     function applyDraftPatchToWorkingState(patch) {
       if (!patch) return;
       const merged = mergePatchIntoPayload(remoteStatePayload(), patch);
-      applyPulledPayload(merged);
+      applyPayloadPreservingForms(merged);
       state.settings.businessDirty = true;
       state.settings.pendingLocalSync = true;
       hasUnsavedBusinessChanges = true;
@@ -3929,7 +4016,11 @@
         neonApiKey: keepSettings.neonApiKey || DEFAULT_NEON.apiKey,
         neonStateKey: keepSettings.neonStateKey || DEFAULT_NEON.stateKey,
         neonVersion: keepSettings.neonVersion || 0,
-        replyTemplates: keepSettings.replyTemplates?.length ? keepSettings.replyTemplates : DEFAULT_REPLY_TEMPLATES.map(template => ({ ...template }))
+        replyTemplates: payload?.settings?.replyTemplates?.length
+          ? payload.settings.replyTemplates
+          : keepSettings.replyTemplates?.length
+          ? keepSettings.replyTemplates
+          : DEFAULT_REPLY_TEMPLATES.map(template => ({ ...template }))
       };
       normalizeState();
     }
@@ -3960,6 +4051,7 @@
       persistState();
       if (show) setStatus("Saved.");
       if (options.render !== false) renderAll();
+      clearAnyFormEditingIfSafe();
       if (isBusinessChange) scheduleAutoPush();
       return true;
     }
@@ -4178,6 +4270,34 @@
       return Boolean(el.closest(".modal.hide"));
     }
 
+    function isFieldInsideInactiveTab(el) {
+      const tab = el.closest(".tab");
+      return Boolean(tab && tab.classList.contains("hide"));
+    }
+
+    function hasDirtyFormState() {
+      return Object.values(dirtyForms || {}).some(Boolean);
+    }
+
+    function activeBusinessField() {
+      const active = document.activeElement;
+      if (!active?.matches?.("input, textarea, select")) return null;
+      if (active.closest("#loginPage")) return null;
+      return active;
+    }
+
+    function markAnyFormEditing(el = null) {
+      if (el?.closest?.("#loginPage")) return;
+      isAnyFormEditing = true;
+      isUserEditingForm = true;
+    }
+
+    function clearAnyFormEditingIfSafe(force = false) {
+      if (!force && (activeBusinessField() || hasDirtyFormState())) return;
+      isAnyFormEditing = false;
+      if (!hasDirtyFormState()) isUserEditingForm = false;
+    }
+
     function captureOpenFormDrafts() {
       const focused = document.activeElement?.matches?.("input, textarea, select") ? document.activeElement : null;
       const drafts = {
@@ -4190,7 +4310,7 @@
       const fields = new Map();
       activeFormDraftRoots().forEach(root => {
         root.querySelectorAll("input[id], select[id], textarea[id]").forEach(el => {
-          if (!el.id || el.type === "file" || isFieldInsideClosedModal(el)) return;
+          if (!el.id || el.type === "file" || isFieldInsideClosedModal(el) || isFieldInsideInactiveTab(el)) return;
           fields.set(el.id, el);
         });
       });
@@ -4210,7 +4330,7 @@
       let focusSelection = null;
       (drafts.generic || []).forEach(item => {
         const el = $(item.id);
-        if (!el || el.type === "file" || isFieldInsideClosedModal(el)) return;
+        if (!el || el.type === "file" || isFieldInsideClosedModal(el) || isFieldInsideInactiveTab(el)) return;
         const liveDraft = liveFormFieldDrafts.get(item.id);
         const effectiveItem = liveDraft && Number(liveDraft.sequence || 0) > Number(item.fieldSequence || 0)
           ? { ...item, ...liveDraft }
@@ -4265,7 +4385,7 @@
 
     function markUserFormDirty() {
       dirtyForms.users = true;
-      isUserEditingForm = true;
+      markAnyFormEditing($("userId"));
       currentUserFormDraft = readUserFormDraft();
       if (isPullingFromNeon || isSavingToNeon) setStatus("Editing in progress — sync will continue after save.", "warn", false);
     }
@@ -4277,9 +4397,9 @@
         el.dataset.draftBound = "1";
         el.addEventListener("input", markUserFormDirty);
         el.addEventListener("change", markUserFormDirty);
-        el.addEventListener("focus", () => { isUserEditingForm = true; });
+        el.addEventListener("focus", () => { markAnyFormEditing(el); });
         el.addEventListener("blur", () => setTimeout(() => {
-          if (!dirtyForms.users && !document.activeElement?.closest?.("#users")) isUserEditingForm = false;
+          if (!dirtyForms.users && !document.activeElement?.closest?.("#users")) clearAnyFormEditingIfSafe();
         }, 200));
       });
       document.querySelectorAll("input[name='userAllowedTab']").forEach(input => {
@@ -4292,7 +4412,7 @@
     function clearUserFormDirty() {
       dirtyForms.users = false;
       currentUserFormDraft = null;
-      isUserEditingForm = false;
+      clearAnyFormEditingIfSafe();
     }
 
     function setStatus(msg, type = "success", showToast = true) {
@@ -10238,7 +10358,7 @@
       if (!options.skipLocalWarning && state.settings.pendingLocalSync && !confirm("There are local changes not synced to Google Sheet yet. Pulling now may overwrite them. Continue?")) return;
       const data = await fetchJsonWithTimeout(`${url}?action=read&key=${encodeURIComponent($("apiKey").value.trim())}`, {}, "Timetable sync");
       if (!data.ok) throw new Error(data.error || "Pull failed");
-      applyPulledPayload(data.payload);
+      applyPayloadPreservingForms(data.payload);
       if (logManual) logAction("Sync Pulled", "Timetable Google Sheet", "", "Pulled latest data", "Manual pull completed.");
       suppressAutoPush = true;
       save(false);
@@ -10400,18 +10520,7 @@
     }
 
     function remoteSystemSettings() {
-      const browserOnly = new Set([
-        "scriptUrl", "apiKey", "crmScriptUrl", "crmApiKey",
-        "neonApiUrl", "neonApiKey", "neonStateKey", "neonVersion",
-        "localRevision", "lastSyncedRevision", "pendingLocalSync", "businessDirty",
-        "lastLocalChangeAt", "lastSyncedAt", "teacherViewSyncOutdated",
-        "teacherViewSyncMessage", "teacherViewSyncedAt", "teacherViewSyncedVersion"
-      ]);
-      return Object.fromEntries(
-        Object.entries(state.settings || {})
-          .filter(([key]) => !browserOnly.has(key))
-          .map(([key, value]) => [key, stripInlineMedia(JSON.parse(JSON.stringify(value)))])
-      );
+      return sharedBusinessSettings(state.settings || {});
     }
 
     function remoteStatePayload() {
@@ -10545,7 +10654,11 @@
       });
       state.settings = {
         ...(state.settings || {}),
-        ...(localPayload.settings || {}),
+        ...mergeSharedSettings(state.settings || {}, localPayload.settings || {}, {
+          updatedAt: localPayload.settings?.updatedAt || new Date().toISOString(),
+          updatedBy: currentUser()?.email || currentUser()?.name || "Class One Admin",
+          deviceId: currentDeviceId()
+        }),
         neonVersion: remoteVersion,
         businessDirty: true,
         pendingLocalSync: true
@@ -11145,6 +11258,7 @@
       if (!neonConfigured()) return false;
       if (document.hidden) return false;
       if (isUserEditingForm) return false;
+      if (isAnyFormEditing) return false;
       if (autoNeonRefreshInProgress) return false;
       if (hasUnsavedBusinessChanges || state.settings.pendingLocalSync) return false;
       if (modalIsOpen()) return false;
@@ -11906,6 +12020,7 @@
         }
         document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b === nav));
         document.querySelectorAll(".tab").forEach(t => t.classList.toggle("hide", t.id !== nav.dataset.tab));
+        clearAnyFormEditingIfSafe();
         $("pageTitle").textContent = nav.dataset.title || nav.textContent;
         renderSectionNav(nav.dataset.tab);
         updateLayoutToggle();
@@ -13732,17 +13847,19 @@
     document.addEventListener("focusin", event => {
       if (!event.target?.matches?.("input, textarea, select")) return;
       if (event.target.closest("#loginPage")) return;
-      isUserEditingForm = true;
+      markAnyFormEditing(event.target);
     });
     document.addEventListener("input", event => {
       if (!event.target?.matches?.("input, textarea, select")) return;
       if (event.target.closest("#loginPage")) return;
+      markAnyFormEditing(event.target);
       formEditSequence += 1;
       rememberLiveFormFieldDraft(event.target);
     }, true);
     document.addEventListener("change", event => {
       if (!event.target?.matches?.("input, textarea, select")) return;
       if (event.target.closest("#loginPage")) return;
+      markAnyFormEditing(event.target);
       formEditSequence += 1;
       rememberLiveFormFieldDraft(event.target);
     }, true);
@@ -13750,8 +13867,7 @@
       if (!event.target?.matches?.("input, textarea, select")) return;
       setTimeout(() => {
         if (document.activeElement?.matches?.("input, textarea, select") && !document.activeElement.closest("#loginPage")) return;
-        if (dirtyForms.users) return;
-        isUserEditingForm = false;
+        clearAnyFormEditingIfSafe();
       }, 250);
     });
     window.addEventListener("beforeunload", event => {
@@ -13765,7 +13881,7 @@
         return;
       }
       if (event.key !== DATA_CACHE_KEY || !event.newValue) return;
-      if (!isAuthenticated() || !initialDataLoadComplete || hasUnsavedBusinessChanges || isUserEditingForm) return;
+      if (!isAuthenticated() || !initialDataLoadComplete || hasUnsavedBusinessChanges || isUserEditingForm || isAnyFormEditing) return;
       autoRefreshFromNeon({ force: true });
     });
 
