@@ -2411,6 +2411,8 @@
     let currentDraftPatch = null;
     let dirtyForms = {};
     let currentUserFormDraft = null;
+    let formEditSequence = 0;
+    let liveFormFieldDrafts = new Map();
     let initialDataLoadComplete = false;
     let pendingReplacementId = "";
     let pendingReplacementCreditId = "";
@@ -4090,29 +4092,144 @@
       return new Date().toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" });
     }
 
+    function fieldValueForDraft(el) {
+      if (!el) return "";
+      const type = String(el.type || "").toLowerCase();
+      if (type === "checkbox" || type === "radio") return Boolean(el.checked);
+      if (el.tagName === "SELECT" && el.multiple) return [...el.selectedOptions].map(option => option.value);
+      return el.value;
+    }
+
+    function setFieldValueFromDraft(el, item) {
+      const type = String(el.type || item.type || "").toLowerCase();
+      if (type === "checkbox" || type === "radio") {
+        el.checked = Boolean(item.checked);
+        return;
+      }
+      if (el.tagName === "SELECT" && el.multiple) {
+        const values = new Set(item.selectedValues || []);
+        [...el.options].forEach(option => {
+          option.selected = values.has(option.value);
+        });
+        return;
+      }
+      el.value = item.value ?? "";
+    }
+
+    function fieldDraftFromElement(el) {
+      const type = String(el.type || el.tagName.toLowerCase()).toLowerCase();
+      return {
+        id: el.id,
+        type,
+        checked: Boolean(el.checked),
+        value: el.value,
+        selectedValues: el.tagName === "SELECT" && el.multiple ? [...el.selectedOptions].map(option => option.value) : null,
+        capturedValue: fieldValueForDraft(el)
+      };
+    }
+
+    function rememberLiveFormFieldDraft(el) {
+      if (!el?.id || el.type === "file" || isFieldInsideClosedModal(el)) return;
+      liveFormFieldDrafts.set(el.id, {
+        ...fieldDraftFromElement(el),
+        sequence: formEditSequence
+      });
+    }
+
+    function captureSelectionDraft(el) {
+      try {
+        if (typeof el.selectionStart !== "number") return null;
+        return {
+          start: el.selectionStart,
+          end: el.selectionEnd,
+          direction: el.selectionDirection || "none"
+        };
+      } catch (err) {
+        return null;
+      }
+    }
+
+    function restoreSelectionDraft(el, selection) {
+      if (!selection) return;
+      try {
+        if (typeof el.setSelectionRange === "function") {
+          el.setSelectionRange(selection.start, selection.end, selection.direction || "none");
+        }
+      } catch (err) {
+        // Some input types, such as date/time/number, do not support cursor restoration.
+      }
+    }
+
+    function activeFormDraftRoots() {
+      const roots = [];
+      const add = (root) => {
+        if (root && !roots.includes(root)) roots.push(root);
+      };
+      document.querySelectorAll(".modal:not(.hide)").forEach(add);
+      const activeTab = $(activeTabId());
+      if (activeTab) add(activeTab);
+      if (dirtyForms.users || document.activeElement?.closest?.("#users")) add($("users"));
+      const focusedRoot = document.activeElement?.closest?.(".modal:not(.hide), section, .panel, .card, .table-scroll, form");
+      if (focusedRoot) add(focusedRoot);
+      return roots;
+    }
+
+    function isFieldInsideClosedModal(el) {
+      return Boolean(el.closest(".modal.hide"));
+    }
+
     function captureOpenFormDrafts() {
-      const drafts = { generic: [] };
+      const focused = document.activeElement?.matches?.("input, textarea, select") ? document.activeElement : null;
+      const drafts = {
+        generic: [],
+        sequence: formEditSequence,
+        focusedId: focused?.id || "",
+        focusedSelection: focused ? captureSelectionDraft(focused) : null
+      };
       if (dirtyForms.users && currentUserFormDraft) drafts.users = { ...currentUserFormDraft };
-      document.querySelectorAll(".modal:not(.hide) input[id], .modal:not(.hide) select[id], .modal:not(.hide) textarea[id], #users input[id], #users select[id], #users textarea[id]").forEach(el => {
-        if (!el.id || el.type === "file") return;
+      const fields = new Map();
+      activeFormDraftRoots().forEach(root => {
+        root.querySelectorAll("input[id], select[id], textarea[id]").forEach(el => {
+          if (!el.id || el.type === "file" || isFieldInsideClosedModal(el)) return;
+          fields.set(el.id, el);
+        });
+      });
+      fields.forEach(el => {
         drafts.generic.push({
-          id: el.id,
-          type: el.type || el.tagName.toLowerCase(),
-          checked: Boolean(el.checked),
-          value: el.value
+          ...fieldDraftFromElement(el),
+          focused: el === focused,
+          selection: el === focused ? drafts.focusedSelection : null,
+          fieldSequence: liveFormFieldDrafts.get(el.id)?.sequence || formEditSequence
         });
       });
       return drafts;
     }
 
     function restoreOpenFormDrafts(drafts = {}) {
+      let focusTarget = null;
+      let focusSelection = null;
       (drafts.generic || []).forEach(item => {
         const el = $(item.id);
-        if (!el || el.type === "file") return;
-        if (item.type === "checkbox" || item.type === "radio") el.checked = item.checked;
-        else el.value = item.value;
+        if (!el || el.type === "file" || isFieldInsideClosedModal(el)) return;
+        const liveDraft = liveFormFieldDrafts.get(item.id);
+        const effectiveItem = liveDraft && Number(liveDraft.sequence || 0) > Number(item.fieldSequence || 0)
+          ? { ...item, ...liveDraft }
+          : item;
+        setFieldValueFromDraft(el, effectiveItem);
+        if (item.focused || item.id === drafts.focusedId) {
+          focusTarget = el;
+          focusSelection = item.selection || drafts.focusedSelection;
+        }
       });
       if (drafts.users) restoreUserFormDraft(drafts.users);
+      if (focusTarget && document.body.contains(focusTarget)) {
+        try {
+          focusTarget.focus({ preventScroll: true });
+        } catch (err) {
+          focusTarget.focus();
+        }
+        restoreSelectionDraft(focusTarget, focusSelection);
+      }
     }
 
     function applyPayloadPreservingForms(payload) {
@@ -13617,6 +13734,18 @@
       if (event.target.closest("#loginPage")) return;
       isUserEditingForm = true;
     });
+    document.addEventListener("input", event => {
+      if (!event.target?.matches?.("input, textarea, select")) return;
+      if (event.target.closest("#loginPage")) return;
+      formEditSequence += 1;
+      rememberLiveFormFieldDraft(event.target);
+    }, true);
+    document.addEventListener("change", event => {
+      if (!event.target?.matches?.("input, textarea, select")) return;
+      if (event.target.closest("#loginPage")) return;
+      formEditSequence += 1;
+      rememberLiveFormFieldDraft(event.target);
+    }, true);
     document.addEventListener("focusout", event => {
       if (!event.target?.matches?.("input, textarea, select")) return;
       setTimeout(() => {
