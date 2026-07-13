@@ -4638,9 +4638,9 @@
     }
 
     function regularSlotCoversRange(slot, startDate, endDate) {
-      const slotStart = slot.startDate || "0000-01-01";
-      const slotEnd = slot.endDate || "9999-12-31";
-      const targetEnd = endDate || "9999-12-31";
+      const slotStart = dateOnly(slot.startDate) || "0000-01-01";
+      const slotEnd = dateOnly(slot.endDate) || "9999-12-31";
+      const targetEnd = dateOnly(endDate) || "9999-12-31";
       return slotStart <= startDate && slotEnd >= targetEnd;
     }
 
@@ -4651,17 +4651,17 @@
         .filter(slot => slot.studentSlotId === studentRegularSlotEditId)
         .map(slot => slot.id));
       const ownSlot = (teacher.regularSlots || []).find(slot =>
-        slot.locked && slot.studentSlotId === studentRegularSlotEditId && slot.day === day && slot.time === time && regularSlotCoversRange(slot, startDate, endDate)
+        slot.locked && slot.studentSlotId === studentRegularSlotEditId && slot.day === day && (normalizeTimeValue(slot.time) || slot.time) === (normalizeTimeValue(time) || time) && regularSlotCoversRange(slot, startDate, endDate)
       );
       const bookedClass = activeBookings().find(booking =>
-        booking.teacherId === teacher.id && booking.time === time &&
-        dayFromISO(booking.date) === day && booking.date >= startDate &&
-        (!endDate || booking.date <= endDate) && !ownTeacherSlotIds.has(booking.sourceSlotId)
+        booking.teacherId === teacher.id && (normalizeTimeValue(booking.time) || booking.time) === (normalizeTimeValue(time) || time) &&
+        dayFromISO(booking.date) === day && dateOnly(booking.date) >= dateOnly(startDate) &&
+        (!endDate || dateOnly(booking.date) <= dateOnly(endDate)) && !ownTeacherSlotIds.has(booking.sourceSlotId)
       );
       if (bookedClass) return `${teacher.name} is already booked by ${bookedClass.studentName || "another student"} on ${formatClassDateTime(bookedClass.date, bookedClass.time)}.`;
       if (ownSlot) return "";
       const conflict = (teacher.regularSlots || []).find(slot =>
-        slot.locked && slot.studentSlotId !== studentRegularSlotEditId && slot.day === day && slot.time === time &&
+        slot.locked && slot.studentSlotId !== studentRegularSlotEditId && slot.day === day && (normalizeTimeValue(slot.time) || slot.time) === (normalizeTimeValue(time) || time) &&
         regularSlotRangesOverlap(slot, { startDate, endDate })
       );
       if (conflict) {
@@ -4795,20 +4795,30 @@
       });
     }
 
+    function teacherDateTimeKey(teacherId, date, time) {
+      return `${teacherId || ""}|${dateOnly(date)}|${normalizeTimeValue(time) || time || ""}`;
+    }
+
     function availabilitySlotApplies(slot, dateStr, day) {
-      if (slot.date) return slot.date === dateStr;
-      return slot.day === day && (!slot.startDate || slot.startDate <= dateStr) && (!slot.endDate || slot.endDate >= dateStr);
+      const slotDate = dateOnly(slot.date);
+      if (slotDate) return slotDate === dateStr;
+      const startDate = dateOnly(slot.startDate);
+      const endDate = dateOnly(slot.endDate);
+      return slot.day === day && (!startDate || startDate <= dateStr) && (!endDate || endDate >= dateStr);
     }
 
     function latestOverrideSlotsForDate(teacher, dateStr, day) {
-      const byTime = new Map();
+      const byCell = new Map();
       (teacher.overrideSlots || [])
         .filter(slot => availabilitySlotApplies(slot, dateStr, day))
+        .map(slot => ({ ...slot, time: normalizeTimeValue(slot.time) || slot.time }))
+        .filter(slot => slot.time)
         .forEach(slot => {
-          const current = byTime.get(slot.time);
-          if (!current || bookingAmendmentTime(slot) >= bookingAmendmentTime(current)) byTime.set(slot.time, slot);
+          const key = teacherDateTimeKey(teacher.id, dateStr, slot.time);
+          const current = byCell.get(key);
+          if (!current || bookingAmendmentTime(slot) >= bookingAmendmentTime(current)) byCell.set(key, slot);
         });
-      return byTime;
+      return byCell;
     }
 
     function regularSlotRecency(a, b) {
@@ -4832,8 +4842,9 @@
         const regularByTime = new Map();
         (t.regularSlots || [])
           .filter(s => s.day === day)
-          .filter(s => (!s.startDate || s.startDate <= dateStr) && (!s.endDate || s.endDate >= dateStr))
-          .filter(s => !latestOverrides.has(s.time))
+          .map(s => ({ ...s, time: normalizeTimeValue(s.time) || s.time }))
+          .filter(s => (!dateOnly(s.startDate) || dateOnly(s.startDate) <= dateStr) && (!dateOnly(s.endDate) || dateOnly(s.endDate) >= dateStr))
+          .filter(s => !latestOverrides.has(teacherDateTimeKey(t.id, dateStr, s.time)))
           .forEach(s => {
             const current = regularByTime.get(s.time);
             if (!current || regularSlotRecency(s, current) >= 0) regularByTime.set(s.time, s);
@@ -5025,7 +5036,13 @@
     }
 
     function findBooking(slot) {
-      const matches = bookingRecordsForResolution().filter(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
+      const slotDate = dateOnly(slot.date);
+      const slotTime = normalizeTimeValue(slot.time) || slot.time;
+      const matches = bookingRecordsForResolution().filter(b =>
+        b.teacherId === slot.teacherId &&
+        dateOnly(b.date) === slotDate &&
+        (normalizeTimeValue(b.time) || b.time) === slotTime
+      );
       const winner = matches.reduce((selected, booking) => shouldUseBooking(booking, selected) ? booking : selected, null);
       if (SYNC_DEBUG && matches.length) {
         console.info("[weekly-timetable canonical booking]", {
@@ -5051,7 +5068,13 @@
     }
 
     function canonicalBookingForSlot(teacherId, date, time) {
-      const matches = bookingRecordsForResolution().filter(b => b.teacherId === teacherId && b.date === date && b.time === time);
+      const dateStr = dateOnly(date);
+      const timeStr = normalizeTimeValue(time) || time;
+      const matches = bookingRecordsForResolution().filter(b =>
+        b.teacherId === teacherId &&
+        dateOnly(b.date) === dateStr &&
+        (normalizeTimeValue(b.time) || b.time) === timeStr
+      );
       return matches.reduce((selected, booking) => shouldUseBooking(booking, selected) ? booking : selected, null);
     }
 
@@ -5131,7 +5154,7 @@
         const slots = collectSlotsForDate(date).filter(slot => slot.teacherId === teacherId);
         const slotByTime = new Map(slots.map(slot => [slot.time, slot]));
         const bookingTimes = new Set(bookingRecordsForResolution()
-          .filter(booking => booking.teacherId === teacherId && booking.date === dateISO)
+          .filter(booking => booking.teacherId === teacherId && dateOnly(booking.date) === dateISO)
           .map(booking => normalizeTimeValue(booking.time) || booking.time)
           .filter(Boolean));
         const times = new Set([...slotByTime.keys(), ...bookingTimes]);
@@ -5194,7 +5217,9 @@
       const duplicate = activeBookings().find(booking =>
         booking.id !== options.excludeBookingId &&
         !(options.excludeBookingIds || []).includes(booking.id) &&
-        booking.teacherId === teacherId && booking.date === date && booking.time === time
+        booking.teacherId === teacherId &&
+        dateOnly(booking.date) === dateOnly(date) &&
+        (normalizeTimeValue(booking.time) || booking.time) === (normalizeTimeValue(time) || time)
       );
       if (duplicate) {
         return {
@@ -5204,7 +5229,13 @@
         };
       }
       const reusedCancellation = options.reuseCancelledBookingId
-        ? state.bookings.find(booking => booking.id === options.reuseCancelledBookingId && isCancelledStatus(booking.status) && booking.teacherId === teacherId && booking.date === date && booking.time === time)
+        ? state.bookings.find(booking =>
+          booking.id === options.reuseCancelledBookingId &&
+          isCancelledStatus(booking.status) &&
+          booking.teacherId === teacherId &&
+          dateOnly(booking.date) === dateOnly(date) &&
+          (normalizeTimeValue(booking.time) || booking.time) === (normalizeTimeValue(time) || time)
+        )
         : null;
       if (reusedCancellation) return { kind: "open", reusedCancellation };
       const leave = teacherLeaveForSlot(teacherId, date, time);
@@ -5215,7 +5246,7 @@
           leave
         };
       }
-      const slots = collectSlotsForDate(parseISODate(date)).filter(slot => slot.teacherId === teacherId && slot.time === time);
+      const slots = collectSlotsForDate(parseISODate(date)).filter(slot => slot.teacherId === teacherId && (normalizeTimeValue(slot.time) || slot.time) === (normalizeTimeValue(time) || time));
       const fixed = slots.find(slot => slot.locked && slot.id !== options.excludeSlotId);
       if (fixed) {
         return {
@@ -5226,7 +5257,7 @@
       }
       if (slots.some(slot => !slot.locked)) return { kind: "open" };
       const day = dayFromISO(date);
-      const offRule = latestOverrideSlotsForDate(teacher, date, day).get(time);
+      const offRule = latestOverrideSlotsForDate(teacher, date, day).get(teacherDateTimeKey(teacher.id, date, time));
       return {
         kind: "off",
         reason: offRule?.remark ? `${teacher.name} is OFF: ${offRule.remark}` : `${teacher.name} does not have an open slot on ${formatClassDateTime(date, time)}.`
@@ -5357,27 +5388,33 @@
     }
 
     function teacherOverviewActiveSlot(teacher, day, time, date = todayISO()) {
+      const dateStr = dateOnly(date);
+      const timeStr = normalizeTimeValue(time) || time;
       const matches = [...(teacher?.regularSlots || [])].filter(slot =>
-        slot.day === day && slot.time === time &&
-        (!slot.startDate || slot.startDate <= date) &&
-        (!slot.endDate || slot.endDate >= date)
+        slot.day === day && (normalizeTimeValue(slot.time) || slot.time) === timeStr &&
+        (!dateOnly(slot.startDate) || dateOnly(slot.startDate) <= dateStr) &&
+        (!dateOnly(slot.endDate) || dateOnly(slot.endDate) >= dateStr)
       );
       return latestRegularSlot(matches);
     }
 
     function teacherOverviewDisplaySlot(teacher, day, time, date = todayISO()) {
+      const dateStr = dateOnly(date);
+      const timeStr = normalizeTimeValue(time) || time;
       const active = teacherOverviewActiveSlot(teacher, day, time, date);
       if (active?.locked) return { slot: active, upcoming: false };
       const upcoming = (teacher?.regularSlots || [])
-        .filter(slot => slot.locked && slot.day === day && slot.time === time && slot.startDate && slot.startDate > date)
-        .sort((a, b) => String(a.startDate).localeCompare(String(b.startDate)) || regularSlotRecency(b, a))[0];
+        .filter(slot => slot.locked && slot.day === day && (normalizeTimeValue(slot.time) || slot.time) === timeStr && dateOnly(slot.startDate) && dateOnly(slot.startDate) > dateStr)
+        .sort((a, b) => String(dateOnly(a.startDate)).localeCompare(String(dateOnly(b.startDate))) || regularSlotRecency(b, a))[0];
       return upcoming ? { slot: upcoming, upcoming: true } : { slot: active, upcoming: false };
     }
 
     function openSlotEndBeforeNextRule(teacher, day, time, startDate = todayISO()) {
+      const startDateStr = dateOnly(startDate);
+      const timeStr = normalizeTimeValue(time) || time;
       const nextStart = (teacher?.regularSlots || [])
-        .filter(slot => slot.day === day && slot.time === time && slot.startDate && slot.startDate > startDate)
-        .map(slot => slot.startDate)
+        .filter(slot => slot.day === day && (normalizeTimeValue(slot.time) || slot.time) === timeStr && dateOnly(slot.startDate) && dateOnly(slot.startDate) > startDateStr)
+        .map(slot => dateOnly(slot.startDate))
         .sort()[0];
       return nextStart ? dateOffsetISO(nextStart, -1) : "";
     }
@@ -6209,7 +6246,7 @@
       const expired = [];
       (state.teachers || []).forEach(teacher => {
         (teacher.regularSlots || []).forEach(slot => {
-          if (!slot.reserved || slot.releasedAt || !slot.endDate || slot.endDate >= today || slot.reservationExpiredNotifiedAt) return;
+          if (!slot.reserved || slot.releasedAt || !dateOnly(slot.endDate) || dateOnly(slot.endDate) >= today || slot.reservationExpiredNotifiedAt) return;
           slot.reservationExpiredNotifiedAt = new Date().toISOString();
           slot.updatedAt = slot.reservationExpiredNotifiedAt;
           expired.push({ teacher, slot, name: cleanStudentName(slot.reservationName || slot.studentName || "Student") });
@@ -6235,7 +6272,7 @@
       const original = { ...openSlot };
       const originalIndex = teacher.regularSlots.findIndex(slot => slot.id === openSlot.id);
       const beforeEnd = dateOffsetISO(startDate, -1);
-      if (openSlot.startDate && openSlot.startDate > beforeEnd) {
+      if (dateOnly(openSlot.startDate) && dateOnly(openSlot.startDate) > beforeEnd) {
         teacher.regularSlots.splice(originalIndex, 1);
       } else {
         openSlot.endDate = beforeEnd;
@@ -6243,7 +6280,7 @@
       }
       if (endDate) {
         const restoreStart = dateOffsetISO(endDate, 1);
-        if (!original.endDate || restoreStart <= original.endDate) {
+        if (!dateOnly(original.endDate) || restoreStart <= dateOnly(original.endDate)) {
           teacher.regularSlots.push({
             ...original,
             id: uid("slot"),
@@ -6275,17 +6312,17 @@
       if (mode === "temporary" && !endDate) return alert("Choose an end date for the temporary period.");
       if (endDate && endDate < startDate) return alert("End date cannot be before the start date.");
 
-      const subject = data.subject || openSlot.subject || (teacher.subjects || [])[0] || "";
+      const subject = data.subject || openSlot?.subject || (teacher.subjects || [])[0] || "";
       const candidate = { teacherId: teacher.id, day: data.day, time: data.time, subject, startDate, endDate };
       const bookedClass = activeBookings().find(booking =>
-        booking.teacherId === teacher.id && booking.time === data.time && dayFromISO(booking.date) === data.day &&
-        booking.date >= startDate && (!endDate || booking.date <= endDate)
+        booking.teacherId === teacher.id && (normalizeTimeValue(booking.time) || booking.time) === (normalizeTimeValue(data.time) || data.time) && dayFromISO(booking.date) === data.day &&
+        dateOnly(booking.date) >= startDate && (!endDate || dateOnly(booking.date) <= endDate)
       );
       if (bookedClass) return alert(`${teacher.name} is already booked by ${bookedClass.studentName || "another student"} on ${formatClassDateTime(bookedClass.date, bookedClass.time)}.`);
       const conflict = studentRegularSlotConflict(student.name, candidate);
       if (conflict) return alert(conflict);
       const duplicate = getStudentRegularSlots(student).find(slot =>
-        slot.teacherId === teacher.id && slot.day === data.day && slot.time === data.time && regularSlotRangesOverlap(slot, candidate)
+        slot.teacherId === teacher.id && slot.day === data.day && (normalizeTimeValue(slot.time) || slot.time) === (normalizeTimeValue(data.time) || data.time) && regularSlotRangesOverlap(slot, candidate)
       );
       if (duplicate) return alert(`${student.name} already has this regular slot during the selected period.`);
 
@@ -6347,7 +6384,7 @@
       const undoBefore = snapshotCollections({ teachers: [teacher.id] });
       const today = todayISO();
       const historicalEnd = dateOffsetISO(today, -1);
-      if (openSlot.startDate && openSlot.startDate > historicalEnd) {
+      if (dateOnly(openSlot.startDate) && dateOnly(openSlot.startDate) > historicalEnd) {
         teacher.regularSlots = teacher.regularSlots.filter(slot => slot.id !== openSlot.id);
       } else {
         openSlot.endDate = historicalEnd;
@@ -6400,8 +6437,8 @@
       const originalEndDate = recurringSlot.endDate || "";
       const student = studentById(recurringSlot.studentId) || (state.students || []).find(item => studentNameKey(item.name) === studentNameKey(recurringSlot.studentName || data.studentName));
       const futureBookingIds = scheduleBookings().filter(booking =>
-        booking.teacherId === teacher.id && booking.date >= today && !slotHasPassed(booking.date, booking.time) &&
-        booking.time === recurringSlot.time && dayFromISO(booking.date) === recurringSlot.day &&
+        booking.teacherId === teacher.id && dateOnly(booking.date) >= today && !slotHasPassed(booking.date, booking.time) &&
+        (normalizeTimeValue(booking.time) || booking.time) === (normalizeTimeValue(recurringSlot.time) || recurringSlot.time) && dayFromISO(booking.date) === recurringSlot.day &&
         studentNameKey(booking.studentName) === studentNameKey(recurringSlot.studentName || data.studentName) &&
         (booking.type || "regular class") === "regular class"
       ).map(booking => booking.id);
@@ -6410,7 +6447,7 @@
       if (student) {
         student.regularSlots ||= [];
         studentSlot = student.regularSlots.find(slot => slot.id === recurringSlot.studentSlotId) || student.regularSlots.find(slot =>
-          slot.teacherId === teacher.id && slot.day === recurringSlot.day && slot.time === recurringSlot.time && regularSlotRangesOverlap(slot, { startDate: today, endDate: originalEndDate })
+          slot.teacherId === teacher.id && slot.day === recurringSlot.day && (normalizeTimeValue(slot.time) || slot.time) === (normalizeTimeValue(recurringSlot.time) || recurringSlot.time) && regularSlotRangesOverlap(slot, { startDate: today, endDate: originalEndDate })
         );
         if (studentSlot) student.regularSlots = endSlotFromToday(student.regularSlots, studentSlot);
         student.updatedAt = now;
@@ -6418,7 +6455,7 @@
 
       teacher.regularSlots = endSlotFromToday(teacher.regularSlots, recurringSlot);
       const alreadyOpen = teacher.regularSlots.some(slot =>
-        !slot.locked && !slot.unavailable && slot.day === recurringSlot.day && slot.time === recurringSlot.time &&
+        !slot.locked && !slot.unavailable && slot.day === recurringSlot.day && (normalizeTimeValue(slot.time) || slot.time) === (normalizeTimeValue(recurringSlot.time) || recurringSlot.time) &&
         regularSlotRangesOverlap(slot, { startDate: today, endDate: originalEndDate })
       );
       if (!alreadyOpen) {
@@ -6439,8 +6476,8 @@
       teacher.updatedAt = now;
 
       scheduleBookings().filter(booking =>
-        booking.teacherId === teacher.id && booking.date >= today && !slotHasPassed(booking.date, booking.time) &&
-        booking.time === recurringSlot.time && dayFromISO(booking.date) === recurringSlot.day &&
+        booking.teacherId === teacher.id && dateOnly(booking.date) >= today && !slotHasPassed(booking.date, booking.time) &&
+        (normalizeTimeValue(booking.time) || booking.time) === (normalizeTimeValue(recurringSlot.time) || recurringSlot.time) && dayFromISO(booking.date) === recurringSlot.day &&
         studentNameKey(booking.studentName) === studentNameKey(recurringSlot.studentName || data.studentName) &&
         (booking.type || "regular class") === "regular class"
       ).forEach(booking => {
@@ -6502,8 +6539,9 @@
       const teacher = teacherById(teacherId);
       if (!teacher || !date) return null;
       const day = dayFromISO(date);
+      const timeStr = normalizeTimeValue(time) || time;
       return (teacher.regularSlots || []).find(slot =>
-        slot.futureRegularReservation && slot.locked && slot.day === day && slot.time === time && slot.startDate && date < slot.startDate
+        slot.futureRegularReservation && slot.locked && slot.day === day && (normalizeTimeValue(slot.time) || slot.time) === timeStr && dateOnly(slot.startDate) && dateOnly(date) < dateOnly(slot.startDate)
       ) || null;
     }
 
@@ -7507,10 +7545,10 @@
     }
 
     function regularSlotRangesOverlap(a, b) {
-      const aStart = a.startDate || "0000-01-01";
-      const bStart = b.startDate || "0000-01-01";
-      const aEnd = a.endDate || "9999-12-31";
-      const bEnd = b.endDate || "9999-12-31";
+      const aStart = dateOnly(a.startDate) || "0000-01-01";
+      const bStart = dateOnly(b.startDate) || "0000-01-01";
+      const aEnd = dateOnly(a.endDate) || "9999-12-31";
+      const bEnd = dateOnly(b.endDate) || "9999-12-31";
       return aStart <= bEnd && bStart <= aEnd;
     }
 
@@ -7575,8 +7613,8 @@
           const linkedProfileSlot = studentNameKey(slot.studentName || "") === studentNameKey(student.name) && ["student-profile", "student-profile-repair", "teacher-overview"].includes(slot.source);
           if (!linkedById && !linkedProfileSlot) return slot;
           if (slot.studentSlotId && nextIds.has(slot.studentSlotId)) return slot;
-          if (slot.startDate && slot.startDate > today) return null;
-          if (!slot.endDate || slot.endDate >= today) slot.endDate = historicalEnd;
+          if (dateOnly(slot.startDate) && dateOnly(slot.startDate) > today) return null;
+          if (!dateOnly(slot.endDate) || dateOnly(slot.endDate) >= today) slot.endDate = historicalEnd;
           slot.updatedAt = now;
           return slot;
         }).filter(Boolean);
@@ -7918,12 +7956,19 @@
 
     function permanentBookingConflict(teacherId, day, time, startDate) {
       const teacher = teacherById(teacherId);
-      const booking = activeBookings().find(item => item.teacherId === teacherId && item.time === time && item.date >= startDate && dayFromISO(item.date) === day);
+      const targetTime = normalizeTimeValue(time) || time;
+      const startDateStr = dateOnly(startDate);
+      const booking = activeBookings().find(item =>
+        item.teacherId === teacherId &&
+        (normalizeTimeValue(item.time) || item.time) === targetTime &&
+        dateOnly(item.date) >= startDateStr &&
+        dayFromISO(item.date) === day
+      );
       if (booking) return `${teacher?.name || "Teacher"} is already booked by ${booking.studentName || "another class"} on ${formatClassDateTime(booking.date, booking.time)}.`;
       const fixed = [...(teacher?.regularSlots || []), ...(teacher?.overrideSlots || [])].find(slot => {
-        if (!slot.locked || slot.day !== day || slot.time !== time) return false;
-        if (slot.date) return slot.date >= startDate;
-        return !slot.endDate || slot.endDate >= startDate;
+        if (!slot.locked || slot.day !== day || (normalizeTimeValue(slot.time) || slot.time) !== targetTime) return false;
+        if (slot.date) return dateOnly(slot.date) >= startDateStr;
+        return !dateOnly(slot.endDate) || dateOnly(slot.endDate) >= startDateStr;
       });
       if (fixed) return `${teacher?.name || "Teacher"} has the fixed class ${fixed.studentName || "regular class"} at ${day} ${timeLabel(time)}.`;
       return "";
@@ -9715,8 +9760,8 @@
           targetTeacher.overrideSlots ||= [];
           targetTeacher.overrideSlots.push({ ...recurring, id: uid("slot"), teacherId: targetTeacherId, day: targetDay, time: targetTime, startDate, endDate: mode === "temporary" ? endDate : "", source: "edited_regular_slot", updatedAt: new Date().toISOString() });
           scheduleBookings().filter(item =>
-            item.sourceSlotId === recurring.id && item.date >= startDate &&
-            (mode !== "temporary" || item.date <= endDate) && !slotHasPassed(item.date, item.time)
+            item.sourceSlotId === recurring.id && dateOnly(item.date) >= dateOnly(startDate) &&
+            (mode !== "temporary" || dateOnly(item.date) <= dateOnly(endDate)) && !slotHasPassed(item.date, item.time)
           ).forEach(item => {
             const now = new Date().toISOString();
             stampBookingStatus(item, "deleted", now);
@@ -11005,7 +11050,11 @@
       datesBetween(start, end).forEach(date => {
         collectSlotsForDate(date).forEach(slot => {
           if (!slot.locked || slot.reserved || !slotHasPassed(slot.date, slot.time)) return;
-          const existing = scheduleBookings().find(b => b.teacherId === slot.teacherId && b.date === slot.date && b.time === slot.time);
+          const existing = scheduleBookings().find(b =>
+            b.teacherId === slot.teacherId &&
+            dateOnly(b.date) === dateOnly(slot.date) &&
+            (normalizeTimeValue(b.time) || b.time) === (normalizeTimeValue(slot.time) || slot.time)
+          );
           if (existing) return;
           const teacher = teacherById(slot.teacherId);
           const now = new Date().toISOString();
@@ -12189,12 +12238,17 @@
       recurringSlot.updatedAt = new Date().toISOString();
       const student = studentById(booking.studentId) || (state.students || []).find(item => studentNameKey(item.name) === studentNameKey(booking.studentName));
       (student?.regularSlots || []).forEach(slot => {
-        if (slot.teacherId === booking.teacherId && slot.day === recurringSlot.day && slot.time === recurringSlot.time && (!slot.endDate || slot.endDate >= startDate)) slot.endDate = dateOffsetISO(startDate, -1);
+        if (
+          slot.teacherId === booking.teacherId &&
+          slot.day === recurringSlot.day &&
+          (normalizeTimeValue(slot.time) || slot.time) === (normalizeTimeValue(recurringSlot.time) || recurringSlot.time) &&
+          (!dateOnly(slot.endDate) || dateOnly(slot.endDate) >= startDate)
+        ) slot.endDate = dateOffsetISO(startDate, -1);
       });
       scheduleBookings().filter(item =>
-        item.date >= startDate && !slotHasPassed(item.date, item.time) &&
+        dateOnly(item.date) >= dateOnly(startDate) && !slotHasPassed(item.date, item.time) &&
         (item.sourceSlotId === recurringSlot.id || (
-          item.teacherId === booking.teacherId && item.time === recurringSlot.time &&
+          item.teacherId === booking.teacherId && (normalizeTimeValue(item.time) || item.time) === (normalizeTimeValue(recurringSlot.time) || recurringSlot.time) &&
           dayFromISO(item.date) === recurringSlot.day && studentNameKey(item.studentName) === studentNameKey(booking.studentName) &&
           (item.type || "regular class") === "regular class"
         ))
@@ -12594,9 +12648,13 @@
       if (!childName || !teacherId || teacherId === "all" || !date || !time || !subject) return alert("Fill child name, date, time, teacher, and subject first.");
       const d = parseISODate(date);
       const day = DAYS[(d.getDay() + 6) % 7];
-      const lockedSlot = collectSlotsForDate(d).find(slot => slot.teacherId === teacherId && slot.time === time && slot.locked);
+      const lockedSlot = collectSlotsForDate(d).find(slot => slot.teacherId === teacherId && (normalizeTimeValue(slot.time) || slot.time) === (normalizeTimeValue(time) || time) && slot.locked);
       if (lockedSlot) return alert("This teacher slot is a fixed regular class and cannot be booked.");
-      const duplicate = scheduleBookings().find(b => b.teacherId === teacherId && b.date === date && b.time === time);
+      const duplicate = scheduleBookings().find(b =>
+        b.teacherId === teacherId &&
+        dateOnly(b.date) === dateOnly(date) &&
+        (normalizeTimeValue(b.time) || b.time) === (normalizeTimeValue(time) || time)
+      );
       if (duplicate) return alert(`This slot is already booked by ${duplicate.studentName}.`);
       const booking = { id: uid("booking"), teacherId, date, day, time, subject, studentId: student ? student.id : "", studentName: childName, type: kind === "assessment" ? "assessment" : "trial class", status: "booked", archived: false, minutes: 25, createdAt: new Date().toISOString() };
       state.bookings.push(booking);
