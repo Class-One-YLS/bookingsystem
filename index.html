@@ -4815,10 +4815,20 @@
         .filter(slot => slot.time)
         .forEach(slot => {
           const key = teacherDateTimeKey(teacher.id, dateStr, slot.time);
+          slot._cellKey = key;
           const current = byCell.get(key);
           if (!current || bookingAmendmentTime(slot) >= bookingAmendmentTime(current)) byCell.set(key, slot);
         });
       return byCell;
+    }
+
+    function overrideSupersedesRegularSlot(override, regularSlot) {
+      if (!override) return false;
+      if (!regularSlot) return true;
+      const overrideTime = bookingAmendmentTime(override);
+      const regularTime = bookingAmendmentTime(regularSlot);
+      if (regularSlot.locked && !override.locked && !override.unavailable && !override.studentName) return false;
+      return overrideTime >= regularTime;
     }
 
     function regularSlotRecency(a, b) {
@@ -4840,17 +4850,20 @@
       activeTeachers().forEach(t => {
         const latestOverrides = latestOverrideSlotsForDate(t, dateStr, day);
         const regularByTime = new Map();
+        const keptRegularKeys = new Set();
         (t.regularSlots || [])
           .filter(s => s.day === day)
           .map(s => ({ ...s, time: normalizeTimeValue(s.time) || s.time }))
           .filter(s => (!dateOnly(s.startDate) || dateOnly(s.startDate) <= dateStr) && (!dateOnly(s.endDate) || dateOnly(s.endDate) >= dateStr))
-          .filter(s => !latestOverrides.has(teacherDateTimeKey(t.id, dateStr, s.time)))
+          .filter(s => !overrideSupersedesRegularSlot(latestOverrides.get(teacherDateTimeKey(t.id, dateStr, s.time)), s))
           .forEach(s => {
+            keptRegularKeys.add(teacherDateTimeKey(t.id, dateStr, s.time));
             const current = regularByTime.get(s.time);
             if (!current || regularSlotRecency(s, current) >= 0) regularByTime.set(s.time, s);
           });
         [...regularByTime.values()].forEach(s => slots.push({ ...s, id: s.id, teacherId: t.id, date: dateStr, source: s.source || "regular" }));
         [...latestOverrides.values()]
+          .filter(s => !keptRegularKeys.has(s._cellKey || teacherDateTimeKey(t.id, dateStr, s.time)))
           .forEach(s => slots.push({ ...s, id: s.id, teacherId: t.id, date: dateStr, day, source: "override" }));
       });
       return slots;
@@ -5196,6 +5209,44 @@
       return activeTeachers().flatMap(teacher => resolveTeacherCalendar(state, { teacherId: teacher.id, from: dateISO, to: dateISO }).cells);
     }
 
+    function canonicalResolvedCellForSlot(teacherId, date, time) {
+      const dateISO = dateOnly(date);
+      const targetTime = normalizeTimeValue(time) || time;
+      return resolveTeacherCalendar(state, { teacherId, from: dateISO, to: dateISO }).cells.find(cell =>
+        cell.teacherId === teacherId &&
+        dateOnly(cell.date) === dateISO &&
+        (normalizeTimeValue(cell.time) || cell.time) === targetTime
+      ) || null;
+    }
+
+    function canonicalCellAvailabilityResult(cell, options = {}) {
+      if (!cell) return null;
+      if (cell.kind === "off" || cell.status === "off" || cell.unavailable) {
+        return { kind: "off", reason: `${cell.teacherName || "Teacher"} is OFF on ${formatClassDateTime(cell.date, cell.time)}.`, cell };
+      }
+      if (cell.kind === "booking") {
+        const excluded = cell.bookingId && (cell.bookingId === options.excludeBookingId || (options.excludeBookingIds || []).includes(cell.bookingId));
+        if (excluded) return null;
+        if (options.reuseCancelledBookingId && cell.bookingId === options.reuseCancelledBookingId && isCancelledStatus(cell.status)) return { kind: "open", reusedCancellation: cell.booking };
+        return {
+          kind: "conflict",
+          reason: `This slot already contains ${cell.studentName || "a class"}${cell.type === "regular class" ? "'s recurring regular class" : ` (${cell.type || "class"})`}.`,
+          cell,
+          booking: cell.booking
+        };
+      }
+      if (cell.kind === "fixed" || cell.locked || cell.studentName) {
+        if (cell.slotId && cell.slotId === options.excludeSlotId) return null;
+        return {
+          kind: "conflict",
+          reason: `This slot already contains ${cell.studentName || "a student"}'s recurring regular class.`,
+          cell,
+          slot: cell.slot
+        };
+      }
+      return null;
+    }
+
     function weeklyDatesInRange(startDate, endDate, day) {
       if (!startDate || !endDate || endDate < startDate) return [];
       return datesBetween(parseISODate(startDate), parseISODate(endDate))
@@ -5238,6 +5289,9 @@
         )
         : null;
       if (reusedCancellation) return { kind: "open", reusedCancellation };
+      const canonicalCell = canonicalResolvedCellForSlot(teacherId, date, time);
+      const canonicalResult = canonicalCellAvailabilityResult(canonicalCell, options);
+      if (canonicalResult) return canonicalResult;
       const leave = teacherLeaveForSlot(teacherId, date, time);
       if (leave) {
         return {
@@ -10897,14 +10951,24 @@
         if (!response.ok || teacherViewData.ok === false) throw new Error(teacherViewData.error || `Teacher View HTTP ${response.status}`);
         const teacherCells = teacherViewData.resolvedCalendar?.cells || teacherViewData.cells || [];
         teacherViewCell = teacherCells.find(cell => (cell.cellKey || `${cell.teacherId || teacher.id}|${cell.date}|${normalizeTimeValue(cell.time) || cell.time}`) === cellKey) || null;
+        const validatorResult = slotAvailabilityCheck(teacher.id, date, time);
         const diffFields = cellParityDiff(localCell, teacherViewCell);
-        const outdated = teacherViewIsOutdated() || Number(state.settings?.neonVersion || 0) !== Number(teacherViewData?.version || 0) || !localCell || !teacherViewCell || diffFields.length;
+        const validatorMatches = localCell
+          ? (validatorResult.kind === "open" ? localCell.available !== false && !localCell.studentName : validatorResult.kind !== "open")
+          : validatorResult.kind !== "conflict";
+        const outdated = teacherViewIsOutdated() || Number(state.settings?.neonVersion || 0) !== Number(teacherViewData?.version || 0) || !localCell || !teacherViewCell || diffFields.length || !validatorMatches;
         $("syncDebugResult").innerHTML = `
-          <div class="status ${outdated ? "warn" : "success"}">${outdated ? "Resolved cells differ or local changes are not synced to Teacher View." : "Resolved Weekly Timetable and Teacher View cells match."}</div>
+          <div class="status ${outdated ? "warn" : "success"}">${outdated ? "Resolved cells differ, validation disagrees, or local changes are not synced to Teacher View." : "Resolved Weekly Timetable, validation, and Teacher View cells match."}</div>
           ${diffFields.length ? `<div class="subtle">Different fields: ${escapeHtml(diffFields.join(", "))}</div>` : ""}
           <div class="grid two" style="margin-top:12px;">
             ${syncDebugRecordHtml("Weekly Timetable Resolved Cell", localCell, state.settings.neonVersion, "browser resolveTeacherCalendar")}
             ${syncDebugRecordHtml("Teacher View Resolved Cell", teacherViewCell, teacherViewData?.version, "api/teacher-view resolvedCalendar")}
+            <div class="card">
+              <strong>Availability Validator</strong>
+              <div style="margin-top:8px;"><strong>${escapeHtml(validatorResult.kind || "-")}</strong></div>
+              <div class="subtle">${escapeHtml(validatorResult.reason || (validatorResult.kind === "open" ? "Open according to canonical resolved cell." : ""))}</div>
+              <div class="subtle">Source: slotAvailabilityCheck using resolveTeacherCalendar first</div>
+            </div>
           </div>`;
       } catch (error) {
         $("syncDebugResult").innerHTML = `<div class="status error">${escapeHtml(error.message)}</div>`;
