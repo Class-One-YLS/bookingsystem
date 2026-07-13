@@ -1831,6 +1831,7 @@
         <button class="btn mint" id="saveOutcomeBtn">Save Outcome</button>
         <button class="btn mint hide" id="bookAnotherStudentBtn">Book Another Student</button>
         <button class="btn ghost" id="editBookingTimeBtn">Edit Time Slot</button>
+        <button class="btn danger" id="setBookingOffBtn">Set OFF</button>
         <button class="btn danger" id="deleteBookingBtn">Delete Booking</button>
       </div>
     </div>
@@ -2053,7 +2054,7 @@
         <div id="offSlotEndField" class="hide"><label>End Date</label><input id="offSlotEndDate" type="date"></div>
         <div><label>Remark</label><input id="offSlotRemark" placeholder="Optional note"></div>
       </div>
-      <div class="subtle" style="margin-top:10px;">Temporary/permanent OFF applies to this weekly day and time. Existing booked classes are not deleted.</div>
+      <div class="subtle" style="margin-top:10px;">Temporary/permanent OFF applies to this weekly day and time. Any active class at this exact slot will be superseded for audit and Undo, then the final timetable cell becomes OFF.</div>
       <div class="row" style="margin-top:14px;">
         <button class="btn danger" id="confirmOffSlotBtn">Confirm OFF</button>
         <button class="btn ghost" data-close>Cancel</button>
@@ -2234,7 +2235,7 @@
       apiKey: "73a5baa8e4a70be55d79615e2dfbf4e843fa04b57ec04764",
       stateKey: "production"
     };
-    const FRONTEND_BUILD = "2026.07.10-calendar-mirror.1";
+    const FRONTEND_BUILD = "2026.07.13-set-off-mirror.1";
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
     const LOGIN_TIMEOUT_MS = 8000;
@@ -4803,7 +4804,10 @@
       const byTime = new Map();
       (teacher.overrideSlots || [])
         .filter(slot => availabilitySlotApplies(slot, dateStr, day))
-        .forEach(slot => byTime.set(slot.time, slot));
+        .forEach(slot => {
+          const current = byTime.get(slot.time);
+          if (!current || bookingAmendmentTime(slot) >= bookingAmendmentTime(current)) byTime.set(slot.time, slot);
+        });
       return byTime;
     }
 
@@ -4836,7 +4840,6 @@
           });
         [...regularByTime.values()].forEach(s => slots.push({ ...s, id: s.id, teacherId: t.id, date: dateStr, source: s.source || "regular" }));
         [...latestOverrides.values()]
-          .filter(s => !s.unavailable)
           .forEach(s => slots.push({ ...s, id: s.id, teacherId: t.id, date: dateStr, day, source: "override" }));
       });
       return slots;
@@ -5094,19 +5097,20 @@
         date: dateOnly(slot.date),
         day: slot.day || dayFromISO(slot.date),
         time: normalizeTimeValue(slot.time) || slot.time,
-        kind: slot.reserved ? "reserved" : (slot.locked ? "fixed" : "open"),
+        kind: slot.unavailable ? "off" : (slot.reserved ? "reserved" : (slot.locked ? "fixed" : "open")),
         id: slot.id || "",
         bookingId: "",
         slotId: slot.id || "",
         studentId: slot.studentId || "",
         studentName: slot.reserved ? (slot.reservationName || slot.studentName || "") : (slot.studentName || ""),
         subject: slot.subject || "",
-        type: slot.reserved ? "reserve" : (slot.locked ? "regular class" : "open slot"),
-        status: slot.locked || slot.reserved ? "booked" : "available",
+        type: slot.unavailable ? "off" : (slot.reserved ? "reserve" : (slot.locked ? "regular class" : "open slot")),
+        status: slot.unavailable ? "off" : (slot.locked || slot.reserved ? "booked" : "available"),
         minutes: 25,
         remark: slot.remark || "",
         locked,
-        available: !locked,
+        unavailable: Boolean(slot.unavailable),
+        available: !locked && !slot.unavailable,
         source: slot.source || "",
         sourceRecordId: slot.id || "",
         estimatedPay: locked ? Number(teacher?.rate || 0) : 0,
@@ -5134,9 +5138,13 @@
         times.forEach(time => {
           const slot = slotByTime.get(time);
           const booking = canonicalBookingForSlot(teacherId, dateISO, time);
+          if (slot?.unavailable && (!booking || bookingAmendmentTime(slot) >= bookingAmendmentTime(booking))) {
+            cells.push(calendarCellFromSlot(slot, teacher));
+            return;
+          }
           if (booking) {
             if (isDeletedBookingRecord(booking)) {
-              if (slot && !slot.locked && !slot.reserved) cells.push(calendarCellFromSlot(slot, teacher));
+              if (slot && (!slot.locked || slot.unavailable) && !slot.reserved) cells.push(calendarCellFromSlot(slot, teacher));
               return;
             }
             cells.push(calendarCellFromBooking(booking, teacher, slot));
@@ -5302,12 +5310,14 @@
             .map(cell => ({ cell, slot: cell.slot || { id: cell.slotId, teacherId: cell.teacherId, date: cell.date, day: cell.day, time: cell.time, subject: cell.subject, locked: cell.kind === "fixed", reserved: cell.kind === "reserved", studentName: cell.studentName, source: cell.source }, booking: cell.booking || (cell.kind === "booking" ? cell : null) }));
           let filtered = items.filter(x => {
             const isBooked = Boolean(x.booking || x.slot.locked || x.slot.reserved);
-            const matchesStatus = statusFilter === "all" || (statusFilter === "open" && !isBooked) || (statusFilter === "booked" && isBooked);
+            const isOff = x.cell.kind === "off" || x.cell.status === "off" || x.slot.unavailable;
+            const matchesStatus = statusFilter === "all" || (statusFilter === "open" && !isBooked && !isOff) || (statusFilter === "booked" && isBooked);
             const matchesType = typeFilter === "all" || scheduleItemType(x.slot, x.booking) === typeFilter;
             return matchesStatus && matchesType;
           });
           filtered.forEach(x => {
             summary.visibleTeachers.add(x.cell.teacherId);
+            if (x.cell.kind === "off" || x.cell.status === "off" || x.slot.unavailable) return;
             if (x.booking) summary.booked += 1;
             else if (x.slot.locked) summary.fixed += 1;
             else summary.open += 1;
@@ -6828,13 +6838,10 @@
       await autoPushIfConfigured("Regular class slot changed.");
     }
 
-    async function setOpenSlotToOff() {
-      const data = JSON.parse($("openSlotActionData").value || "null");
+    function openSetOffModalForSlot(data) {
       if (!data) return alert("Open slot data missing.");
       const teacher = teacherById(data.teacherId);
       if (!teacher) return alert("Teacher not found.");
-      const duplicateBooking = activeBookings().find(booking => booking.teacherId === data.teacherId && booking.date === data.date && booking.time === data.time);
-      if (duplicateBooking) return alert(`This time already has a class: ${duplicateBooking.studentName || "Booked class"}.`);
       $("offSlotData").value = JSON.stringify(data);
       $("offSlotInfo").textContent = data.interactionSource === "teacher_overview"
         ? `${teacher.name} | ${data.day} ${timeLabel(data.time)} | choose the effective date below`
@@ -6848,6 +6855,25 @@
       $("offSlotModal").classList.remove("hide");
     }
 
+    async function setOpenSlotToOff() {
+      openSetOffModalForSlot(JSON.parse($("openSlotActionData").value || "null"));
+    }
+
+    function setBookingSlotToOff() {
+      const booking = state.bookings.find(item => item.id === $("outcomeBookingId").value);
+      if (!booking) return alert("Choose a class first.");
+      openSetOffModalForSlot({
+        teacherId: booking.teacherId,
+        date: dateOnly(booking.date),
+        day: booking.day || dayFromISO(booking.date),
+        time: normalizeTimeValue(booking.time) || booking.time,
+        subject: booking.subject || "",
+        sourceBookingId: booking.id,
+        interactionSource: "booking_outcome"
+      });
+      $("bookingOutcomeModal").classList.add("hide");
+    }
+
     async function confirmOffSlot() {
       const data = JSON.parse($("offSlotData").value || "null");
       if (!data) return alert("Open slot data missing.");
@@ -6858,31 +6884,50 @@
       const endDate = dateOnly($("offSlotEndDate").value);
       if (mode === "temporary" && (!endDate || endDate < startDate)) return alert("Choose a valid OFF end date.");
       const targetDates = mode === "one_date" ? [startDate] : (mode === "temporary" ? weeklyDatesInRange(startDate, endDate, data.day) : []);
-      const bookedConflicts = activeBookings().filter(booking => booking.teacherId === data.teacherId && booking.time === data.time && (mode === "permanent" ? booking.date >= startDate && dayFromISO(booking.date) === data.day : targetDates.includes(booking.date)));
-      if (bookedConflicts.length) {
-        const conflicts = bookedConflicts.map(booking => ({ reason: `${teacher.name} is booked by ${booking.studentName || "another class"} on ${formatClassDateTime(booking.date, booking.time)}.` }));
-        return alert(conflictListMessage(conflicts, "set this slot to OFF"));
-      }
+      const affectedBookings = (state.bookings || []).filter(booking =>
+        booking.teacherId === data.teacherId &&
+        normalizeTimeValue(booking.time) === normalizeTimeValue(data.time) &&
+        !isDeletedBookingRecord(booking) &&
+        !isSupersededBookingRecord(booking) &&
+        (mode === "permanent"
+          ? dateOnly(booking.date) >= startDate && dayFromISO(booking.date) === data.day
+          : targetDates.includes(dateOnly(booking.date)))
+      );
+      const now = new Date().toISOString();
       const offRule = availabilityRuleFromForm(data, mode, startDate, endDate, {
         subject: data.subject || "",
         unavailable: true,
         remark: $("offSlotRemark").value.trim() || "Set to OFF from Teacher Overview",
         source: "manual-off",
         applyMode: mode,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        createdAt: now,
+        updatedAt: now
       });
       const before = teacherLogSummary(teacher);
-      const undoBefore = snapshotCollections({ teachers: [teacher.id] });
+      const affectedBookingIds = affectedBookings.map(booking => booking.id);
+      const undoBefore = snapshotCollections({ teachers: [teacher.id], bookings: affectedBookingIds });
       teacher.overrideSlots ||= [];
       teacher.overrideSlots.push(offRule);
-      logAction("Open Slot Set To OFF", teacher.name, before, teacherLogSummary(teacher), `${availabilityScopeLabel(mode, offRule)} | ${timeLabel(offRule.time)}`, {
-        undo: makeUndoSnapshot(undoBefore, snapshotCollections({ teachers: [teacher.id] }))
+      affectedBookings.forEach(booking => {
+        const previousRemark = booking.remark || "";
+        stampBookingStatus(booking, "deleted", now);
+        booking.deleted = true;
+        booking.archived = true;
+        booking.supersededAt = now;
+        booking.supersededByBookingId = offRule.id;
+        booking.deletedBy = currentUser()?.email || currentUser()?.name || "";
+        booking.deleteReason = "Set OFF";
+        booking.remark = [previousRemark, `Superseded by Set OFF on ${formatClassDateTime(dateOnly(booking.date), booking.time)}.`].filter(Boolean).join("\n");
+      });
+      teacher.updatedAt = now;
+      const undoAfter = snapshotCollections({ teachers: [teacher.id], bookings: affectedBookingIds });
+      logAction("Open Slot Set To OFF", teacher.name, before, teacherLogSummary(teacher), `${availabilityScopeLabel(mode, offRule)} | ${timeLabel(offRule.time)}${affectedBookings.length ? ` | ${affectedBookings.length} booking record${affectedBookings.length === 1 ? "" : "s"} superseded` : ""}`, {
+        undo: makeUndoSnapshot(undoBefore, undoAfter)
       });
       $("offSlotModal").classList.add("hide");
       save(false);
       renderAll();
-      await autoPushIfConfigured("Open slot set to OFF.");
+      await autoPushIfConfigured(affectedBookings.length ? "Slot set to OFF and previous booking superseded." : "Open slot set to OFF.");
     }
 
     async function confirmOpenSlot(openAndBook = pendingOpenAndBook) {
@@ -7023,6 +7068,10 @@
       const teacher = teacherById(slot.teacherId);
       if (!teacher) return "";
       const subject = slot.subject || (teacher.subjects || [])[0] || "";
+      if (slot.unavailable) {
+        const offData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, slotId: slot.id || "", slotWasOff: true, interactionSource: "weekly_timetable" }));
+        return `<button class="slot unavailable" data-open-off-slot="${offData}">${escapeHtml(teacher.name)}<small>OFF${slot.remark ? ` | ${escapeHtml(slot.remark)}` : ""}</small></button>`;
+      }
       if (booking) {
         if (booking.source === "teacher_leave_record") {
           return `<button class="slot booked ${statusClass(booking.status)}" disabled>${escapeHtml(teacher.name)}<small>Teacher Leave${booking.remark ? ` | ${escapeHtml(booking.remark)}` : ""}</small></button>`;
@@ -7932,6 +7981,7 @@
         booking.cancelledAt,
         booking.completedAt,
         booking.studentNotShowAt,
+        booking.supersededAt,
         booking.deletedAt,
         booking.createdAt,
         booking.created_at
@@ -14231,6 +14281,7 @@
     $("saveOutcomeBtn").onclick = saveOutcome;
     $("bookAnotherStudentBtn").onclick = bookAnotherStudentFromCancelled;
     $("editBookingTimeBtn").onclick = () => openEditTimeSlotForBooking(state.bookings.find(item => item.id === $("outcomeBookingId").value));
+    $("setBookingOffBtn").onclick = setBookingSlotToOff;
     $("deleteBookingBtn").onclick = openDeleteBookingModal;
     $("deleteRecurringScope").addEventListener("change", updateDeleteRecurringEndField);
     $("confirmDeleteRecurringBtn").onclick = () => confirmDeleteRecurringBooking().catch(err => {

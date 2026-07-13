@@ -1027,6 +1027,9 @@
       const outsideClass = options.month != null && date.getMonth() !== options.month ? " outside-month" : "";
       const cell = findCell(dateISO, time);
       if (cell) {
+        if (cell.kind === "off" || cell.status === "off" || cell.unavailable) {
+          return `<td class="cell-off${outsideClass}">OFF</td>`;
+        }
         if (cell.kind === "open") {
           return `<td class="cell-open${outsideClass}"><span class="cell-small">${escapeHtml(cell.subject || "Open")}</span></td>`;
         }
@@ -1060,7 +1063,7 @@
     }
 
     function classEntries(fromISO, toISO) {
-      const cells = scheduleCells().filter(cell => cell.date >= fromISO && cell.date <= toISO && !["open", "reserved"].includes(cell.kind));
+      const cells = scheduleCells().filter(cell => cell.date >= fromISO && cell.date <= toISO && !["open", "reserved", "off"].includes(cell.kind) && cell.status !== "off" && !cell.unavailable);
       return cells.map(cell => ({ kind: "cell", date: cell.date, time: cell.time, cell }))
         .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
     }
