@@ -5158,6 +5158,99 @@
       };
     }
 
+    function calendarCellPriority(cell) {
+      if (!cell) return 0;
+      if (cell.kind === "open" || cell.status === "available" || cell.available) return 10;
+      if (cell.kind === "off" || cell.status === "off" || cell.unavailable) return 50;
+      if (cell.kind === "reserved") return 70;
+      if (cell.kind === "fixed" || cell.locked || cell.studentName) return 80;
+      if (cell.kind === "booking" || cell.bookingId) return 90;
+      return 20;
+    }
+
+    function shouldUseCalendarCell(candidate, existing) {
+      if (!existing) return true;
+      const candidateTime = bookingAmendmentTime(candidate.booking || candidate.slot || candidate);
+      const existingTime = bookingAmendmentTime(existing.booking || existing.slot || existing);
+      if (candidateTime && existingTime && candidateTime !== existingTime) {
+        const candidateIsOpen = candidate.kind === "open" || candidate.status === "available" || candidate.available;
+        const existingIsOccupied = existing.kind === "fixed" || existing.kind === "booking" || existing.kind === "reserved" || existing.locked || existing.studentName;
+        if (candidateIsOpen && existingIsOccupied) return false;
+        return candidateTime > existingTime;
+      }
+      const candidatePriority = calendarCellPriority(candidate);
+      const existingPriority = calendarCellPriority(existing);
+      if (candidatePriority !== existingPriority) return candidatePriority > existingPriority;
+      return String(candidate.sourceRecordId || candidate.id || candidate.bookingId || candidate.slotId || "") > String(existing.sourceRecordId || existing.id || existing.bookingId || existing.slotId || "");
+    }
+
+    function uniqueResolvedCalendarCells(cells) {
+      const byCell = new Map();
+      (cells || []).forEach(cell => {
+        const key = teacherDateTimeKey(cell.teacherId, cell.date, cell.time);
+        if (!key) return;
+        const existing = byCell.get(key);
+        if (shouldUseCalendarCell(cell, existing)) byCell.set(key, cell);
+      });
+      return [...byCell.values()].sort((a, b) => `${a.date || ""} ${a.time || ""}`.localeCompare(`${b.date || ""} ${b.time || ""}`));
+    }
+
+    function weeklyTraceTargetMatches(teacherId, dateISO, time) {
+      if (!SYNC_DEBUG) return false;
+      const params = new URLSearchParams(window.location.search);
+      const teacherQuery = (params.get("debugTeacher") || "").trim().toLowerCase();
+      const dateQuery = dateOnly(params.get("debugDate") || "");
+      const timeQuery = normalizeTimeValue(params.get("debugTime") || "") || params.get("debugTime") || "";
+      const teacher = teacherById(teacherId);
+      return (!teacherQuery || teacher?.id?.toLowerCase() === teacherQuery || String(teacher?.name || "").toLowerCase().includes(teacherQuery)) &&
+        (!dateQuery || dateISO === dateQuery) &&
+        (!timeQuery || (normalizeTimeValue(time) || time) === timeQuery);
+    }
+
+    function weeklyTraceRecord(label, value) {
+      if (!value) return { stage: label, winner: null };
+      if (Array.isArray(value)) {
+        return {
+          stage: label,
+          records: value.map(item => ({
+            id: item.id || item.bookingId || item.slotId || "",
+            studentName: item.studentName || item.reservationName || "",
+            subject: item.subject || "",
+            status: item.status || (item.unavailable ? "off" : item.locked ? "booked" : "available"),
+            type: item.type || (item.locked ? "regular class" : "open slot"),
+            source: item.source || "",
+            updatedAt: item.updatedAt || item.statusChangedAt || item.slotRevisionAt || item.createdAt || "",
+            amendmentTime: bookingAmendmentTime(item)
+          }))
+        };
+      }
+      return {
+        stage: label,
+        winner: {
+          id: value.id || value.bookingId || value.slotId || "",
+          kind: value.kind || "",
+          studentName: value.studentName || value.reservationName || "",
+          subject: value.subject || "",
+          status: value.status || (value.unavailable ? "off" : value.locked ? "booked" : "available"),
+          type: value.type || "",
+          source: value.source || "",
+          updatedAt: value.updatedAt || value.statusChangedAt || value.slotRevisionAt || value.createdAt || "",
+          amendmentTime: bookingAmendmentTime(value.booking || value.slot || value)
+        }
+      };
+    }
+
+    function logWeeklyResolutionTrace({ teacher, dateISO, time, stages }) {
+      if (!weeklyTraceTargetMatches(teacher.id, dateISO, time)) return;
+      console.info("[weekly timetable resolver trace]", {
+        teacherId: teacher.id,
+        teacherName: teacher.name,
+        date: dateISO,
+        time: normalizeTimeValue(time) || time,
+        stages
+      });
+    }
+
     function resolveTeacherCalendar(_state, { teacherId, from, to } = {}) {
       const teacher = teacherById(teacherId);
       if (!teacher || !from || !to) return { teacherId, from, to, generatedAt: new Date().toISOString(), stateVersion: Number(state.settings?.neonVersion || 0), cells: [] };
@@ -5174,24 +5267,72 @@
         times.forEach(time => {
           const slot = slotByTime.get(time);
           const booking = canonicalBookingForSlot(teacherId, dateISO, time);
+          const traceStages = [];
+          if (weeklyTraceTargetMatches(teacherId, dateISO, time)) {
+            const day = dayFromISO(dateISO);
+            const recurring = (teacher.regularSlots || [])
+              .filter(s => s.day === day && (normalizeTimeValue(s.time) || s.time) === (normalizeTimeValue(time) || time));
+            const occurrence = recurring.filter(s => (!dateOnly(s.startDate) || dateOnly(s.startDate) <= dateISO) && (!dateOnly(s.endDate) || dateOnly(s.endDate) >= dateISO));
+            const overrides = (teacher.overrideSlots || []).filter(s => availabilitySlotApplies(s, dateISO, day) && (normalizeTimeValue(s.time) || s.time) === (normalizeTimeValue(time) || time));
+            const bookings = bookingRecordsForResolution().filter(b => b.teacherId === teacherId && dateOnly(b.date) === dateISO && (normalizeTimeValue(b.time) || b.time) === (normalizeTimeValue(time) || time));
+            const leave = teacherLeaveForSlot(teacherId, dateISO, time);
+            traceStages.push(weeklyTraceRecord("Stage 1 Load recurring schedule", recurring));
+            traceStages.push(weeklyTraceRecord("Stage 2 Generate recurring occurrence", occurrence));
+            traceStages.push(weeklyTraceRecord("Stage 3 Merge date overrides", overrides));
+            traceStages.push(weeklyTraceRecord("Stage 4 Merge temporary bookings", bookings.filter(b => !isCancelledStatus(b.status))));
+            traceStages.push(weeklyTraceRecord("Stage 5 Merge cancellations", bookings.filter(b => isCancelledStatus(b.status))));
+            traceStages.push(weeklyTraceRecord("Stage 6 Merge OFF", overrides.filter(s => s.unavailable || s.status === "off")));
+            traceStages.push(weeklyTraceRecord("Stage 7 Merge teacher leave", leave));
+            traceStages.push(weeklyTraceRecord("Stage 8 Candidate slot before render", slot));
+          }
+          let finalCell = null;
           if (slot?.unavailable && (!booking || bookingAmendmentTime(slot) >= bookingAmendmentTime(booking))) {
-            cells.push(calendarCellFromSlot(slot, teacher));
+            finalCell = calendarCellFromSlot(slot, teacher);
+            cells.push(finalCell);
+            if (traceStages.length) {
+              traceStages.push(weeklyTraceRecord("Stage 9 Render Weekly Timetable", finalCell));
+              logWeeklyResolutionTrace({ teacher, dateISO, time, stages: traceStages });
+            }
             return;
           }
           if (booking) {
             if (isDeletedBookingRecord(booking)) {
-              if (slot && (!slot.locked || slot.unavailable) && !slot.reserved) cells.push(calendarCellFromSlot(slot, teacher));
+              if (slot && (!slot.locked || slot.unavailable) && !slot.reserved) {
+                finalCell = calendarCellFromSlot(slot, teacher);
+                cells.push(finalCell);
+              }
+              if (traceStages.length) {
+                traceStages.push(weeklyTraceRecord("Stage 9 Render Weekly Timetable", finalCell));
+                logWeeklyResolutionTrace({ teacher, dateISO, time, stages: traceStages });
+              }
               return;
             }
-            cells.push(calendarCellFromBooking(booking, teacher, slot));
+            finalCell = calendarCellFromBooking(booking, teacher, slot);
+            cells.push(finalCell);
+            if (traceStages.length) {
+              traceStages.push(weeklyTraceRecord("Stage 9 Render Weekly Timetable", finalCell));
+              logWeeklyResolutionTrace({ teacher, dateISO, time, stages: traceStages });
+            }
             return;
           }
           const leave = slot ? teacherLeaveForSlot(teacherId, dateISO, time) : null;
           if (leave && slot) {
-            cells.push(calendarCellFromBooking(teacherLeavePseudoBooking(slot, leave), teacher, slot));
+            finalCell = calendarCellFromBooking(teacherLeavePseudoBooking(slot, leave), teacher, slot);
+            cells.push(finalCell);
+            if (traceStages.length) {
+              traceStages.push(weeklyTraceRecord("Stage 9 Render Weekly Timetable", finalCell));
+              logWeeklyResolutionTrace({ teacher, dateISO, time, stages: traceStages });
+            }
             return;
           }
-          if (slot) cells.push(calendarCellFromSlot(slot, teacher));
+          if (slot) {
+            finalCell = calendarCellFromSlot(slot, teacher);
+            cells.push(finalCell);
+          }
+          if (traceStages.length) {
+            traceStages.push(weeklyTraceRecord("Stage 9 Render Weekly Timetable", finalCell));
+            logWeeklyResolutionTrace({ teacher, dateISO, time, stages: traceStages });
+          }
         });
       });
       return {
@@ -5200,7 +5341,7 @@
         to,
         generatedAt: new Date().toISOString(),
         stateVersion: Number(state.settings?.neonVersion || 0),
-        cells: cells.sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`))
+        cells: uniqueResolvedCalendarCells(cells)
       };
     }
 
