@@ -2248,7 +2248,7 @@
       apiKey: "73a5baa8e4a70be55d79615e2dfbf4e843fa04b57ec04764",
       stateKey: "production"
     };
-    const FRONTEND_BUILD = "2026.07.14-layout-sync.1";
+    const FRONTEND_BUILD = "2026.07.14-neon-performance.1";
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
     const LOGIN_TIMEOUT_MS = 8000;
@@ -2473,7 +2473,14 @@
     let lastNeonSaveDurationMs = 0;
     let lastNeonPayloadBytes = 0;
     let lastNeonPayloadChunks = 0;
+    let lastNeonPatchMode = "";
     let teacherViewNotifyTimer = null;
+    let renderAllCallCount = 0;
+    let saveRequestCount = 0;
+    const syncPerf = {
+      last: {},
+      active: null
+    };
     let lastScheduleSmartScrollKey = "";
     let scheduleUserScrolledAt = 0;
     let scheduleSmartScrollPausedUntil = 0;
@@ -3421,6 +3428,62 @@
       ]);
     }
 
+    function beginSyncPerf(label = "change") {
+      const now = performance.now();
+      syncPerf.active = {
+        id: uid("sync_perf"),
+        label,
+        startedAt: now,
+        queuedAt: now,
+        renderAllStart: renderAllCallCount,
+        saveRequestStart: saveRequestCount,
+        metrics: {}
+      };
+      return syncPerf.active;
+    }
+
+    function activeSyncPerf() {
+      return syncPerf.active || beginSyncPerf("background sync");
+    }
+
+    function setSyncMetric(key, value) {
+      if (syncPerf.active) {
+        syncPerf.active.metrics[key] = value;
+        return;
+      }
+      syncPerf.last = {
+        ...(syncPerf.last || {}),
+        [key]: value,
+        completedAt: new Date().toISOString()
+      };
+    }
+
+    function finishSyncPerf(extra = {}) {
+      if (!syncPerf.active) return;
+      const active = syncPerf.active;
+      syncPerf.last = {
+        id: active.id,
+        label: active.label,
+        totalMs: Math.round(performance.now() - active.startedAt),
+        renderAllCalls: Math.max(0, renderAllCallCount - active.renderAllStart),
+        saveRequests: Math.max(0, saveRequestCount - active.saveRequestStart),
+        ...active.metrics,
+        ...extra,
+        completedAt: new Date().toISOString()
+      };
+      syncPerf.active = null;
+      renderSyncHealth();
+    }
+
+    async function measureSyncStep(key, fn) {
+      const startedAt = performance.now();
+      try {
+        return await fn();
+      } finally {
+        setSyncMetric(key, Math.round(performance.now() - startedAt));
+      }
+    }
+
     function normalizeState() {
       state.teachers ||= [];
       state.students ||= [];
@@ -4182,10 +4245,12 @@
     }
 
     function save(show = true, options = {}) {
+      const localStartedAt = performance.now();
       if (!options.system && !hasActionPermission("save")) {
         return denyPermission("You do not have permission to save changes.");
       }
       const isBusinessChange = !options.system && options.dirty !== false;
+      if (isBusinessChange && !syncPerf.active) beginSyncPerf(options.label || "business edit");
       state.settings.neonApiUrl = $("neonApiUrl").value.trim() || DEFAULT_NEON.apiUrl;
       state.settings.neonApiKey = $("neonApiKey").value.trim() || DEFAULT_NEON.apiKey;
       state.settings.neonStateKey = $("neonStateKey").value.trim() || DEFAULT_NEON.stateKey;
@@ -4207,6 +4272,7 @@
       persistState();
       if (show) setStatus("Saved.");
       if (options.render !== false) renderAll();
+      if (isBusinessChange) setSyncMetric("localUiUpdateMs", Math.round(performance.now() - localStartedAt));
       clearAnyFormEditingIfSafe();
       if (isBusinessChange) scheduleAutoPush();
       return true;
@@ -4246,13 +4312,18 @@
       const teacherStatus = teacherViewIsOutdated() ? "Not synced to Teacher View yet." : "Synced to Teacher View.";
       const payloadMb = lastNeonPayloadBytes ? `${(lastNeonPayloadBytes / 1024 / 1024).toFixed(2)} MB` : "No save yet";
       const saveDuration = lastNeonSaveDurationMs ? `${(lastNeonSaveDurationMs / 1000).toFixed(1)}s` : "No save yet";
+      const perf = syncPerf.last || {};
+      const perfSummary = perf.totalMs
+        ? `${(perf.totalMs / 1000).toFixed(1)}s total | ${perf.saveRequests || 0} request${perf.saveRequests === 1 ? "" : "s"} | ${perf.renderAllCalls || 0} full render${perf.renderAllCalls === 1 ? "" : "s"}`
+        : "No measured sync yet";
       container.innerHTML = `
         <div class="metric"><span class="subtle">Neon Version</span><strong>${neonVersion}</strong><span class="subtle">${lastObservedNeonUpdatedAt ? `Observed ${escapeHtml(formatDateTimeStamp(lastObservedNeonUpdatedAt))}` : "Last known remote version"}</span></div>
         <div class="metric"><span class="subtle">Local Version</span><strong>${localVersion}</strong><span class="subtle">Browser edit revision</span></div>
         <div class="metric"><span class="subtle">Last Saved</span><strong style="font-size:16px;">${escapeHtml(lastSavedAt)}</strong><span class="subtle">${escapeHtml(teacherStatus)}</span></div>
         <div class="metric"><span class="subtle">Pending Unsaved Draft</span><strong>${draftExists ? "Yes" : "No"}</strong><span class="subtle">${draftExists ? "Safe in this browser" : "Cache only"}</span></div>
         <div class="metric"><span class="subtle">Current Device ID</span><strong style="font-size:14px;word-break:break-all;">${escapeHtml(currentDeviceId())}</strong><span class="subtle">Unique to this browser</span></div>
-        <div class="metric"><span class="subtle">Last Sync Payload</span><strong style="font-size:16px;">${escapeHtml(payloadMb)}</strong><span class="subtle">${lastNeonPayloadChunks ? `${lastNeonPayloadChunks} chunk${lastNeonPayloadChunks === 1 ? "" : "s"} | ${escapeHtml(saveDuration)}` : "Business data only"}</span></div>
+        <div class="metric"><span class="subtle">Last Sync Payload</span><strong style="font-size:16px;">${escapeHtml(payloadMb)}</strong><span class="subtle">${lastNeonPatchMode ? `${escapeHtml(lastNeonPatchMode)} | ${lastNeonPayloadChunks ? `${lastNeonPayloadChunks} chunk${lastNeonPayloadChunks === 1 ? "" : "s"} | ` : ""}${escapeHtml(saveDuration)}` : "Business data only"}</span></div>
+        <div class="metric"><span class="subtle">Last Sync Timing</span><strong style="font-size:14px;">${escapeHtml(perfSummary)}</strong><span class="subtle">${perf.versionCheckMs != null ? `Version ${perf.versionCheckMs}ms | Upload ${perf.uploadMs || 0}ms | Pull ${perf.pullMs || 0}ms` : "Measured after next save"}</span></div>
         <div class="metric"><span class="subtle">Frontend Build</span><strong style="font-size:14px;">${escapeHtml(FRONTEND_BUILD)}</strong><span class="subtle">Upload this file to update live</span></div>
       `;
     }
@@ -4317,6 +4388,7 @@
       }
       clearTimeout(autoPushTimer);
       setStatus("Saved locally, syncing...", "success", false);
+      activeSyncPerf().queuedAt = performance.now();
       autoPushTimer = setTimeout(() => enqueueNeonPush("Saved.", true), AUTO_SAVE_DEBOUNCE_MS);
     }
 
@@ -10933,6 +11005,7 @@
     });
 
     function renderAll() {
+      renderAllCallCount += 1;
       if (initialDataLoadComplete) processExpiredReservations();
       const old = Object.fromEntries(["monthSelect", "reportMonth", "businessDashboardMonth", "businessDashboardYear", "weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "typeFilter", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear", "slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher", "teacherStudentRecordTeacher", "teacherStudentRecordStatus", "teacherStudentRecordSearch", "teacherDirectorySubject", "reportTeacher", "tutorLeadFilterStatus", "tutorLeadFilterCategory"].map(id => [id, $(id)?.value]));
       hydrateSelects();
@@ -11490,6 +11563,7 @@
       const message = { version: Number(version || 0), updatedAt: new Date().toISOString() };
       clearTimeout(teacherViewNotifyTimer);
       teacherViewNotifyTimer = setTimeout(() => {
+        const startedAt = performance.now();
         try {
           localStorage.setItem("classone_teacher_view_version", JSON.stringify(message));
         } catch (error) {}
@@ -11498,6 +11572,7 @@
           channel.postMessage(message);
           channel.close();
         }
+        setSyncMetric("teacherViewNotifyMs", Math.round(performance.now() - startedAt));
       }, 400);
     }
 
@@ -11734,11 +11809,16 @@
     }
 
     async function uploadBusinessPayloadToNeon(payload, expectedVersion = 0, label = "Neon save") {
+      const prepStartedAt = performance.now();
       const serialized = JSON.stringify(businessPayloadFrom(payload));
       const chunks = splitIntoChunks(serialized);
       const startedAt = performance.now();
       lastNeonPayloadBytes = new Blob([serialized]).size;
       lastNeonPayloadChunks = chunks.length;
+      lastNeonPatchMode = "Full state";
+      setSyncMetric("payloadPrepMs", Math.round(startedAt - prepStartedAt));
+      setSyncMetric("payloadBytes", lastNeonPayloadBytes);
+      setSyncMetric("chunkCount", chunks.length);
       try {
         const init = await fetchNeonJson("/api/state-chunk", {
           method: "POST",
@@ -11765,15 +11845,42 @@
             }, `${label} chunk ${index + 1}/${chunks.length}`, SYNC_SAVE_TIMEOUT_MS)
           ));
         }
-        return await fetchNeonJson("/api/state-chunk", {
+        return await measureSyncStep("completionMs", () => fetchNeonJson("/api/state-chunk", {
           method: "POST",
           body: JSON.stringify({
             mode: "complete",
             uploadId: init.uploadId
           })
-        }, `${label} complete`, SYNC_SAVE_TIMEOUT_MS);
+        }, `${label} complete`, SYNC_SAVE_TIMEOUT_MS));
       } finally {
         lastNeonSaveDurationMs = Math.round(performance.now() - startedAt);
+        setSyncMetric("uploadMs", lastNeonSaveDurationMs);
+      }
+    }
+
+    async function uploadPatchToNeon(patch, expectedVersion = 0, label = "Neon patch save") {
+      const prepStartedAt = performance.now();
+      const body = JSON.stringify({
+        key: neonStateKey(),
+        expectedVersion,
+        patch,
+        updatedBy: `${currentUser()?.name || safeStorageGet("classOneStaffName") || "Class One Admin"} · ${currentDeviceId().slice(0, 12)}`
+      });
+      const uploadStartedAt = performance.now();
+      lastNeonPayloadBytes = new Blob([body]).size;
+      lastNeonPayloadChunks = 1;
+      lastNeonPatchMode = "Record patch";
+      setSyncMetric("payloadPrepMs", Math.round(uploadStartedAt - prepStartedAt));
+      setSyncMetric("payloadBytes", lastNeonPayloadBytes);
+      setSyncMetric("chunkCount", 1);
+      try {
+        return await fetchNeonJson("/api/state-patch", {
+          method: "POST",
+          body
+        }, label, SYNC_SAVE_TIMEOUT_MS);
+      } finally {
+        lastNeonSaveDurationMs = Math.round(performance.now() - uploadStartedAt);
+        setSyncMetric("uploadMs", lastNeonSaveDurationMs);
       }
     }
 
@@ -11811,6 +11918,8 @@
       const method = String(options.method || "GET").toUpperCase();
       const isSessionRequest = path.startsWith("/api/session");
       const requestOptions = { ...options };
+      if (path.startsWith("/api/state") || path.startsWith("/api/teacher-version")) saveRequestCount += 1;
+      const requestStartedAt = performance.now();
       if (method !== "GET" && !isSessionRequest && sessionToken()) {
         try {
           const body = requestOptions.body ? JSON.parse(requestOptions.body) : {};
@@ -11823,6 +11932,7 @@
         const res = await fetch(url, {
           ...requestOptions,
           signal: controller.signal,
+          cache: "no-store",
           headers: {
             "Content-Type": "application/json",
             "X-API-Key": neonApiKey(),
@@ -11832,6 +11942,9 @@
         const text = await res.text();
         const data = text ? JSON.parse(text) : {};
         if (method !== "GET" || !res.ok) console.info("[ClassOne API]", { label, url: displayUrl, method, status: res.status, ok: res.ok });
+        if (SYNC_DEBUG && path.startsWith("/api/state")) {
+          console.info("[ClassOne sync timing]", { label, method, status: res.status, durationMs: Math.round(performance.now() - requestStartedAt) });
+        }
         if (!res.ok || data.ok === false) {
           const message = data.error || res.statusText || "Request failed.";
           const error = new Error(`${label} failed at ${displayUrl} (HTTP ${res.status}): ${message}`);
@@ -12009,6 +12122,7 @@
     }
 
     async function neonPull(logManual = false, options = {}) {
+      const pullStartedAt = performance.now();
       if (!neonConfigured()) return alert("Neon API URL and API key are required.");
       if (!options.force && !logManual && isUserEditingForm) {
         setStatus("Editing in progress — sync will continue after save.", "warn", false);
@@ -12069,8 +12183,10 @@
         if (logManual) logAction("Neon Loaded", "Neon Database", "", "Loaded latest app data", "Manual Neon load completed.");
         if (options.render !== false) renderAll();
         setStatus("Loaded latest data from Neon database.");
+        setSyncMetric("fullPullMs", Math.round(performance.now() - pullStartedAt));
         return { empty: false, version: state.settings.neonVersion };
       } finally {
+        if (pullStartedAt) setSyncMetric("lastPullMs", Math.round(performance.now() - pullStartedAt));
         isPullingFromNeon = false;
       }
     }
@@ -12080,8 +12196,11 @@
     }
 
     async function neonPush(logManual = false, successMessage = "Saved to Neon database.") {
+      const saveCycleStartedAt = performance.now();
+      if (!syncPerf.active) beginSyncPerf("neon push");
       if (!hasUnsavedBusinessChanges && !state.settings.pendingLocalSync) {
         if (logManual) setStatus("No unsaved business changes to sync.");
+        finishSyncPerf({ skipped: true });
         return true;
       }
       if (isSavingToNeon) {
@@ -12091,6 +12210,7 @@
       }
       if (!neonConfigured()) {
         markTeacherViewOutdated("Neon API is not configured.");
+        finishSyncPerf({ failed: true, error: "Neon not configured" });
         return false;
       }
       isSavingToNeon = true;
@@ -12108,39 +12228,61 @@
         if (!draftPatch) {
           clearUnsavedDraft();
           if (logManual) setStatus("No unsaved business changes to sync.");
+          finishSyncPerf({ skipped: true });
           return true;
         }
-        const manifest = await fetchNeonVersion("Neon pre-save version check", 15000);
+        const manifest = await measureSyncStep("versionCheckMs", () => fetchNeonVersion("Neon pre-save version check", 15000));
         const remoteVersion = Number(manifest.version || 0);
         let expectedVersion = currentVersion;
         let basePayload = confirmedRemotePayload || businessPayloadFrom({});
+        let canUsePatchEndpoint = true;
         if (manifest.empty) {
           expectedVersion = 0;
           basePayload = businessPayloadFrom({});
         } else if (remoteVersion > currentVersion || !confirmedRemotePayload) {
-          const snapshot = await fetchNeonStateSnapshot("Neon auto-merge");
+          const snapshot = await measureSyncStep("pullMs", () => fetchNeonStateSnapshot("Neon auto-merge"));
           expectedVersion = Number(snapshot.manifest?.version || remoteVersion || 0);
           basePayload = businessPayloadFrom(snapshot.payload || {});
           mergedWithNewerRemote = true;
+          canUsePatchEndpoint = false;
         }
         let mergedPayload = mergePatchIntoPayload(basePayload, draftPatch);
         let data;
         let autoConflictRetryCount = 0;
-        while (true) {
+        let usedPatchEndpoint = false;
+        if (canUsePatchEndpoint) {
           try {
-            data = await uploadBusinessPayloadToNeon(
-              mergedPayload,
-              expectedVersion,
-              autoConflictRetryCount ? "Neon merged save" : "Neon save"
-            );
-            break;
-          } catch (uploadError) {
-            if (!isNeonVersionConflict(uploadError) || autoConflictRetryCount >= MAX_NEON_AUTO_CONFLICT_RETRIES) throw uploadError;
-            autoConflictRetryCount += 1;
-            const snapshot = await fetchNeonStateSnapshot(`Neon retry auto-merge ${autoConflictRetryCount}`);
-            expectedVersion = Number(snapshot.manifest?.version || 0);
-            mergedPayload = mergePatchIntoPayload(snapshot.payload || {}, draftPatch);
-            mergedWithNewerRemote = true;
+            data = await uploadPatchToNeon(draftPatch, expectedVersion, "Neon patch save");
+            usedPatchEndpoint = true;
+            mergedWithNewerRemote = Boolean(data.mergedFromNewerVersion);
+          } catch (patchError) {
+            const patchUnavailable = [404, 405].includes(Number(patchError?.status || 0));
+            if (!patchUnavailable && !isNeonVersionConflict(patchError)) throw patchError;
+            if (isNeonVersionConflict(patchError)) {
+              const snapshot = await measureSyncStep("pullMs", () => fetchNeonStateSnapshot("Neon patch retry auto-merge"));
+              expectedVersion = Number(snapshot.manifest?.version || 0);
+              mergedPayload = mergePatchIntoPayload(snapshot.payload || {}, draftPatch);
+              mergedWithNewerRemote = true;
+            }
+          }
+        }
+        if (!usedPatchEndpoint) {
+          while (true) {
+            try {
+              data = await uploadBusinessPayloadToNeon(
+                mergedPayload,
+                expectedVersion,
+                autoConflictRetryCount ? "Neon merged save" : "Neon save"
+              );
+              break;
+            } catch (uploadError) {
+              if (!isNeonVersionConflict(uploadError) || autoConflictRetryCount >= MAX_NEON_AUTO_CONFLICT_RETRIES) throw uploadError;
+              autoConflictRetryCount += 1;
+              const snapshot = await measureSyncStep("pullMs", () => fetchNeonStateSnapshot(`Neon retry auto-merge ${autoConflictRetryCount}`));
+              expectedVersion = Number(snapshot.manifest?.version || 0);
+              mergedPayload = mergePatchIntoPayload(snapshot.payload || {}, draftPatch);
+              mergedWithNewerRemote = true;
+            }
           }
         }
         const workingPayloadBeforeApply = remoteStatePayload();
@@ -12188,6 +12330,10 @@
             : (mergedWithNewerRemote ? `Latest changes merged and synced at ${savedAt}.` : `Saved to Neon at ${savedAt}.`),
           newerEditExists ? "warn" : "success"
         );
+        finishSyncPerf({
+          totalNeonSaveMs: Math.round(performance.now() - saveCycleStartedAt),
+          mode: usedPatchEndpoint ? "record patch" : "full state"
+        });
         return !newerEditExists;
       } catch (error) {
         if (isNeonVersionConflict(error)) {
@@ -12201,6 +12347,11 @@
           persistState();
           setRetrySaveVisible(true);
           setStatus("Unable to sync. Your changes are safe in this browser. Please use Retry Save.", "warn");
+          finishSyncPerf({
+            totalNeonSaveMs: Math.round(performance.now() - saveCycleStartedAt),
+            failed: true,
+            error: "version conflict retry limit"
+          });
           return false;
         }
         lastNeonSaveFailed = true;
@@ -12210,6 +12361,11 @@
         setRetrySaveVisible(true);
         markTeacherViewOutdated(`Save failed — Retry. ${error.message}`);
         setStatus("Save failed. Your changes are safe in this browser.", "error");
+        finishSyncPerf({
+          totalNeonSaveMs: Math.round(performance.now() - saveCycleStartedAt),
+          failed: true,
+          error: "sync failed"
+        });
         throw error;
       } finally {
         clearTimeout(slowSyncTimer);
@@ -12357,6 +12513,7 @@
     function enqueueNeonPush(successMessage = "Saved.", allowConflictPull = false) {
       neonPushQueue = neonPushQueue.catch(() => false).then(async () => {
         if (!hasUnsavedBusinessChanges && !state.settings.pendingLocalSync) return true;
+        if (syncPerf.active?.queuedAt) setSyncMetric("debounceQueueMs", Math.round(performance.now() - syncPerf.active.queuedAt));
         setStatus("Syncing...", "success", false);
         const run = () => performQueuedNeonPush(successMessage, allowConflictPull);
         if (navigator.locks?.request) return navigator.locks.request("class-one-neon-sync", run);
