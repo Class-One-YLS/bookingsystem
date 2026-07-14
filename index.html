@@ -41,15 +41,16 @@
     .tab.layout-stacked .template-grid { grid-template-columns: 1fr; }
     aside { background: var(--ink); color: #fff; padding: 18px; position: sticky; top: 0; height: 100vh; min-height: 0; overflow: hidden; overscroll-behavior: contain; scrollbar-gutter: stable; display: flex; flex-direction: column; }
     .sidebar-header { flex: 0 0 auto; min-width: 0; }
-    .sidebar-nav { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
-    .sidebar-footer { flex: 0 0 auto; padding-top: 10px; }
+    .sidebar-nav { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 2px 54px 0; }
+    .sidebar-footer { position: absolute; left: 18px; bottom: 18px; z-index: 8; width: 36px; height: 36px; padding: 0; }
     .brand { display: flex; gap: 12px; align-items: center; margin-bottom: 18px; }
     .logo { width: 96px; height: 48px; border-radius: 8px; background: #fff; object-fit: contain; padding: 4px; }
     .brand strong { display: block; font-size: 16px; }
     .brand span { color: #b9c4c0; font-size: 12px; }
     .side-toggle { width: 42px; height: 42px; min-height: 42px; margin: 0 0 12px auto; padding: 0; display: grid; place-items: center; font-size: 28px; line-height: 1; }
     .app-shell.sidebar-collapsed aside { width: 54px; padding: 12px 6px; overflow: hidden; background: var(--ink); }
-    .app-shell.sidebar-collapsed .brand, .app-shell.sidebar-collapsed .nav-btn, .app-shell.sidebar-collapsed .sidebar-nav, .app-shell.sidebar-collapsed .sidebar-footer { display: none; }
+    .app-shell.sidebar-collapsed .brand, .app-shell.sidebar-collapsed .sidebar-nav { display: none; }
+    .app-shell.sidebar-collapsed .sidebar-footer { position: fixed; left: 9px; bottom: 64px; display: block; }
     .app-shell.sidebar-collapsed .side-toggle { position: fixed; left: 6px; bottom: 14px; z-index: 18; margin: 0; background: var(--mint); color: var(--ink); box-shadow: 0 8px 22px rgba(23,33,43,.22); }
     .nav-btn { width: 100%; text-align: left; color: #cbd5d1; background: transparent; padding: 12px 14px; border-radius: 8px; margin: 4px 0; font-weight: 800; font-size: 13px; }
     .nav-btn.active { color: var(--ink); background: var(--mint); }
@@ -665,8 +666,8 @@
     .lead-table td { vertical-align: top; }
     .lead-table th:nth-child(3), .lead-table td:nth-child(3) { min-width: 260px; }
     .lead-table td:nth-child(3) input { min-width: 230px; }
-    .settings-nav { margin-top: 22px; opacity: .55; font-size: 18px; text-align: center; }
-    .settings-nav.active { opacity: 1; }
+    .settings-nav { width: 36px; height: 36px; min-height: 36px; padding: 0; margin: 0; display: grid; place-items: center; border-radius: 50%; color: #cbd5d1; background: rgba(255,255,255,.08); font-size: 19px; line-height: 1; text-align: center; opacity: 1; }
+    .settings-nav:hover, .settings-nav.active { background: var(--mint); color: #fff; }
     .column-filter { position: relative; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
     .column-filter-toggle { width: 24px; height: 24px; border-radius: 6px; background: #edf4f0; color: var(--ink); padding: 0; font-weight: 900; }
     .column-filter-toggle.active { background: var(--mint); }
@@ -878,7 +879,6 @@
         <button class="nav-btn" data-tab="students" data-short="Stu">Students</button>
         <button class="nav-btn" data-tab="teachers" data-short="Teach">Teachers</button>
         <button class="nav-btn" data-tab="users" data-short="Users">Users</button>
-        <button class="nav-btn settings-nav" data-tab="settings" data-short="Set" data-title="Sync Settings" title="Sync Settings" aria-label="Sync Settings">&#9881;</button>
         <button class="nav-btn" data-tab="activity" data-short="Log">Activity Log</button>
         <button class="nav-btn" data-tab="teacherStudentRecords" data-short="TSR">Teacher Student Records</button>
         <button class="nav-btn" data-tab="crm" data-short="CRM">CRM Leads</button>
@@ -887,6 +887,7 @@
         <button class="nav-btn" data-tab="policySettings" data-short="Policy">Policy Settings</button>
       </div>
       <div class="sidebar-footer">
+        <button class="nav-btn settings-nav" data-tab="settings" data-short="⚙" data-title="Settings" title="Settings" aria-label="Settings">&#9881;</button>
       </div>
     </aside>
 
