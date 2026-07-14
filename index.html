@@ -2146,20 +2146,30 @@
     </div>
   </div>
 
-  <div id="teacherLeaveModal" class="modal hide">
+      <div id="teacherLeaveModal" class="modal hide">
     <div class="modal-card">
-      <div class="row spread"><h2>Add Teacher On Leave</h2><button class="btn ghost small" data-close>Close</button></div>
+      <div class="row spread"><h2 id="teacherLeaveModalTitle">Add Teacher On Leave</h2><button class="btn ghost small" data-close>Close</button></div>
       <div class="grid two" style="margin-top:14px;">
         <div><label>Teacher</label><select id="teacherLeaveTeacher"></select></div>
-        <div><label>Leave Type</label><select id="teacherLeaveType"><option value="teacher_leave">Teacher Leave</option><option value="unavailable">Unavailable Only</option></select></div>
-        <div><label>Start Date</label><input id="teacherLeaveStartDate" type="date"></div>
-        <div><label>End Date</label><input id="teacherLeaveEndDate" type="date"></div>
-        <div><label>From Time</label><select id="teacherLeaveFromTime"></select></div>
-        <div><label>To Time</label><select id="teacherLeaveToTime"></select></div>
+        <div><label>Leave Type</label><select id="teacherLeavePeriodType"><option value="whole_day">Whole day</option><option value="time_range">Selected time range</option></select></div>
+        <div><label>Leave Date</label><input id="teacherLeaveStartDate" type="date"></div>
+        <div class="hide"><label>End Date</label><input id="teacherLeaveEndDate" type="date"></div>
+        <div class="teacher-leave-time-field hide"><label>Start Time</label><select id="teacherLeaveFromTime"></select></div>
+        <div class="teacher-leave-time-field hide"><label>End Time</label><select id="teacherLeaveToTime"></select></div>
       </div>
-      <label class="pill" style="margin-top:12px;"><input id="teacherLeaveCancelBooked" type="checkbox" checked style="width:auto;min-height:0;margin-right:6px;"> Cancel affected booked classes and create replacement records when required</label>
-      <div style="margin-top:12px;"><label>Remark</label><input id="teacherLeaveRemark" placeholder="Reason or admin note"></div>
-      <div class="row" style="margin-top:14px;"><button class="btn mint" id="saveTeacherLeaveBtn">Save Teacher Leave</button></div>
+      <div style="margin-top:12px;">
+        <label>Affected Class Action</label>
+        <select id="teacherLeaveAction">
+          <option value="cancel_replace">Cancel affected classes and create replacement records</option>
+          <option value="unavailable_only">Mark teacher unavailable only</option>
+        </select>
+      </div>
+      <div style="margin-top:12px;"><label>Reason</label><textarea id="teacherLeaveRemark" rows="3" placeholder="Optional reason or admin note"></textarea></div>
+      <div id="teacherLeavePreview" class="card subtle hide" style="margin-top:12px;"></div>
+      <div class="row" style="margin-top:14px;">
+        <button class="btn ghost" id="previewTeacherLeaveBtn">Preview Affected Classes</button>
+        <button class="btn mint" id="saveTeacherLeaveBtn">Confirm Teacher Leave</button>
+      </div>
     </div>
   </div>
 
@@ -2248,7 +2258,7 @@
       apiKey: "73a5baa8e4a70be55d79615e2dfbf4e843fa04b57ec04764",
       stateKey: "production"
     };
-    const FRONTEND_BUILD = "2026.07.14-neon-performance.1";
+    const FRONTEND_BUILD = "2026.07.14-calendar-parity.1";
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
     const LOGIN_TIMEOUT_MS = 8000;
@@ -2273,6 +2283,8 @@
     ];
     const REMEMBERED_EMAIL_KEY = "classone_remember_email";
     const LEGACY_REMEMBERED_EMAIL_KEY = "classone_remembered_email";
+    let teacherLeaveSaveInProgress = false;
+    let editingTeacherLeaveId = "";
     const DB_NAME = "ClassOneBookingDB";
     const DB_STORE = "state";
     const MONTHLY_LEAD_PATTERN = /^(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)[\s_-]*\d{4}/i;
@@ -5048,91 +5060,350 @@
       });
     }
 
-    function openTeacherLeaveModal() {
-      if (!requireActionPermission("edit")) return;
-      populateSelects();
-      const selectedTeacher = $("teacherFilter")?.value && $("teacherFilter").value !== "all" ? $("teacherFilter").value : ($("overviewTeacherFilter")?.value || "");
-      $("teacherLeaveTeacher").value = selectedTeacher || activeTeachers()[0]?.id || "";
-      $("teacherLeaveType").value = "whole_day";
-      $("teacherLeaveStartDate").value = $("weekDateInput")?.value || todayISO();
-      $("teacherLeaveEndDate").value = $("teacherLeaveStartDate").value;
+    function populateTeacherLeaveFormOptions() {
+      const teacherOptions = [...activeTeachers()].sort(byName).map(t => ({ value: t.id, label: `${t.name} (${(t.subjects || []).join(", ") || "No subject"})` }));
+      fillSelect($("teacherLeaveTeacher"), teacherOptions, "Choose teacher");
+      ["teacherLeaveFromTime", "teacherLeaveToTime"].forEach(id => fillSelect($(id), halfHourOptions()));
       $("teacherLeaveFromTime").value = "08:00";
       $("teacherLeaveToTime").value = "21:30";
-      $("teacherLeaveCancelBooked").checked = true;
-      $("teacherLeaveRemark").value = "";
+    }
+
+    function updateTeacherLeaveTimeFields() {
+      const timeRange = $("teacherLeavePeriodType")?.value === "time_range";
+      document.querySelectorAll(".teacher-leave-time-field").forEach(el => el.classList.toggle("hide", !timeRange));
+    }
+
+    function teacherLeaveFormValues() {
+      const periodType = $("teacherLeavePeriodType")?.value || "whole_day";
+      const startDate = dateOnly($("teacherLeaveStartDate")?.value || "");
+      const fromTime = periodType === "whole_day" ? "08:00" : normalizeTimeValue($("teacherLeaveFromTime")?.value || "");
+      const toTime = periodType === "whole_day" ? "21:30" : normalizeTimeValue($("teacherLeaveToTime")?.value || "");
+      return {
+        teacherId: $("teacherLeaveTeacher")?.value || "",
+        startDate,
+        endDate: startDate,
+        wholeDay: periodType === "whole_day",
+        fromTime,
+        toTime,
+        reason: $("teacherLeaveRemark")?.value.trim() || "",
+        cancelAffectedClasses: ($("teacherLeaveAction")?.value || "cancel_replace") === "cancel_replace",
+        createReplacementRecords: ($("teacherLeaveAction")?.value || "cancel_replace") === "cancel_replace"
+      };
+    }
+
+    function validateTeacherLeaveForm(values) {
+      if (!values.teacherId || values.teacherId === "all") return "Please select a teacher.";
+      if (!values.startDate) return "Please select a leave date.";
+      if (!values.fromTime || !values.toTime) return "Please choose the leave time.";
+      if (minutes(values.fromTime) > minutes(values.toTime)) return "End time must be after start time.";
+      return "";
+    }
+
+    function teacherLeaveAffectedCells(values, options = {}) {
+      const includeTeacherLeaveId = options.includeTeacherLeaveId || "";
+      const calendar = resolveTeacherCalendar(state, { teacherId: values.teacherId, from: values.startDate, to: values.endDate });
+      return (calendar.cells || [])
+        .filter(cell => cell.teacherId === values.teacherId)
+        .filter(cell => cell.date === values.startDate)
+        .filter(cell => minutes(cell.time) >= minutes(values.fromTime) && minutes(cell.time) <= minutes(values.toTime))
+        .filter(cell => !["open", "reserved", "off"].includes(cell.kind))
+        .filter(cell => {
+          if (includeTeacherLeaveId && cell.status === "teacher_leave" && cell.teacherLeaveId === includeTeacherLeaveId) return true;
+          return cell.status !== "teacher_leave" && cell.status !== "off" && !cell.unavailable;
+        })
+        .filter(cell => includeTeacherLeaveId && cell.teacherLeaveId === includeTeacherLeaveId ? true : !CANCELLED_STATUSES.includes(cell.status || ""))
+        .filter(cell => cell.studentName || cell.bookingId || cell.locked)
+        .sort((a, b) => minutes(a.time) - minutes(b.time));
+    }
+
+    function renderTeacherLeavePreview() {
+      const box = $("teacherLeavePreview");
+      const values = teacherLeaveFormValues();
+      const error = validateTeacherLeaveForm(values);
+      if (error) {
+        box.classList.remove("hide");
+        box.innerHTML = `<div class="status warn">${escapeHtml(error)}</div>`;
+        setStatus(error, "warn");
+        return [];
+      }
+      const teacher = teacherById(values.teacherId);
+      const cells = teacherLeaveAffectedCells(values, { includeTeacherLeaveId: editingTeacherLeaveId });
+      box.classList.remove("hide");
+      box.innerHTML = `
+        <strong>Preview Affected Classes</strong>
+        <div class="subtle" style="margin-top:6px;">${escapeHtml(teacher?.name || "-")} | ${escapeHtml(formatDateFromAny(values.startDate))} | ${values.wholeDay ? "Whole day" : `${escapeHtml(timeLabel(values.fromTime))} - ${escapeHtml(timeLabel(values.toTime))}`} | Time range is inclusive.</div>
+        <div class="subtle">Total affected classes: ${cells.length}</div>
+        ${cells.length ? tableHtml(["Time", "Student", "Subject", "Class Type", "Current Status"], cells.map(cell => [
+          timeLabel(cell.time),
+          cell.studentName || "Class",
+          cell.subject || "",
+          cell.type || "class",
+          bookingStatusLabel(cell.status || "booked")
+        ])) : `<div class="empty">No active classes were found during this leave period. The teacher can still be marked unavailable.</div>`}
+      `;
+      return cells;
+    }
+
+    function openTeacherLeaveModal(leaveId = "") {
+      if (!requireActionPermission("edit")) return;
+      if (typeof populateTeacherLeaveFormOptions !== "function") {
+        console.error("Teacher leave form population function is unavailable");
+        setStatus("Unable to open Teacher Leave form. Please refresh and try again.", "error");
+        return;
+      }
+      try { populateTeacherLeaveFormOptions(); }
+      catch (error) {
+        console.error("Unable to open Teacher Leave form.", error);
+        setStatus("Unable to open the Teacher Leave form.", "error");
+        return;
+      }
+      const leave = leaveId ? (state.teacherLeaves || []).find(item => item.id === leaveId && item.status !== "cancelled") : null;
+      editingTeacherLeaveId = leave ? leave.id : "";
+      $("teacherLeaveModalTitle").textContent = leave ? "Edit Teacher On Leave" : "Add Teacher On Leave";
+      $("saveTeacherLeaveBtn").textContent = leave ? "Update Teacher Leave" : "Confirm Teacher Leave";
+      const selectedTeacher = $("teacherFilter")?.value && $("teacherFilter").value !== "all" ? $("teacherFilter").value : ($("overviewTeacherFilter")?.value || "");
+      $("teacherLeaveTeacher").value = leave?.teacherId || selectedTeacher || activeTeachers()[0]?.id || "";
+      $("teacherLeavePeriodType").value = leave ? (leave.wholeDay || leave.type === "whole_day" ? "whole_day" : "time_range") : "whole_day";
+      $("teacherLeaveStartDate").value = leave?.startDate || leave?.date || $("weekDateInput")?.value || todayISO();
+      $("teacherLeaveEndDate").value = leave?.endDate || $("teacherLeaveStartDate").value;
+      $("teacherLeaveFromTime").value = leave?.fromTime || "08:00";
+      $("teacherLeaveToTime").value = leave?.toTime || "21:30";
+      $("teacherLeaveAction").value = leave && leave.cancelAffectedClasses === false ? "unavailable_only" : "cancel_replace";
+      $("teacherLeaveRemark").value = leave?.reason || leave?.remark || "";
+      $("teacherLeavePreview").classList.add("hide");
+      $("teacherLeavePreview").innerHTML = "";
+      updateTeacherLeaveTimeFields();
       $("teacherLeaveModal").classList.remove("hide");
     }
 
     function teacherLeaveSummary(leave) {
       const teacher = teacherById(leave.teacherId);
       const range = leave.startDate === leave.endDate ? formatDateFromAny(leave.startDate) : `${formatDateFromAny(leave.startDate)} to ${formatDateFromAny(leave.endDate)}`;
-      const time = leave.type === "whole_day" ? "Whole day" : `${timeLabel(leave.fromTime)} - ${timeLabel(leave.toTime)}`;
+      const time = leave.wholeDay || leave.type === "whole_day" ? "Whole day" : `${timeLabel(leave.fromTime)} - ${timeLabel(leave.toTime)}`;
       return `${teacher?.name || "-"} | ${range} | ${time}`;
     }
 
-    function applyTeacherLeaveToBookings(leave) {
-      const leaveDates = new Set(datesBetweenInclusive(leave.startDate, leave.endDate));
-      const leaveTimes = new Set(timesBetweenInclusive(leave.fromTime, leave.toTime));
+    function bookingFromResolvedCellForLeave(cell, leave, now) {
+      const existing = cell.bookingId ? state.bookings.find(booking => booking.id === cell.bookingId) : null;
+      if (existing) return existing;
+      const id = `leave_booking_${leave.id}_${cell.teacherId}_${cell.date}_${cell.time}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+      let booking = state.bookings.find(item => item.id === id);
+      if (booking) return booking;
+      booking = {
+        id,
+        teacherId: cell.teacherId,
+        studentId: cell.studentId || "",
+        studentName: cell.studentName || "Fixed regular class",
+        subject: cell.subject || "",
+        type: cell.type || "regular class",
+        date: cell.date,
+        day: cell.day || dayFromISO(cell.date),
+        time: cell.time,
+        status: "booked",
+        archived: false,
+        minutes: Number(cell.minutes || 25),
+        createdAt: now,
+        updatedAt: now,
+        source: "teacher_leave_exact_date_override",
+        sourceSlotId: cell.slotId || cell.recurringScheduleId || "",
+        recurringScheduleId: cell.recurringScheduleId || cell.slotId || ""
+      };
+      state.bookings.push(booking);
+      return booking;
+    }
+
+    function upsertTeacherLeaveReplacement(booking, leave, now) {
+      const teacher = teacherById(booking.teacherId);
+      const existing = (state.replacements || []).find(item =>
+        item.teacherLeaveId === leave.id &&
+        (item.sourceBookingId === booking.id || item.bookingId === booking.id) &&
+        item.originalDate === dateOnly(booking.date) &&
+        (normalizeTimeValue(item.originalTime) || item.originalTime) === (normalizeTimeValue(booking.time) || booking.time)
+      );
+      const base = {
+        bookingId: booking.id,
+        sourceBookingId: booking.id,
+        sourceRecurringScheduleId: booking.recurringScheduleId || booking.sourceSlotId || "",
+        teacherLeaveId: leave.id,
+        reason: "Teacher Leave",
+        replacementNeeded: true,
+        studentId: booking.studentId || "",
+        studentName: booking.studentName || "",
+        subject: booking.subject || "",
+        originalTeacherId: booking.teacherId,
+        originalTeacherName: teacher ? teacher.name : "",
+        originalDate: dateOnly(booking.date),
+        originalTime: timePart(booking.time),
+        minutes: Number(booking.minutes || 25),
+        notes: booking.remark || "",
+        latestAction: "Replacement record created",
+        lastActionAt: now,
+        updatedAt: now,
+        updatedBy: currentUser()?.email || currentUser()?.name || ""
+      };
+      state.replacements ||= [];
+      if (existing) {
+        Object.assign(existing, base, { archived: false });
+        if (existing.status === "No Replacement Needed" || existing.status === "Cancellation Withdrawn") existing.status = "Action Needed";
+        return { record: existing, created: false };
+      }
+      const record = {
+        id: uid("replacement"),
+        ...base,
+        status: "Action Needed",
+        replacementTeacherId: "",
+        replacementTeacherName: "",
+        replacementDate: "",
+        replacementTime: "",
+        replacementBookingId: "",
+        createdAt: now,
+        createdBy: currentUser()?.email || currentUser()?.name || ""
+      };
+      state.replacements.push(record);
+      return { record, created: true };
+    }
+
+    function applyTeacherLeaveToResolvedCells(leave, cells) {
+      const now = leave.updatedAt || new Date().toISOString();
       let changed = 0;
-      scheduleBookings().forEach(booking => {
-        if (booking.teacherId !== leave.teacherId) return;
-        if (!leaveDates.has(dateOnly(booking.date))) return;
-        if (!leaveTimes.has(normalizeTimeValue(booking.time) || booking.time)) return;
-        if (booking.status !== "booked" && booking.status !== "completed") return;
+      let replacementsCreated = 0;
+      cells.forEach(cell => {
+        const booking = bookingFromResolvedCellForLeave(cell, leave, now);
         const before = bookingLogSummary(booking);
-        const now = new Date().toISOString();
+        booking.previousStatus = booking.previousStatus || booking.status || "booked";
+        booking.previousOutcome = booking.previousOutcome || {
+          status: booking.status || "booked",
+          archived: Boolean(booking.archived),
+          remark: booking.remark || "",
+          updatedAt: booking.updatedAt || ""
+        };
         stampBookingStatus(booking, "teacher_leave", now);
         booking.archived = true;
         booking.teacherLeaveId = leave.id;
-        booking.remark = [booking.remark, leave.remark || "Teacher on leave"].filter(Boolean).join("\n");
-        handleReplacementForOutcome(booking, "yes");
-        logAction("Teacher Leave Applied", booking.studentName || booking.id, before, bookingLogSummary(booking), leave.remark || "Teacher on leave");
+        booking.remark = [booking.remark, leave.reason || leave.remark || "Teacher on leave"].filter(Boolean).join("\n");
+        booking.changedAt = now;
+        if (leave.createReplacementRecords) {
+          const replacement = upsertTeacherLeaveReplacement(booking, leave, now);
+          if (replacement.created) replacementsCreated += 1;
+          state.replacementCredits ||= [];
+          if (!state.replacementCredits.some(credit => credit.sourceBookingId === booking.id && credit.status !== "void")) {
+            addReplacementCredit({
+              studentId: booking.studentId || "",
+              studentName: booking.studentName || "",
+              amount: 1,
+              reason: "Teacher Leave",
+              remark: "Auto credit from teacher leave.",
+              sourceBookingId: booking.id
+            });
+          }
+        }
+        logAction("Teacher Leave Applied", booking.studentName || booking.id, before, bookingLogSummary(booking), leave.reason || leave.remark || "Teacher on leave");
         changed += 1;
       });
-      return changed;
+      return { changed, replacementsCreated };
+    }
+
+    function restoreTeacherLeaveEffects(leave, options = {}) {
+      const now = options.now || new Date().toISOString();
+      const restoreClasses = options.restoreClasses !== false;
+      const archiveUnusedReplacements = options.archiveUnusedReplacements !== false;
+      let restoredCount = 0;
+      let archivedReplacementCount = 0;
+      if (restoreClasses) {
+        (state.bookings || []).filter(booking => booking.teacherLeaveId === leave.id).forEach(booking => {
+          const previous = booking.previousOutcome || {};
+          stampBookingStatus(booking, previous.status || booking.previousStatus || "booked", now);
+          booking.archived = Boolean(previous.archived);
+          booking.remark = previous.remark || "";
+          booking.teacherLeaveId = "";
+          booking.changedAt = now;
+          restoredCount += 1;
+        });
+      }
+      if (archiveUnusedReplacements) {
+        (state.replacements || []).filter(item => item.teacherLeaveId === leave.id && !item.replacementBookingId).forEach(item => {
+          item.status = "Teacher Leave Cancelled";
+          item.archived = true;
+          item.replacementNeeded = false;
+          item.latestAction = "Teacher leave cancelled";
+          item.lastActionAt = now;
+          item.updatedAt = now;
+          archivedReplacementCount += 1;
+        });
+      }
+      return { restoredCount, archivedReplacementCount };
     }
 
     async function saveTeacherLeave() {
       if (!requireActionPermission("edit")) return;
-      const teacherId = $("teacherLeaveTeacher").value;
-      const type = $("teacherLeaveType").value || "whole_day";
-      const startDate = $("teacherLeaveStartDate").value;
-      const endDate = $("teacherLeaveEndDate").value || startDate;
-      const fromTime = type === "whole_day" ? "08:00" : $("teacherLeaveFromTime").value;
-      const toTime = type === "whole_day" ? "21:30" : $("teacherLeaveToTime").value;
-      if (!teacherId) return alert("Choose teacher first.");
-      if (!startDate) return alert("Choose leave start date.");
-      if (endDate < startDate) return alert("End date cannot be before start date.");
-      if (minutes(fromTime) > minutes(toTime)) return alert("Leave start time cannot be after end time.");
+      if (teacherLeaveSaveInProgress) return setStatus("Teacher leave save is already in progress.", "warn");
+      const values = teacherLeaveFormValues();
+      const error = validateTeacherLeaveForm(values);
+      if (error) return setStatus(error, "warn");
+      teacherLeaveSaveInProgress = true;
+      const saveButton = $("saveTeacherLeaveBtn");
+      if (saveButton) saveButton.disabled = true;
+      try {
       const latestLoaded = await autoLoadLatestNeonIfNeeded("saving teacher leave");
       if (!latestLoaded) return;
       const now = new Date().toISOString();
-      const leave = {
+      const existingLeave = editingTeacherLeaveId ? (state.teacherLeaves || []).find(item => item.id === editingTeacherLeaveId && item.status !== "cancelled") : null;
+      const beforeSnapshot = existingLeave
+        ? snapshotCollections({
+          teacherLeaves: [existingLeave.id],
+          bookings: (state.bookings || []).filter(item => item.teacherLeaveId === existingLeave.id).map(item => item.id),
+          replacements: (state.replacements || []).filter(item => item.teacherLeaveId === existingLeave.id).map(item => item.id)
+        })
+        : snapshotCollections({ bookings: [], replacements: [] });
+      if (existingLeave) restoreTeacherLeaveEffects(existingLeave, { now, restoreClasses: true, archiveUnusedReplacements: true });
+      const leave = existingLeave || {
         id: uid("leave"),
-        teacherId,
-        type,
-        startDate,
-        endDate,
-        fromTime,
-        toTime,
-        status: "active",
-        remark: $("teacherLeaveRemark").value.trim(),
         createdAt: now,
+        createdBy: currentUser()?.email || currentUser()?.name || ""
+      };
+      Object.assign(leave, {
+        teacherId: values.teacherId,
+        date: values.startDate,
+        type: values.wholeDay ? "whole_day" : "time_range",
+        wholeDay: values.wholeDay,
+        startDate: values.startDate,
+        endDate: values.endDate,
+        fromTime: values.fromTime,
+        toTime: values.toTime,
+        reason: values.reason,
+        cancelAffectedClasses: values.cancelAffectedClasses,
+        createReplacementRecords: values.createReplacementRecords,
+        status: "active",
+        remark: values.reason,
         updatedAt: now,
         updatedBy: currentUser()?.email || currentUser()?.name || "",
         deviceId: DEVICE_ID
-      };
+      });
+      const cells = teacherLeaveAffectedCells(values);
       state.teacherLeaves ||= [];
-      state.teacherLeaves.push(leave);
-      const changed = $("teacherLeaveCancelBooked").checked ? applyTeacherLeaveToBookings(leave) : 0;
-      logAction("Teacher Leave Added", teacherById(teacherId)?.name || teacherId, "", `${teacherLeaveSummary(leave)} | ${changed} booked class${changed === 1 ? "" : "es"} cancelled`, leave.remark || "");
+      if (!existingLeave) state.teacherLeaves.push(leave);
+      const result = values.cancelAffectedClasses ? applyTeacherLeaveToResolvedCells(leave, cells) : { changed: 0, replacementsCreated: 0 };
+      const actionName = existingLeave ? "Teacher Leave Updated" : "Teacher Leave Added";
+      logAction(actionName, teacherById(values.teacherId)?.name || values.teacherId, existingLeave ? "Existing leave updated" : "", `${teacherLeaveSummary(leave)} | ${result.changed} affected class${result.changed === 1 ? "" : "es"} | ${result.replacementsCreated} replacement record${result.replacementsCreated === 1 ? "" : "s"} created`, leave.remark || "", {
+        undo: makeUndoSnapshot(beforeSnapshot, snapshotCollections({
+          teacherLeaves: [leave.id],
+          bookings: (state.bookings || []).filter(item => item.teacherLeaveId === leave.id).map(item => item.id),
+          replacements: (state.replacements || []).filter(item => item.teacherLeaveId === leave.id).map(item => item.id)
+        }))
+      });
       $("teacherLeaveModal").classList.add("hide");
+      editingTeacherLeaveId = "";
       save(false);
       renderSchedule();
       renderTeacherOverview();
+      renderReplacements();
       renderActivityLog();
-      const synced = await autoPushIfConfigured(`Teacher leave saved. ${changed} class${changed === 1 ? "" : "es"} updated.`);
-      setStatus(synced ? `Teacher leave saved and synced. ${changed} class${changed === 1 ? "" : "es"} updated.` : `Teacher leave saved locally. ${changed} class${changed === 1 ? "" : "es"} updated. Not synced to Teacher View yet.`, synced ? "success" : "warn");
+      const synced = await autoPushIfConfigured(`Teacher leave saved. ${result.changed} class${result.changed === 1 ? "" : "es"} updated.`);
+      setStatus(synced ? `Teacher leave added. Affected classes and replacements have been updated.` : `Teacher leave saved locally and is syncing to Neon. Not synced to Teacher View yet.`, synced ? "success" : "warn");
+      } finally {
+        teacherLeaveSaveInProgress = false;
+        if (saveButton) saveButton.disabled = false;
+      }
     }
 
     function scheduleBookings() {
@@ -5202,12 +5473,14 @@
         kind: "booking",
         id: booking.id || "",
         bookingId: booking.id || "",
+        recurringScheduleId: booking.recurringScheduleId || booking.sourceSlotId || "",
         slotId: slot?.id || booking.sourceSlotId || "",
         studentId: booking.studentId || "",
         studentName: booking.studentName || "",
         subject: booking.subject || slot?.subject || "",
         type: booking.type || "regular class",
         status,
+        teacherLeaveId: booking.teacherLeaveId || "",
         minutes: Number(booking.minutes || 25),
         remark: booking.remark || "",
         locked: true,
@@ -5235,6 +5508,7 @@
         kind: slot.unavailable ? "off" : (slot.reserved ? "reserved" : (slot.locked ? "fixed" : "open")),
         id: slot.id || "",
         bookingId: "",
+        recurringScheduleId: slot.recurringScheduleId || slot.id || "",
         slotId: slot.id || "",
         studentId: slot.studentId || "",
         studentName: slot.reserved ? (slot.reservationName || slot.studentName || "") : (slot.studentName || ""),
@@ -7378,17 +7652,24 @@
       if (!requireActionPermission("edit")) return;
       const leave = (state.teacherLeaves || []).find(item => item.id === leaveId && item.status !== "cancelled");
       if (!leave) return;
-      if (!confirm("Cancel this teacher leave/unavailable block? Existing cancelled class records will remain for history until admin edits them.")) return;
+      const affectedCount = (state.bookings || []).filter(booking => booking.teacherLeaveId === leave.id).length;
+      const replacementCount = (state.replacements || []).filter(item => item.teacherLeaveId === leave.id && !item.replacementBookingId && !item.archived).length;
+      const restore = confirm(`Cancel this teacher leave?\n\nAffected classes: ${affectedCount}\nUnused replacement records: ${replacementCount}\n\nOK = Restore previous class statuses and archive unused replacement records.\nCancel = Keep current class outcomes and only cancel the leave block.`);
       const before = cloneForUndo(leave);
+      const now = new Date().toISOString();
       leave.status = "cancelled";
-      leave.cancelledAt = new Date().toISOString();
+      leave.cancelledAt = now;
       leave.updatedAt = leave.cancelledAt;
-      logAction("Teacher Leave Cancelled", teacherById(leave.teacherId)?.name || leave.teacherId, before, cloneForUndo(leave), teacherLeaveSummary(leave));
+      const { restoredCount, archivedReplacementCount } = restore
+        ? restoreTeacherLeaveEffects(leave, { now, restoreClasses: true, archiveUnusedReplacements: true })
+        : { restoredCount: 0, archivedReplacementCount: 0 };
+      logAction("Teacher Leave Cancelled", teacherById(leave.teacherId)?.name || leave.teacherId, before, cloneForUndo(leave), `${teacherLeaveSummary(leave)} | restored classes: ${restoredCount} | archived replacements: ${archivedReplacementCount}`);
       save(false);
       renderSchedule();
       renderTeacherOverview();
+      renderReplacements();
       renderActivityLog();
-      await autoPushIfConfigured("Teacher leave cancelled.");
+      await autoPushIfConfigured(restore ? "Teacher leave cancelled and previous classes restored." : "Teacher leave cancelled.");
     }
 
     function renderTeacherLeaveSummary(teacher) {
@@ -7410,7 +7691,10 @@
                     <strong>${escapeHtml(teacherLeaveSummary(leave))}</strong>
                     <div class="subtle">${escapeHtml(leave.remark || "Teacher unavailable")}</div>
                   </div>
-                  <button class="btn danger small" data-cancel-teacher-leave="${escapeHtml(leave.id)}">Cancel Leave</button>
+	                  <div class="row">
+	                    <button class="btn ghost small" data-edit-teacher-leave="${escapeHtml(leave.id)}">Edit Leave</button>
+	                    <button class="btn danger small" data-cancel-teacher-leave="${escapeHtml(leave.id)}">Cancel Leave</button>
+	                  </div>
                 </div>
               </div>
             `).join("") || `<div class="subtle">No active leave blocks.</div>`}
@@ -11094,15 +11378,32 @@
       </div>`;
     }
 
+    const CALENDAR_CELL_COMPARE_FIELDS = [
+      "bookingId",
+      "recurringScheduleId",
+      "studentId",
+      "studentName",
+      "subject",
+      "type",
+      "status",
+      "available",
+      "locked",
+      "remark",
+      "minutes"
+    ];
+
     function cellParitySnapshot(cell) {
       if (!cell) return null;
       return {
-        bookingId: cell.bookingId || cell.id || "",
+        bookingId: cell.bookingId || "",
+        recurringScheduleId: cell.recurringScheduleId || cell.slotId || "",
         studentId: cell.studentId || "",
         studentName: cleanStudentName(cell.studentName || ""),
         subject: cell.subject || "",
         type: cell.type || "",
         status: cell.status || "",
+        available: Boolean(cell.available),
+        locked: Boolean(cell.locked),
         minutes: Number(cell.minutes || 0),
         remark: cell.remark || ""
       };
@@ -11111,8 +11412,7 @@
     function cellParityDiff(localCell, remoteCell) {
       const local = cellParitySnapshot(localCell);
       const remote = cellParitySnapshot(remoteCell);
-      const fields = ["bookingId", "studentId", "studentName", "subject", "type", "status", "minutes", "remark"];
-      return fields.filter(field => String(local?.[field] ?? "") !== String(remote?.[field] ?? ""));
+      return CALENDAR_CELL_COMPARE_FIELDS.filter(field => String(local?.[field] ?? "") !== String(remote?.[field] ?? ""));
     }
 
     async function fetchTeacherViewCells(teacher, from, to) {
@@ -13796,6 +14096,8 @@
       }
       const cancelTeacherLeaveBtn = e.target.closest("[data-cancel-teacher-leave]");
       if (cancelTeacherLeaveBtn) cancelTeacherLeave(cancelTeacherLeaveBtn.dataset.cancelTeacherLeave);
+      const editTeacherLeaveBtn = e.target.closest("[data-edit-teacher-leave]");
+      if (editTeacherLeaveBtn) openTeacherLeaveModal(editTeacherLeaveBtn.dataset.editTeacherLeave);
       if (e.target.closest("[data-clear-pending-replacement]")) {
         clearPendingReplacementContext();
         setStatus("Replacement arrangement cancelled.");
@@ -14608,9 +14910,20 @@
       $("publicHolidayModal").classList.remove("hide");
     };
     $("addTeacherLeaveBtn").onclick = openTeacherLeaveModal;
+    $("teacherLeavePeriodType").addEventListener("change", () => {
+      updateTeacherLeaveTimeFields();
+      $("teacherLeavePreview").classList.add("hide");
+      $("teacherLeavePreview").innerHTML = "";
+    });
+    ["teacherLeaveTeacher", "teacherLeaveStartDate", "teacherLeaveFromTime", "teacherLeaveToTime", "teacherLeaveAction"].forEach(id => {
+      $(id).addEventListener("change", () => {
+        $("teacherLeavePreview").classList.add("hide");
+        $("teacherLeavePreview").innerHTML = "";
+      });
+    });
+    $("previewTeacherLeaveBtn").onclick = () => animateClick($("previewTeacherLeaveBtn"), renderTeacherLeavePreview);
     $("saveTeacherLeaveBtn").onclick = () => animateClick($("saveTeacherLeaveBtn"), saveTeacherLeave).catch(err => {
       setStatus(`Teacher leave save failed: ${err.message}`, "error");
-      alert(err.message);
     });
     $("savePolicySettingsBtn").onclick = () => animateClick($("savePolicySettingsBtn"), savePolicySettings).catch(err => {
       setStatus(`Policy save failed: ${err.message}`, "error");
