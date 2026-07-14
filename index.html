@@ -708,6 +708,10 @@
       padding: 18px; z-index: 20;
     }
     .modal-card { width: min(680px, 100%); max-height: 92vh; overflow: auto; background: #fff; border-radius: 8px; padding: 20px; }
+    .side-panel-modal { place-items: stretch end; padding: 0; }
+    .side-panel-card { width: min(560px, 100%); height: 100vh; max-height: 100vh; border-radius: 8px 0 0 8px; }
+    .table-action-link { border: 0; background: transparent; color: var(--mint-dark); font: inherit; font-weight: 900; padding: 0; cursor: pointer; text-align: left; }
+    .table-action-link:hover { text-decoration: underline; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 10px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; vertical-align: top; }
     th { color: var(--muted); font-size: 11px; text-transform: uppercase; }
@@ -741,7 +745,7 @@
       <div id="actionPopupBody" class="guide-list"></div>
       <div class="row" style="margin-top:14px;">
         <button class="btn mint" id="goCrmActionBtn">Open CRM Leads</button>
-        <button class="btn ghost" id="goReplacementActionBtn">Open Replacement Classes</button>
+        <button class="btn ghost" id="goReplacementActionBtn">Open Class Management</button>
       </div>
     </div>
   </div>
@@ -837,7 +841,7 @@
       <div class="sidebar-nav">
         <button class="nav-btn active" data-tab="schedule" data-short="Week">Weekly Timetable</button>
         <button class="nav-btn" data-tab="teacherOverview" data-short="Tutor">Teacher Overview</button>
-        <button class="nav-btn" data-tab="replacements" data-short="Rep">Replacement Classes</button>
+        <button class="nav-btn" data-tab="replacements" data-short="Class">Class Management</button>
         <button class="nav-btn" data-tab="teachers" data-short="Teach">Teachers</button>
         <button class="nav-btn" data-tab="students" data-short="Stu">Students</button>
         <button class="nav-btn" data-tab="teacherStudentRecords" data-short="TSR">Teacher Student Records</button>
@@ -1171,7 +1175,7 @@
               </div>
             </div>
             <div class="flow-card">
-              <div class="flow-title"><strong>Replacement Classes</strong><span class="flow-tag">Admin</span></div>
+              <div class="flow-title"><strong>Class Management</strong><span class="flow-tag">Admin</span></div>
               <div class="flow-path">Cancellation marked &gt; Replacement appears &gt; Contact parent &gt; Book replacement &gt; Settle / Undo</div>
               <div class="flow-steps">
                 <div><span>&gt;</span><p>Cancelled and teacher leave classes must arrange replacement.</p></div>
@@ -1266,7 +1270,7 @@
                 <div><span>&gt;</span><p><strong>Student regular slot:</strong> Open Students &gt; Edit student &gt; Add teacher/day/time/subject &gt; Save.</p></div>
               <div><span>&gt;</span><p><strong>Student not show:</strong> Click class &gt; Set Student Not Show &gt; Add remark &gt; Save. It turns red and pays the allowance set in Policy Settings.</p></div>
                 <div><span>&gt;</span><p><strong>Class cancelled:</strong> Click class &gt; Choose Cancelled/Public Holiday/Teacher Leave &gt; Add remark &gt; Save. It turns grey and is not counted for payout.</p></div>
-                <div><span>&gt;</span><p><strong>Undo wrong cancellation:</strong> Open Replacement Classes &gt; Find the case &gt; Click Undo Cancellation &gt; Original class returns to booked.</p></div>
+                <div><span>&gt;</span><p><strong>Undo wrong cancellation:</strong> Open Class Management &gt; Find the case &gt; Click Undo Cancellation &gt; Original class returns to booked.</p></div>
                 <div><span>&gt;</span><p><strong>Teacher partial leave:</strong> Mark only affected class slots as Teacher Leave.</p></div>
                 <div><span>&gt;</span><p><strong>Teacher payout:</strong> Open Reports &gt; Select teacher/month/year &gt; Generate report &gt; Export PDF.</p></div>
                 <div><span>&gt;</span><p><strong>Before important edits:</strong> Pull From Sheet &gt; Edit &gt; Save &gt; Confirm auto-sync or Push manually.</p></div>
@@ -1479,7 +1483,7 @@
       <section id="replacements" class="tab hide">
         <div class="panel">
           <div class="row spread">
-            <h2>Replacement Classes</h2>
+            <h2>Class Management</h2>
             <div class="row">
               <button class="btn ghost small active" id="replacementBoardViewBtn">Task Board</button>
               <button class="btn ghost small" id="replacementTableViewBtn">Table View</button>
@@ -1487,6 +1491,8 @@
               <button class="btn ghost small" id="exportReplacementPdfBtn">Export PDF</button>
             </div>
           </div>
+          <div id="classManagementSummary" class="sales-summary"></div>
+          <h3 style="margin-top:18px;">Replacement Workflow</h3>
           <div class="grid four">
             <div><label>Status</label><select id="replacementFilterStatus"></select></div>
             <div><label>Reason</label><select id="replacementFilterReason"></select></div>
@@ -1495,6 +1501,21 @@
           </div>
           <div id="replacementSummary" class="sales-summary"></div>
           <div id="replacementList" style="margin-top:16px;"></div>
+        </div>
+        <div class="panel">
+          <div class="row spread">
+            <div>
+              <h2>Student No Show List</h2>
+              <div class="subtle">Generated from the same final timetable records used by Weekly Timetable.</div>
+            </div>
+          </div>
+          <div class="grid four" style="margin-top:12px;">
+            <div><label>Month</label><input id="noShowMonth" type="month"></div>
+            <div><label>Teacher</label><select id="noShowTeacherFilter"></select></div>
+            <div><label>Subject</label><select id="noShowSubjectFilter"></select></div>
+            <div><label>Student Search</label><input id="noShowSearch" placeholder="Student name"></div>
+          </div>
+          <div id="studentNoShowList" class="table-wrap" style="margin-top:16px;"></div>
         </div>
         <div class="panel">
           <div class="row spread">
@@ -2111,6 +2132,19 @@
     </div>
   </div>
 
+  <div id="studentNoShowSidePanel" class="modal hide side-panel-modal">
+    <div class="modal-card side-panel-card">
+      <div class="row spread">
+        <div>
+          <h2 id="studentNoShowPanelTitle">Attendance History</h2>
+          <div class="subtle" id="studentNoShowPanelSubtitle"></div>
+        </div>
+        <button class="btn ghost small" data-close>Close</button>
+      </div>
+      <div id="studentNoShowPanelBody" style="margin-top:14px;"></div>
+    </div>
+  </div>
+
   <div id="leadActionModal" class="modal hide">
     <div class="modal-card" style="width:min(920px,100%);">
       <div class="row spread"><h2>CRM Needs Action</h2><button class="btn ghost small" data-close>Close</button></div>
@@ -2291,7 +2325,7 @@
     const APP_TABS = [
       { id: "schedule", label: "Weekly Timetable" },
       { id: "teacherOverview", label: "Teacher Overview" },
-      { id: "replacements", label: "Replacement Classes" },
+      { id: "replacements", label: "Class Management" },
       { id: "teachers", label: "Teachers" },
       { id: "students", label: "Students" },
       { id: "teacherStudentRecords", label: "Teacher Student Records" },
@@ -2426,6 +2460,7 @@
     let teacherStudentRecordPage = 1;
     let templatePage = 1;
     let replacementCreditPage = 1;
+    let studentNoShowPage = 1;
     let selectedReplacementIds = new Set();
     let activityPage = 1;
     let slotListPage = 1;
@@ -4680,13 +4715,13 @@
       const studentOptions = [...state.students].sort(byName).filter(s => (s.status || "registered") !== "archived").map(s => ({ value: s.id, label: `${s.name}${s.package ? " - " + s.package : ""}` }));
       const packageOptions = [...new Set(state.students.map(s => s.package).filter(Boolean))].sort();
       ["monthSelect", "reportMonth", "businessDashboardMonth"].forEach(id => fillSelect($(id), Array.from({ length: 12 }, (_, i) => ({ value: i, label: new Date(2026, i, 1).toLocaleString("en", { month: "long" }) }))));
-      ["teacherFilter", "teacherStudentRecordTeacher"].forEach(id => fillSelect($(id), teacherOptions, "All Teachers"));
+      ["teacherFilter", "teacherStudentRecordTeacher", "noShowTeacherFilter"].forEach(id => fillSelect($(id), teacherOptions, "All Teachers"));
       fillSelect($("teacherLeaveTeacher"), teacherOptions, "Choose teacher");
       ["overviewTeacherFilter"].forEach(id => fillSelect($(id), teacherOptions, "Choose Teacher"));
       ["slotTeacher", "bulkTeacher", "overrideTeacher", "editTimeSlotTeacher"].forEach(id => fillSelect($(id), teacherOptions));
       fillSelect($("reportTeacher"), reportTeacherOptions);
       ["assessmentTeacher", "trialTeacher"].forEach(id => fillSelect($(id), teacherOptions, "Choose teacher"));
-      ["subjectFilter", "teacherDirectorySubject"].forEach(id => fillSelect($(id), SUBJECTS, "All Subjects"));
+      ["subjectFilter", "teacherDirectorySubject", "noShowSubjectFilter"].forEach(id => fillSelect($(id), SUBJECTS, "All Subjects"));
       ["timeFromFilter", "timeToFilter", "teacherLeaveFromTime", "teacherLeaveToTime"].forEach(id => fillSelect($(id), halfHourOptions()));
       if ($("teacherLeaveFromTime")) $("teacherLeaveFromTime").value = "08:00";
       if ($("teacherLeaveToTime")) $("teacherLeaveToTime").value = "21:30";
@@ -4732,6 +4767,7 @@
       $("overviewLeaveYear").value = now.getFullYear();
       $("crmReportYear").value = now.getFullYear();
       $("crmCompareYear").value = now.getFullYear() - 1;
+      if ($("noShowMonth")) $("noShowMonth").value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
       refreshWeeks();
       const monday = new Date(now);
       monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
@@ -8999,7 +9035,7 @@
       }
       $("actionPopupBody").innerHTML = `
         <li><strong>CRM Leads:</strong> ${counts.crm} active lead${counts.crm === 1 ? "" : "s"} need status update now.</li>
-        <li><strong>Replacement Classes:</strong> ${counts.replacements} urgent and important replacement case${counts.replacements === 1 ? "" : "s"} need action now.</li>
+        <li><strong>Class Management:</strong> ${counts.replacements} replacement case${counts.replacements === 1 ? "" : "s"} need action now.</li>
       `;
       $("actionPopup").classList.remove("hide");
     }
@@ -10015,6 +10051,142 @@
       setAutoPager("replacementCreditSummary", listPagerHtml("replacementCredits", replacementCreditPage, rows.length));
     }
 
+    function selectedNoShowMonthRange() {
+      const selected = $("noShowMonth")?.value || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+      const [year, month] = selected.split("-").map(Number);
+      const start = new Date(year || new Date().getFullYear(), (month || 1) - 1, 1);
+      const end = new Date(start.getFullYear(), start.getMonth() + 1, 0);
+      return { month: selected, from: localISO(start), to: localISO(end) };
+    }
+
+    function classManagementResolvedCells() {
+      const { from, to } = selectedNoShowMonthRange();
+      const teacherFilter = $("noShowTeacherFilter")?.value || "all";
+      const teachers = teacherFilter === "all" ? activeTeachers() : activeTeachers().filter(teacher => teacher.id === teacherFilter);
+      return teachers.flatMap(teacher => resolveTeacherCalendar(state, { teacherId: teacher.id, from, to }).cells);
+    }
+
+    function replacementForNoShowCell(cell) {
+      const cellDate = dateOnly(cell.date);
+      const cellTime = normalizeTimeValue(cell.time) || cell.time;
+      const studentKey = studentNameKey(cell.studentName || "");
+      return (state.replacements || []).find(item => {
+        const itemTime = normalizeTimeValue(item.originalTime) || timePart(item.originalTime || "");
+        return (
+          (item.bookingId && item.bookingId === cell.bookingId) ||
+          (item.originalBookingId && item.originalBookingId === cell.bookingId) ||
+          (
+            dateOnly(item.originalDate) === cellDate &&
+            (itemTime || "") === cellTime &&
+            studentNameKey(item.studentName || "") === studentKey
+          )
+        ) && String(item.reason || "").toLowerCase().includes("not show");
+      }) || null;
+    }
+
+    function noShowReplacementStatus(replacement) {
+      if (!replacement) return { used: false, status: "No Show" };
+      if (replacement.replacementBookingId || ["Replacement Booked", "Settled"].includes(replacement.status)) return { used: true, status: "Replaced" };
+      if (replacement.archived || ["No Replacement Needed", "Cancellation Withdrawn"].includes(replacement.status)) return { used: false, status: "No Show" };
+      return { used: false, status: "Pending" };
+    }
+
+    function studentNoShowRows() {
+      const subjectFilter = $("noShowSubjectFilter")?.value || "all";
+      const search = ($("noShowSearch")?.value || "").trim().toLowerCase();
+      return classManagementResolvedCells()
+        .filter(cell => cell.status === "student_not_show")
+        .filter(cell => subjectFilter === "all" || cell.subject === subjectFilter)
+        .filter(cell => !search || String(cell.studentName || "").toLowerCase().includes(search))
+        .map(cell => {
+          const replacement = replacementForNoShowCell(cell);
+          const replacementStatus = noShowReplacementStatus(replacement);
+          return {
+            cell,
+            replacement,
+            replacementUsed: replacementStatus.used,
+            currentStatus: replacementStatus.status
+          };
+        })
+        .sort((a, b) => `${b.cell.date} ${b.cell.time}`.localeCompare(`${a.cell.date} ${a.cell.time}`));
+    }
+
+    function lateCancellationCountFromResolvedCells(cells) {
+      return cells.filter(cell => ["cancelled", "late_cancellation"].includes(cell.status)).length;
+    }
+
+    function renderClassManagementSummary() {
+      if (!$("classManagementSummary")) return;
+      const cells = classManagementResolvedCells();
+      const activeReplacementRows = (state.replacements || []).filter(item => item.status !== "Cancellation Withdrawn" && !item.archived);
+      const pendingReplacements = activeReplacementRows.filter(item => ["contact", "book"].includes(replacementTaskColumn(item))).length;
+      const replacementCredits = (state.replacementCredits || [])
+        .filter(item => item.status !== "void")
+        .reduce((sum, item) => sum + Math.max(0, Number(item.amount || 0) - Number(item.used || 0)), 0);
+      $("classManagementSummary").innerHTML = `
+        <div class="metric"><span class="subtle">Pending Replacements</span><strong>${pendingReplacements}</strong></div>
+        <div class="metric"><span class="subtle">Replacement Credits</span><strong>${replacementCredits}</strong></div>
+        <div class="metric"><span class="subtle">Student No Shows</span><strong>${cells.filter(cell => cell.status === "student_not_show").length}</strong></div>
+        <div class="metric"><span class="subtle">Late Cancellations</span><strong>${lateCancellationCountFromResolvedCells(cells)}</strong></div>
+      `;
+    }
+
+    function renderStudentNoShowList() {
+      if (!$("studentNoShowList")) return;
+      const rows = studentNoShowRows();
+      studentNoShowPage = clampPage(studentNoShowPage, rows.length);
+      const pageData = pageSlice(rows, studentNoShowPage);
+      studentNoShowPage = pageData.page;
+      const body = pageData.items.map(({ cell, replacementUsed, currentStatus }) => {
+        const studentKey = cell.studentId || studentNameKey(cell.studentName || "");
+        return `<tr>
+          <td>${escapeHtml(formatDateFromAny(cell.date))}</td>
+          <td><button class="table-action-link" data-no-show-student="${escapeHtml(studentKey)}">${escapeHtml(cell.studentName || "-")}</button></td>
+          <td>${escapeHtml(cell.teacherName || teacherById(cell.teacherId)?.name || "-")}</td>
+          <td>${escapeHtml(cell.subject || "-")}</td>
+          <td>${escapeHtml(timeLabel(cell.time))}</td>
+          <td>${replacementUsed ? "Yes" : "No"}</td>
+          <td><span class="pill">${escapeHtml(currentStatus)}</span></td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="7">No student no-show records for this filter.</td></tr>`;
+      $("studentNoShowList").innerHTML = `<table>
+        <thead><tr><th>Date</th><th>Student</th><th>Teacher</th><th>Subject</th><th>Time</th><th>Replacement Used</th><th>Current Status</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>`;
+      setAutoPager("studentNoShowList", listPagerHtml("studentNoShows", studentNoShowPage, rows.length));
+    }
+
+    function studentAttendanceRowsForMonth(studentKey) {
+      const key = String(studentKey || "");
+      return classManagementResolvedCells()
+        .filter(cell => cell.kind === "booking" || cell.kind === "fixed")
+        .filter(cell => {
+          if (cell.studentId && cell.studentId === key) return true;
+          return studentNameKey(cell.studentName || "") === key;
+        })
+        .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+    }
+
+    function showStudentNoShowPanel(studentKey) {
+      const rows = studentAttendanceRowsForMonth(studentKey);
+      const { month } = selectedNoShowMonthRange();
+      const studentName = rows[0]?.studentName || (state.students || []).find(student => student.id === studentKey || studentNameKey(student.name) === studentKey)?.name || "Student";
+      $("studentNoShowPanelTitle").textContent = studentName;
+      $("studentNoShowPanelSubtitle").textContent = `Attendance history for ${month}`;
+      $("studentNoShowPanelBody").innerHTML = rows.length ? `<table>
+        <thead><tr><th>Date</th><th>Time</th><th>Teacher</th><th>Subject</th><th>Status</th><th>Type</th></tr></thead>
+        <tbody>${rows.map(cell => `<tr>
+          <td>${escapeHtml(formatDateFromAny(cell.date))}</td>
+          <td>${escapeHtml(timeLabel(cell.time))}</td>
+          <td>${escapeHtml(cell.teacherName || teacherById(cell.teacherId)?.name || "-")}</td>
+          <td>${escapeHtml(cell.subject || "-")}</td>
+          <td>${escapeHtml(bookingStatusLabel(cell.status))}</td>
+          <td>${escapeHtml(cell.type || "-")}</td>
+        </tr>`).join("")}</tbody>
+      </table>` : `<div class="empty">No attendance history found for this month.</div>`;
+      $("studentNoShowSidePanel").classList.remove("hide");
+    }
+
     function renderPublicHolidayCalendar() {
       const year = Number($("publicHolidayYear")?.value || new Date().getFullYear());
       const holidays = (state.publicHolidays || []).filter(item => holidayTouchesYear(item, year));
@@ -10421,6 +10593,9 @@
     }
 
     function renderReplacements() {
+      renderClassManagementSummary();
+      renderStudentNoShowList();
+      renderReplacementCredits();
       const rows = filteredReplacements();
       const totalPages = Math.max(1, Math.ceil(rows.length / REPLACEMENT_PAGE_SIZE));
       replacementPage = Math.min(Math.max(1, replacementPage), totalPages);
@@ -11113,7 +11288,7 @@
         ["studentSearch", "Search students"],
         ["registeredStudentSearch", "Search registered students"],
         ["teacherStudentRecordSearch", "Search teacher student records"],
-        ["replacementSearch", "Search replacement classes"],
+        ["replacementSearch", "Search class management records"],
         ["activitySearch", "Search activity log"],
         ["reserveRegularSearch", "Search students and leads"]
       ].forEach(([inputId, label]) => setupCompactSearch(inputId, label));
@@ -13055,6 +13230,8 @@
       upsertFeedbackFromOutcome(feedbackBooking);
       $("bookingOutcomeModal").classList.add("hide");
       save(false);
+      renderSchedule();
+      renderReplacements();
       await autoPushIfConfigured(scope === "permanent" ? "Regular class ended." : `Class marked as ${bookingStatusLabel(nextStatus)}.`);
     }
 
@@ -13979,6 +14156,11 @@
       if (replacementSummary) {
         showReplacementActionModal(replacementSummary.dataset.replacementSummary);
       }
+      const noShowStudent = e.target.closest("[data-no-show-student]");
+      if (noShowStudent) {
+        showStudentNoShowPanel(noShowStudent.dataset.noShowStudent);
+        return;
+      }
       const selectReplacement = e.target.closest("[data-select-replacement]");
       if (selectReplacement) {
         if (selectReplacement.checked) selectedReplacementIds.add(selectReplacement.dataset.selectReplacement);
@@ -14043,7 +14225,8 @@
           activity: "activityList",
           slots: "slotList",
           allTeacherPayout: "allTeacherPayoutTable",
-          teacherFeedback: "teacherFeedbackList"
+          teacherFeedback: "teacherFeedbackList",
+          studentNoShows: "studentNoShowList"
         };
         if (kind === "teachers") { teacherListPage += delta; renderTeachers(); }
         if (kind === "students") { studentListPage += delta; renderStudents(); }
@@ -14055,6 +14238,7 @@
         if (kind === "slots") { slotListPage += delta; renderSlotList(); }
         if (kind === "allTeacherPayout") { allTeacherPayoutPage += delta; renderAllTeacherPayoutSummary(); }
         if (kind === "teacherFeedback") { teacherFeedbackPage += delta; renderTeacherFeedbackList($("feedbackTeacherId").value); }
+        if (kind === "studentNoShows") { studentNoShowPage += delta; renderStudentNoShowList(); }
         scrollToListStart(scrollTargets[kind]);
       }
       const undoCancellation = e.target.closest("[data-undo-cancellation]");
@@ -15259,6 +15443,8 @@
     $("exportAllTeacherPayoutPdfBtn").onclick = () => openPrintReport("All Teachers Monthly Payout", ["No.", "Teacher", "Category", "Tier", "Rate", "Share", "Completed", "Not Show", "Cancelled", "Lesson Pay", "Not Show Pay", "Total Pay"], numbered(teacherMonthlyPayoutRows()));
     ["replacementFilterStatus", "replacementFilterReason"].forEach(id => $(id).addEventListener("change", () => { replacementPage = 1; renderReplacements(); }));
     $("replacementSearch").addEventListener("input", () => { replacementPage = 1; renderReplacements(); });
+    ["noShowMonth", "noShowTeacherFilter", "noShowSubjectFilter"].forEach(id => $(id).addEventListener("change", () => { studentNoShowPage = 1; renderReplacements(); }));
+    $("noShowSearch").addEventListener("input", () => { studentNoShowPage = 1; renderReplacements(); });
     $("replacementBoardViewBtn").onclick = () => { replacementViewMode = "board"; replacementPage = 1; uiStateSet("ReplacementViewMode", replacementViewMode); renderReplacements(); };
     $("replacementTableViewBtn").onclick = () => { replacementViewMode = "table"; replacementPage = 1; uiStateSet("ReplacementViewMode", replacementViewMode); renderReplacements(); };
     $("clearReplacementFiltersBtn").onclick = () => {
@@ -15268,8 +15454,8 @@
       replacementPage = 1;
       renderReplacements();
     };
-    $("exportReplacementCsvBtn").onclick = () => downloadCsv("class-one-replacement-classes.csv", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Notes", "Last Updated"], numbered(replacementExportRows()));
-    $("exportReplacementPdfBtn").onclick = () => openPrintReport("Replacement Classes", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Notes", "Last Updated"], numbered(replacementExportRows()));
+    $("exportReplacementCsvBtn").onclick = () => downloadCsv("class-one-class-management-replacements.csv", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Notes", "Last Updated"], numbered(replacementExportRows()));
+    $("exportReplacementPdfBtn").onclick = () => openPrintReport("Class Management - Replacement Records", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Notes", "Last Updated"], numbered(replacementExportRows()));
     const resetActivityPageAndRender = () => { activityPage = 1; renderActivityLog(); };
     ["activityFilterType", "activitySearch", "activityFromDate", "activityToDate"].forEach(id => $(id).addEventListener("input", resetActivityPageAndRender));
     $("activityFilterType").addEventListener("change", resetActivityPageAndRender);
