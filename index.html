@@ -578,6 +578,34 @@
     button.metric { cursor: pointer; font: inherit; width: 100%; }
     button.metric:hover { border-color: var(--mint-dark); box-shadow: 0 6px 16px rgba(35, 91, 67, .08); }
     .metric strong { display: block; font-size: 22px; }
+    .report-page { display: grid; gap: 18px; }
+    .report-page .panel { border-radius: 16px; padding: 20px; box-shadow: 0 10px 30px rgba(23,33,43,.045); }
+    .report-page h2 { font-size: 20px; margin: 0; letter-spacing: 0; }
+    .report-page .row.spread { gap: 14px; align-items: center; }
+    .report-page .toolbar { grid-template-columns: repeat(auto-fit, minmax(min(132px, 100%), max-content)); gap: 10px; align-items: end; }
+    .report-page .toolbar input, .report-page .toolbar select { min-height: 40px; border-radius: 12px; }
+    .report-page .btn { min-height: 40px; border-radius: 12px; padding: 0 14px; }
+    .report-page .btn.ghost { background: #fff; border: 1px solid var(--line); }
+    .report-page .sales-summary { grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); gap: 14px; margin-top: 16px; }
+    .report-page .metric { position: relative; min-height: 116px; display: grid; align-content: space-between; gap: 8px; border-radius: 16px; padding: 16px; background: #fff; box-shadow: 0 10px 24px rgba(23,33,43,.04); }
+    .report-page .metric-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; background: var(--soft); font-size: 20px; }
+    .report-page .metric strong { font-size: clamp(28px, 3vw, 38px); line-height: 1; letter-spacing: 0; }
+    .report-page .metric .subtle { font-size: 12px; font-weight: 850; }
+    .report-page .chart { margin-top: 16px; padding: 14px; border: 1px solid var(--line); border-radius: 16px; background: #fff; box-shadow: 0 10px 24px rgba(23,33,43,.035); }
+    .report-page .bar-track { height: 12px; background: #eef7f2; }
+    .report-page .bar-fill { background: var(--mint); }
+    .report-page .bar-row { grid-template-columns: minmax(64px, 120px) minmax(130px, 1fr) minmax(56px, max-content); gap: 12px; }
+    .report-page .table-wrap, .report-page #crmDashboardTable, .report-page #allTeacherPayoutTable { max-height: 620px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 16px; background: #fff; }
+    .report-page #crmDashboardTable table, .report-page #allTeacherPayoutTable table { min-width: 980px; }
+    .report-page table { background: #fff; }
+    .report-page th, .report-page td { padding: 13px 12px; border-bottom-color: #eef3f0; }
+    .report-page th { text-transform: none; font-size: 12px; color: #667085; }
+    .report-page .report-box { border-radius: 16px; background: #fff; box-shadow: 0 10px 24px rgba(23,33,43,.035); }
+    .report-page .report-note-grid { grid-template-columns: minmax(260px, 420px) minmax(0, 1fr); }
+    .report-page .report-section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .report-page .report-teacher-name { margin-bottom: 12px; font-size: 16px; font-weight: 950; }
+    .report-page #reportStats .sales-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 0; }
+    .report-page #reportStats .metric { min-height: 104px; }
     .teacher-view-summary-link { display: grid; place-items: center; min-height: 78px; }
     .teacher-view-summary-link strong { font-size: 26px; line-height: 1; }
     .teacher-view-summary-link:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
@@ -1431,51 +1459,55 @@
         </div>
       </section>
 
-      <section id="reports" class="tab hide">
+      <section id="reports" class="tab hide report-page">
         <div class="panel">
-          <div class="row spread">
-            <h2>Main Business Dashboard</h2>
+          <div class="report-section-head">
+            <h2>Overview</h2>
             <div class="row">
               <div><label>Month</label><select id="businessDashboardMonth"></select></div>
               <div><label>Year</label><input id="businessDashboardYear" type="number" min="2024" max="2035"></div>
             </div>
           </div>
-          <div class="sales-summary" id="businessDashboardSummary" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));"></div>
+          <div class="sales-summary" id="businessDashboardSummary"></div>
         </div>
         <div class="panel">
-          <h2>CRM Leads Monthly Dashboard</h2>
+          <div class="report-section-head">
+            <h2>Leads</h2>
+          </div>
           <div class="toolbar crm-dashboard-toolbar">
             <div><label>Year</label><input id="crmReportYear" type="number" min="2024" max="2035"></div>
-            <div><label>Compare Year</label><input id="crmCompareYear" type="number" min="2024" max="2035" placeholder="Optional"></div>
-            <div><label>&nbsp;</label><button class="btn mint" id="generateCrmDashboardBtn">Generate CRM Dashboard</button></div>
-            <div><label>&nbsp;</label><button class="btn ghost" id="exportCrmCsvBtn">Export Excel</button></div>
-            <div><label>&nbsp;</label><button class="btn ghost" id="exportCrmPdfBtn">Export PDF</button></div>
+            <div><label>Compare</label><input id="crmCompareYear" type="number" min="2024" max="2035" placeholder="Optional"></div>
+            <div><label>&nbsp;</label><button class="btn mint" id="generateCrmDashboardBtn">Refresh</button></div>
+            <div><label>&nbsp;</label><button class="btn ghost" id="exportCrmCsvBtn">Excel</button></div>
+            <div><label>&nbsp;</label><button class="btn ghost" id="exportCrmPdfBtn">PDF</button></div>
           </div>
           <div class="sales-summary" id="crmDashboardSummary"></div>
           <div id="crmDashboardChart" class="chart"></div>
           <div id="crmDashboardTable" style="margin-top:16px;"></div>
         </div>
         <div class="panel">
-          <h2>Teacher Monthly Completed Lessons</h2>
+          <div class="report-section-head">
+            <h2>Teacher</h2>
+          </div>
           <div class="toolbar">
             <div><label>Teacher</label><select id="reportTeacher"></select></div>
             <div><label>Month</label><select id="reportMonth"></select></div>
             <div><label>Year</label><input id="reportYear" type="number" min="2024" max="2035"></div>
-            <div><label>&nbsp;</label><button class="btn mint" id="generateReportBtn">Generate</button></div>
-            <div><label>&nbsp;</label><button class="btn ghost" id="exportTeacherReportPdfBtn">Export Teacher PDF</button></div>
+            <div><label>&nbsp;</label><button class="btn mint" id="generateReportBtn">Refresh</button></div>
+            <div><label>&nbsp;</label><button class="btn ghost" id="exportTeacherReportPdfBtn">PDF</button></div>
           </div>
-          <div class="grid two" style="margin-top:16px;">
+          <div class="grid two report-note-grid" style="margin-top:16px;">
             <div id="reportStats" class="card"></div>
             <div class="report-box" id="reportText"></div>
           </div>
           <div id="teacherReportChart" class="chart"></div>
         </div>
         <div class="panel">
-          <div class="row spread">
-            <h2>All Teachers Monthly Payout</h2>
+          <div class="report-section-head">
+            <h2>Payroll</h2>
             <div class="row">
-              <button class="btn ghost small" id="exportAllTeacherPayoutCsvBtn">Export Excel</button>
-              <button class="btn ghost small" id="exportAllTeacherPayoutPdfBtn">Export PDF</button>
+              <button class="btn ghost small" id="exportAllTeacherPayoutCsvBtn">Excel</button>
+              <button class="btn ghost small" id="exportAllTeacherPayoutPdfBtn">PDF</button>
             </div>
           </div>
           <div id="allTeacherPayoutSummary" class="sales-summary"></div>
@@ -4262,15 +4294,15 @@
       const year = Number($("businessDashboardYear").value || new Date().getFullYear());
       const monthName = new Date(year, month, 1).toLocaleString("en", { month: "long" });
       const metrics = businessDashboardMetrics(month, year);
-      const card = (label, value, target) => `<div class="metric"><span class="subtle">${label}</span><strong>${escapeHtml(value)}</strong><span class="subtle">${escapeHtml(target)}</span></div>`;
+      const card = (icon, label, value, target) => `<div class="metric" title="${escapeHtml(target || "")}"><span class="metric-icon" aria-hidden="true">${icon}</span><strong>${escapeHtml(value)}</strong><span class="subtle">${label}</span></div>`;
       $("businessDashboardSummary").innerHTML = [
-        card("Active Teachers", metrics.activeTeachers, "Target: 60-80"),
-        card("Registered Students", metrics.registeredStudents, "Target: 230-300"),
-        card(`Closing Students (${monthName})`, metrics.monthlyClosing, "Target: 18/month"),
-        card("Freelance Tutors", metrics.freelanceTutors, "Internal count"),
-        card("Micro Franchisees", metrics.microFranchisees, "Target: 18 active MF"),
-        card(`CRM Leads (${monthName})`, metrics.crmLeadsThisMonth, "Raw target: 450/month"),
-        card("Trial to Enrolled Rate", metrics.trialToEnrolledRate, `Target: 40%-60% | ${metrics.trialToEnrolledDetail}`)
+        card("👩‍🏫", "Teachers", metrics.activeTeachers, "Target: 60-80"),
+        card("🎓", "Students", metrics.registeredStudents, "Target: 230-300"),
+        card("✅", `Closed ${monthName}`, metrics.monthlyClosing, "Target: 18/month"),
+        card("👨‍🏫", "Freelance", metrics.freelanceTutors, "Internal count"),
+        card("🤝", "MF", metrics.microFranchisees, "Target: 18 active MF"),
+        card("📊", `Leads ${monthName}`, metrics.crmLeadsThisMonth, "Raw target: 450/month"),
+        card("📈", "Trial Rate", metrics.trialToEnrolledRate, `Target: 40%-60% | ${metrics.trialToEnrolledDetail}`)
       ].join("");
     }
 
@@ -9832,7 +9864,14 @@
       const notShowRateLabel = notShows.length ? money(notShowPay / notShows.length) : money(notShowAllowanceForDate(`${year}-${String(month + 1).padStart(2, "0")}-01`));
       const amount = variableLessonPay + notShowPay;
       const monthLabel = new Date(year, month, 1).toLocaleString("en", { month: "long", year: "numeric" });
-      $("reportStats").innerHTML = `<h3>${escapeHtml(teacher.name)}</h3><p><strong>${lessonCount}</strong> completed lessons</p><p>Student not show: <strong>${notShows.length}</strong> x ${notShowRateLabel}</p><p>Cancelled/holiday/leave: <strong>${cancelled.length}</strong> not counted</p><p>Estimated payout: <strong>${money(amount)}</strong></p><p>Current tier: <strong>${escapeHtml(teacher.tier)}</strong></p>`;
+      $("reportStats").innerHTML = `
+        <div class="report-teacher-name">${escapeHtml(teacher.name)}</div>
+        <div class="sales-summary">
+          <div class="metric"><span class="metric-icon" aria-hidden="true">📚</span><strong>${lessonCount}</strong><span class="subtle">Completed</span></div>
+          <div class="metric" title="${notShows.length} x ${notShowRateLabel}"><span class="metric-icon" aria-hidden="true">⚠️</span><strong>${notShows.length}</strong><span class="subtle">No Show</span></div>
+          <div class="metric"><span class="metric-icon" aria-hidden="true">🔄</span><strong>${cancelled.length}</strong><span class="subtle">Cancelled</span></div>
+          <div class="metric" title="Tier: ${escapeHtml(teacher.tier)}"><span class="metric-icon" aria-hidden="true">💰</span><strong>${money(amount)}</strong><span class="subtle">Payout</span></div>
+        </div>`;
       $("reportText").textContent = teacherReportText(teacher, monthLabel, lessonCount, variableLessonPay, notShows.length, notShowPay, cancelled.length, amount, notShowRateLabel);
       $("teacherReportChart").innerHTML = chartHtml([
         { label: "Completed", value: lessonCount, display: lessonCount },
@@ -9871,16 +9910,16 @@
         return acc;
       }, { completed: 0, notShows: 0, cancelled: 0, payout: 0 });
       $("allTeacherPayoutSummary").innerHTML = `
-        <div class="metric"><span class="subtle">Completed lessons</span><strong>${totals.completed}</strong></div>
-        <div class="metric"><span class="subtle">Student not show</span><strong>${totals.notShows}</strong></div>
-        <div class="metric"><span class="subtle">Cancelled / leave</span><strong>${totals.cancelled}</strong></div>
-        <div class="metric"><span class="subtle">Total payout</span><strong>${money(totals.payout)}</strong></div>
+        <div class="metric"><span class="metric-icon" aria-hidden="true">📚</span><strong>${totals.completed}</strong><span class="subtle">Completed</span></div>
+        <div class="metric"><span class="metric-icon" aria-hidden="true">⚠️</span><strong>${totals.notShows}</strong><span class="subtle">No Show</span></div>
+        <div class="metric"><span class="metric-icon" aria-hidden="true">🔄</span><strong>${totals.cancelled}</strong><span class="subtle">Cancelled</span></div>
+        <div class="metric"><span class="metric-icon" aria-hidden="true">💰</span><strong>${money(totals.payout)}</strong><span class="subtle">Payroll</span></div>
       `;
       $("allTeacherPayoutChart").innerHTML = chartHtml(rows.filter(row => Number(row[10]) > 0).slice(0, 12).map(row => ({ label: row[0], value: Number(row[10]), display: money(row[10]) })));
       allTeacherPayoutPage = clampPage(allTeacherPayoutPage, rows.length);
       const payoutPageData = pageSlice(rows, allTeacherPayoutPage);
       allTeacherPayoutPage = payoutPageData.page;
-      $("allTeacherPayoutTable").innerHTML = tableHtml(["No.", "Teacher", "Category", "Tier", "Rate", "Share", "Completed", "Not Show", "Cancelled", "Lesson Pay", "Not Show Pay", "Total Pay"], payoutPageData.items.map((row, index) => [payoutPageData.start + index + 1, ...row]));
+      $("allTeacherPayoutTable").innerHTML = tableHtml(["No.", "Teacher", "Type", "Tier", "Rate", "Share", "Done", "No Show", "Cancel", "Lesson", "No Show", "Total"], payoutPageData.items.map((row, index) => [payoutPageData.start + index + 1, ...row]));
       setAutoPager("allTeacherPayoutTable", listPagerHtml("allTeacherPayout", allTeacherPayoutPage, rows.length));
     }
 
@@ -10846,10 +10885,10 @@
       const compareTotals = compareYear ? crmTotals(compareRows) : {};
       const classifiedFromMonthlyTabs = state.leads.filter(lead => !lead.archived && crmLeadMonthlyTabDate(lead)?.getFullYear() === year).length + (state.crmHistoricalMonthlyStats || []).filter(item => Number(item.year) === year).reduce((sum, item) => sum + Number(item.total || 0), 0);
       $("crmDashboardSummary").innerHTML = `
-        <div class="metric"><span class="subtle">${year} total leads</span><strong>${totals.total || 0}</strong>${compareYear ? `<span class="subtle">vs ${compareYear}: ${compareTotals.total || 0} (${(totals.total || 0) - (compareTotals.total || 0) >= 0 ? "+" : ""}${(totals.total || 0) - (compareTotals.total || 0)})</span>` : ""}<span class="subtle">${classifiedFromMonthlyTabs} classified from monthly sheet tabs</span></div>
-        <div class="metric"><span class="subtle">Assessment rate</span><strong>${pct(totals.assessment || 0, totals.total || 0)}</strong><span class="subtle">${totals.assessment || 0} leads</span></div>
-        <div class="metric"><span class="subtle">Trial rate</span><strong>${pct(totals.trial || 0, totals.total || 0)}</strong><span class="subtle">${totals.trial || 0} leads</span></div>
-        <div class="metric"><span class="subtle">Enrolled rate</span><strong>${pct(totals.enrolled || 0, totals.total || 0)}</strong><span class="subtle">${totals.enrolled || 0} leads</span></div>
+        <div class="metric" title="${classifiedFromMonthlyTabs} classified from monthly sheet tabs${compareYear ? ` | vs ${compareYear}: ${compareTotals.total || 0}` : ""}"><span class="metric-icon" aria-hidden="true">📊</span><strong>${totals.total || 0}</strong><span class="subtle">Leads</span></div>
+        <div class="metric" title="${totals.assessment || 0} leads"><span class="metric-icon" aria-hidden="true">📝</span><strong>${pct(totals.assessment || 0, totals.total || 0)}</strong><span class="subtle">Assessment</span></div>
+        <div class="metric" title="${totals.trial || 0} leads"><span class="metric-icon" aria-hidden="true">🎯</span><strong>${pct(totals.trial || 0, totals.total || 0)}</strong><span class="subtle">Trial</span></div>
+        <div class="metric" title="${totals.enrolled || 0} leads"><span class="metric-icon" aria-hidden="true">✅</span><strong>${pct(totals.enrolled || 0, totals.total || 0)}</strong><span class="subtle">Enrolled</span></div>
       `;
       $("crmDashboardChart").innerHTML = chartHtml(rows.map(row => ({ label: row.month.slice(0, 3), value: row.total, display: row.total })));
       $("crmDashboardTable").innerHTML = tableHtml(["Month", `${year} Total`, compareYear ? `${compareYear} Total` : "Compare Total", "Change", "New", "Follow Up", "Assessment", "Assessment %", "Trial", "Trial %", "Enrolled", "Enrolled %", "Lost", "Lost %"], crmDashboardExportRows().map(row => [row[0], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[10], row[11], row[12], row[13], row[14]]));
