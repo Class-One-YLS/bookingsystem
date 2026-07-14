@@ -625,10 +625,13 @@
     .reminder-list { display: grid; gap: 8px; margin-top: 10px; max-height: 180px; overflow: auto; }
     .reminder-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px; border: 1px solid #f4dda0; background: #fff; border-radius: 8px; font-size: 12px; }
     .view-toggle .btn.active { background: var(--ink); color: #fff; }
-    .table-wrap { width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; overflow-y: visible; overscroll-behavior-inline: contain; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+    .table-wrap { width: 100%; max-width: 100%; min-width: 0; max-height: 620px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
     .table-wrap > table, .schedule-wrap > *, .teacher-timetable-wrap > table { max-width: none; }
+    #activityList, #publicHolidayCalendar, #teacherLeaveSummary { max-height: 620px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+    #activityList table { min-width: 1180px; }
+    #publicHolidayCalendar, #teacherLeaveSummary { padding: 10px; }
     .lead-table { min-width: 1880px; }
-    .lead-table th { position: sticky; top: 0; z-index: 1; }
+    .lead-table th { position: sticky; top: 0; z-index: 2; background: #fff; }
     .lead-table select, .lead-table input { min-height: 32px; padding: 6px 8px; font-size: 12px; }
     .lead-table textarea { min-height: 64px; min-width: 190px; padding: 6px 8px; font-size: 12px; }
     .lead-table td { vertical-align: top; }
@@ -679,9 +682,9 @@
     .priority-card.important { border-left: 4px solid var(--mint); }
     .priority-card.urgent { border-left: 4px solid #f5a524; }
     .priority-card.low { border-left: 4px solid #98a2b3; }
-    .priority-items { display: grid; gap: 7px; margin-top: 10px; max-height: 160px; overflow: auto; }
+    .priority-items { display: grid; gap: 7px; margin-top: 10px; max-height: 260px; overflow: auto; }
     .priority-item { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 12px; }
-    .replacement-column { display: flex; flex-direction: column; gap: 10px; min-height: 220px; }
+    .replacement-column { display: flex; flex-direction: column; gap: 10px; min-height: 220px; max-height: 620px; overflow: auto; overscroll-behavior: contain; }
     .replacement-task { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
     .replacement-task .subtle { line-height: 1.5; }
     .chart { display: grid; gap: 8px; margin-top: 14px; }
@@ -700,7 +703,8 @@
     .template-preview { white-space: pre-wrap; background: #fbfdfc; border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-height: 180px; }
     .teacher-card { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 12px; }
     .avatar { width: 58px; height: 58px; border-radius: 8px; background: var(--soft); object-fit: cover; display: grid; place-items: center; font-weight: 900; color: var(--mint-dark); }
-    .list { display: grid; gap: 10px; max-height: 480px; overflow: auto; padding-right: 4px; }
+    .list { display: grid; gap: 10px; max-height: 620px; overflow: auto; overscroll-behavior: contain; padding-right: 4px; }
+    .scroll-panel { max-height: 620px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
     .hide { display: none !important; }
     .empty { padding: 24px; text-align: center; color: var(--muted); font-weight: 800; }
     .modal {
@@ -714,7 +718,7 @@
     .table-action-link:hover { text-decoration: underline; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 10px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; vertical-align: top; }
-    th { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+    th { color: var(--muted); font-size: 11px; text-transform: uppercase; position: sticky; top: 0; z-index: 2; background: #fff; }
     .report-box { white-space: pre-wrap; background: #fbfdfc; border: 1px solid var(--line); border-radius: 8px; padding: 14px; min-height: 180px; }
     .toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 40; min-width: min(520px, calc(100vw - 32px)); padding: 12px 16px; border-radius: 8px; background: var(--ink); color: #fff; box-shadow: 0 12px 28px rgba(23,33,43,.22); font-weight: 900; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .2s ease, transform .2s ease; }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(4px); }
@@ -2500,6 +2504,8 @@
     let archivedTeacherPage = 1;
     let archivedStudentPage = 1;
     let completedClassPage = 1;
+    const SCROLL_RENDER_BATCH = 160;
+    const scrollRenderLimits = {};
     let autoPushTimer = null;
     let neonPushQueue = Promise.resolve(true);
     let autoLoadCountdownTimer = null;
@@ -7863,10 +7869,8 @@
     function renderTeacherDirectory() {
       if (!$("teacherDirectoryList")) return;
       const allRows = filteredTeacherDirectoryRows();
-      const totalPages = Math.max(1, Math.ceil(allRows.length / TEACHER_DIRECTORY_PAGE_SIZE));
-      teacherDirectoryPage = Math.min(Math.max(1, teacherDirectoryPage), totalPages);
-      const start = (teacherDirectoryPage - 1) * TEACHER_DIRECTORY_PAGE_SIZE;
-      const rows = allRows.slice(start, start + TEACHER_DIRECTORY_PAGE_SIZE);
+      const start = 0;
+      const rows = allRows;
       const body = rows.map((teacher, index) => {
         const email = String(teacher.email || "").trim();
         const zoomUrl = safeHttpUrl(teacher.zoomLink);
@@ -7892,8 +7896,7 @@
         </tr>`;
       }).join("") || `<tr><td colspan="11">No teachers match this directory search.</td></tr>`;
       $("teacherDirectoryList").innerHTML = `<table class="lead-table"><thead><tr><th>No.</th><th>Teacher Name</th><th>Subjects Covered</th><th>Internal Remark</th><th>Email</th><th>Contact</th><th>Zoom ID</th><th>Passcode</th><th>Zoom Link</th><th>Teacher View Link</th><th>Actions</th></tr></thead><tbody>${body}</tbody></table>`;
-      const end = Math.min(start + TEACHER_DIRECTORY_PAGE_SIZE, allRows.length);
-      $("teacherDirectoryPager").innerHTML = `<button class="btn small ghost" data-teacher-directory-page="prev" ${teacherDirectoryPage <= 1 ? "disabled" : ""}>&lt;</button><span class="subtle">Showing ${allRows.length ? start + 1 : 0}-${end} of ${allRows.length} | Page ${teacherDirectoryPage} of ${totalPages}</span><button class="btn small ghost" data-teacher-directory-page="next" ${teacherDirectoryPage >= totalPages ? "disabled" : ""}>&gt;</button>`;
+      $("teacherDirectoryPager").innerHTML = "";
     }
 
     async function copyTeacherPasscode(teacherId) {
@@ -9356,28 +9359,15 @@
 
     function renderLeads() {
       const allLeads = filteredLeads();
-      const totalPages = Math.max(1, Math.ceil(allLeads.length / LEADS_PER_PAGE));
-      leadPage = Math.min(Math.max(leadPage, 1), totalPages);
-      const startIndex = (leadPage - 1) * LEADS_PER_PAGE;
-      const leads = allLeads.slice(startIndex, startIndex + LEADS_PER_PAGE);
-      const shownStart = allLeads.length ? startIndex + 1 : 0;
-      const shownEnd = Math.min(startIndex + LEADS_PER_PAGE, allLeads.length);
+      const leads = scrollLimitedRows("crmLeads", allLeads);
       $("leadCardViewBtn").classList.toggle("active", leadViewMode === "cards");
       $("leadCardViewBtn").classList.toggle("ghost", leadViewMode !== "cards");
       $("leadTableViewBtn").classList.toggle("active", leadViewMode === "table");
       $("leadTableViewBtn").classList.toggle("ghost", leadViewMode !== "table");
       $("leadList").classList.toggle("list", leadViewMode === "cards");
       $("leadList").innerHTML = leadViewMode === "table" ? renderLeadTable(leads) : renderLeadCards(leads);
-      $("leadPagination").innerHTML = `
-        <div class="subtle">Showing ${shownStart}-${shownEnd} of ${allLeads.length} leads</div>
-        <div class="row">
-          <button class="btn small ghost" id="leadPrevPageBtn" ${leadPage <= 1 ? "disabled" : ""}>&lt;</button>
-          <span class="pill">Page ${leadPage} / ${totalPages}</span>
-          <button class="btn small ghost" id="leadNextPageBtn" ${leadPage >= totalPages ? "disabled" : ""}>&gt;</button>
-        </div>
-      `;
-      $("leadPrevPageBtn").onclick = () => { leadPage -= 1; renderLeads(); scrollToListStart("leadList"); };
-      $("leadNextPageBtn").onclick = () => { leadPage += 1; renderLeads(); scrollToListStart("leadList"); };
+      $("leadPagination").innerHTML = "";
+      bindScrollExpansion("leadList", "crmLeads", allLeads.length, renderLeads);
       if (leadViewMode === "table") {
         const quickFields = [...document.querySelectorAll("[data-lead-quick]")];
         leads.forEach(lead => {
@@ -9416,12 +9406,7 @@
 
     function renderTutorCrm() {
       const allLeads = filteredTutorLeads();
-      const totalPages = Math.max(1, Math.ceil(allLeads.length / LEADS_PER_PAGE));
-      tutorLeadPage = Math.min(Math.max(tutorLeadPage, 1), totalPages);
-      const startIndex = (tutorLeadPage - 1) * LEADS_PER_PAGE;
-      const leads = allLeads.slice(startIndex, startIndex + LEADS_PER_PAGE);
-      const shownStart = allLeads.length ? startIndex + 1 : 0;
-      const shownEnd = Math.min(startIndex + LEADS_PER_PAGE, allLeads.length);
+      const leads = scrollLimitedRows("tutorLeads", allLeads);
       $("tutorLeadCount").textContent = allLeads.length;
       $("tutorLeadCardViewBtn").classList.toggle("active", tutorLeadViewMode === "cards");
       $("tutorLeadCardViewBtn").classList.toggle("ghost", tutorLeadViewMode !== "cards");
@@ -9429,16 +9414,8 @@
       $("tutorLeadTableViewBtn").classList.toggle("ghost", tutorLeadViewMode !== "table");
       $("tutorLeadList").classList.toggle("list", tutorLeadViewMode === "cards");
       $("tutorLeadList").innerHTML = tutorLeadViewMode === "table" ? renderTutorLeadTable(leads) : renderTutorLeadCards(leads);
-      $("tutorLeadPagination").innerHTML = `
-        <div class="subtle">Showing ${shownStart}-${shownEnd} of ${allLeads.length} tutor leads</div>
-        <div class="row">
-          <button class="btn small ghost" id="tutorLeadPrevPageBtn" ${tutorLeadPage <= 1 ? "disabled" : ""}>&lt;</button>
-          <span class="pill">Page ${tutorLeadPage} / ${totalPages}</span>
-          <button class="btn small ghost" id="tutorLeadNextPageBtn" ${tutorLeadPage >= totalPages ? "disabled" : ""}>&gt;</button>
-        </div>
-      `;
-      $("tutorLeadPrevPageBtn").onclick = () => { tutorLeadPage -= 1; renderTutorCrm(); scrollToListStart("tutorLeadList"); };
-      $("tutorLeadNextPageBtn").onclick = () => { tutorLeadPage += 1; renderTutorCrm(); scrollToListStart("tutorLeadList"); };
+      $("tutorLeadPagination").innerHTML = "";
+      bindScrollExpansion("tutorLeadList", "tutorLeads", allLeads.length, renderTutorCrm);
       if (tutorLeadViewMode === "table") hydrateTutorLeadQuickFields(leads);
     }
 
@@ -9658,9 +9635,6 @@
       const archivedTeachers = [...state.teachers].filter(t => isTeacherArchived(t) && !isImportedOnlyTeacher(t)).sort(byName);
       const archivedStudents = [...state.students].filter(s => s.status === "archived").sort(byName);
       const completedClasses = [...state.bookings].filter(b => b.status === "completed").sort((a, b) => `${b.date || ""}${b.time || ""}`.localeCompare(`${a.date || ""}${a.time || ""}`));
-      archivedTeacherPage = Math.min(archivedTeacherPage, Math.max(1, Math.ceil(archivedTeachers.length / ARCHIVE_PAGE_SIZE)));
-      archivedStudentPage = Math.min(archivedStudentPage, Math.max(1, Math.ceil(archivedStudents.length / ARCHIVE_PAGE_SIZE)));
-      completedClassPage = Math.min(completedClassPage, Math.max(1, Math.ceil(completedClasses.length / ARCHIVE_PAGE_SIZE)));
 
       $("archivedTeacherList").innerHTML = pageItems(archivedTeachers, archivedTeacherPage).map(t => `
         <div class="card teacher-card">
@@ -9673,7 +9647,7 @@
           </div>
         </div>
       `).join("") || `<div class="empty">No archived teachers.</div>`;
-      $("archivedTeacherPager").innerHTML = archivePagerHtml("teachers", archivedTeacherPage, archivedTeachers.length);
+      $("archivedTeacherPager").innerHTML = "";
 
       $("archivedStudentList").innerHTML = pageItems(archivedStudents, archivedStudentPage).map(s => `
         <div class="card">
@@ -9682,26 +9656,22 @@
           <div class="row" style="margin-top:8px;"><button class="btn small ghost" data-restore-student="${s.id}">Restore</button></div>
         </div>
       `).join("") || `<div class="empty">No archived students.</div>`;
-      $("archivedStudentPager").innerHTML = archivePagerHtml("students", archivedStudentPage, archivedStudents.length);
+      $("archivedStudentPager").innerHTML = "";
 
       const completedRows = pageItems(completedClasses, completedClassPage).map(b => {
         const t = teacherById(b.teacherId);
         return [b.date || "", timeLabel(b.time), t ? t.name : "", b.studentName || "", b.subject || "", b.type || "regular class"];
       });
       $("completedClassList").innerHTML = tableHtml(["Date", "Time", "Teacher", "Student", "Subject", "Class Type"], completedRows);
-      $("completedClassPager").innerHTML = archivePagerHtml("completed", completedClassPage, completedClasses.length);
+      $("completedClassPager").innerHTML = "";
     }
 
     function pageItems(items, page) {
-      const start = (Math.max(1, page) - 1) * ARCHIVE_PAGE_SIZE;
-      return items.slice(start, start + ARCHIVE_PAGE_SIZE);
+      return items || [];
     }
 
     function archivePagerHtml(kind, page, total) {
-      const pages = Math.max(1, Math.ceil(total / ARCHIVE_PAGE_SIZE));
-      const start = total ? (page - 1) * ARCHIVE_PAGE_SIZE + 1 : 0;
-      const end = Math.min(total, page * ARCHIVE_PAGE_SIZE);
-      return `<button class="btn ghost small" data-archive-page="${kind}|prev" ${page <= 1 ? "disabled" : ""}>&lt;</button><span class="subtle">Showing ${start}-${end} of ${total} | Page ${page} of ${pages}</span><button class="btn ghost small" data-archive-page="${kind}|next" ${page >= pages ? "disabled" : ""}>&gt;</button>`;
+      return "";
     }
 
     function activityTypes() {
@@ -9820,11 +9790,10 @@
         <div class="metric"><span class="subtle">Total stored</span><strong>${(state.activityLogs || []).length}</strong></div>
         <div class="metric"><span class="subtle">Latest</span><strong style="font-size:14px;">${logs[0] ? formatDateTimeStamp(logs[0].createdAt) : "-"}</strong></div>
       `;
-      activityPage = clampPage(activityPage, logs.length);
-      const activityPageData = pageSlice(logs, activityPage);
-      activityPage = activityPageData.page;
-      $("activityList").innerHTML = activityLogTableHtml(activityPageData.items);
+      const activityRows = scrollLimitedRows("activityLog", logs);
+      $("activityList").innerHTML = activityLogTableHtml(activityRows);
       setAutoPager("activityList", listPagerHtml("activity", activityPage, logs.length));
+      bindScrollExpansion("activityList", "activityLog", logs.length, renderActivityLog);
     }
 
     function activityExportRows() {
@@ -10597,10 +10566,6 @@
       renderStudentNoShowList();
       renderReplacementCredits();
       const rows = filteredReplacements();
-      const totalPages = Math.max(1, Math.ceil(rows.length / REPLACEMENT_PAGE_SIZE));
-      replacementPage = Math.min(Math.max(1, replacementPage), totalPages);
-      const startIndex = (replacementPage - 1) * REPLACEMENT_PAGE_SIZE;
-      const pageRows = rows.slice(startIndex, startIndex + REPLACEMENT_PAGE_SIZE);
       const activeRows = rows.filter(item => item.status !== "Cancellation Withdrawn" && !item.archived);
       const actionNeeded = activeRows.filter(r => replacementTaskColumn(r) === "contact").length;
       const waiting = activeRows.filter(r => replacementTaskColumn(r) === "book").length;
@@ -10614,41 +10579,30 @@
       `;
       $("replacementBoardViewBtn").classList.toggle("active", replacementViewMode === "board");
       $("replacementTableViewBtn").classList.toggle("active", replacementViewMode === "table");
-      const pageControls = replacementPaginationHtml(rows.length, startIndex, pageRows.length, totalPages);
       const bulkControls = replacementViewMode === "table" ? `
         <div class="row spread" style="margin:10px 0;">
           <div class="subtle">${selectedReplacementIds.size} selected</div>
           <button class="btn danger small" id="bulkUndoCancellationBtn" ${selectedReplacementIds.size ? "" : "disabled"}>Undo Cancellation</button>
         </div>
       ` : "";
-      $("replacementList").innerHTML = `${pageControls}${bulkControls}${replacementViewMode === "table" ? renderReplacementTable(pageRows) : `
+      $("replacementList").innerHTML = `${bulkControls}${replacementViewMode === "table" ? renderReplacementTable(rows) : `
         <div class="replacement-board">
-          ${replacementColumnHtml("Contact Parent", "Who needs parent liaison now?", pageRows.filter(item => replacementTaskColumn(item) === "contact"))}
-          ${replacementColumnHtml("Book Replacement", "Parent contacted/confirmed, now arrange teacher slot.", pageRows.filter(item => replacementTaskColumn(item) === "book"))}
-          ${replacementColumnHtml("Replacement Done", "Arranged, settled, or no replacement needed.", pageRows.filter(item => replacementTaskColumn(item) === "done"))}
-          ${replacementColumnHtml("Withdraw Cancel", "Cancellation withdrawn and archived from active tasks.", pageRows.filter(item => replacementTaskColumn(item) === "withdraw"))}
+          ${replacementColumnHtml("Contact Parent", "Who needs parent liaison now?", rows.filter(item => replacementTaskColumn(item) === "contact"))}
+          ${replacementColumnHtml("Book Replacement", "Parent contacted/confirmed, now arrange teacher slot.", rows.filter(item => replacementTaskColumn(item) === "book"))}
+          ${replacementColumnHtml("Replacement Done", "Arranged, settled, or no replacement needed.", rows.filter(item => replacementTaskColumn(item) === "done"))}
+          ${replacementColumnHtml("Withdraw Cancel", "Cancellation withdrawn and archived from active tasks.", rows.filter(item => replacementTaskColumn(item) === "withdraw"))}
         </div>
-      `}${pageControls}`;
+      `}`;
     }
 
     function replacementPaginationHtml(total, startIndex, shownCount, totalPages) {
-      if (total <= REPLACEMENT_PAGE_SIZE) return "";
-      const from = shownCount ? startIndex + 1 : 0;
-      const to = startIndex + shownCount;
-      return `<div class="row spread" style="margin:10px 0;">
-        <div class="subtle">Showing ${from}-${to} of ${total} replacement records</div>
-        <div class="row">
-          <button class="btn ghost small" data-replacement-page="prev" ${replacementPage <= 1 ? "disabled" : ""}>&lt;</button>
-          <span class="pill">${replacementPage} / ${totalPages}</span>
-          <button class="btn ghost small" data-replacement-page="next" ${replacementPage >= totalPages ? "disabled" : ""}>&gt;</button>
-        </div>
-      </div>`;
+      return "";
     }
 
     function renderReplacementTable(rows) {
       const selectableRows = rows.filter(item => item.status !== "Cancellation Withdrawn" && !item.archived);
       const allSelected = selectableRows.length && selectableRows.every(item => selectedReplacementIds.has(item.id));
-      const headers = [`<input type="checkbox" id="replacementSelectPage" ${allSelected ? "checked" : ""} ${selectableRows.length ? "" : "disabled"} aria-label="Select replacement records on this page">`, "Actions", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Notes", "Last Updated"];
+      const headers = [`<input type="checkbox" id="replacementSelectPage" ${allSelected ? "checked" : ""} ${selectableRows.length ? "" : "disabled"} aria-label="Select visible replacement records">`, "Actions", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Notes", "Last Updated"];
       const body = rows.map(item => `<tr>
         <td>${item.status === "Cancellation Withdrawn" || item.archived ? "" : `<input type="checkbox" data-select-replacement="${escapeHtml(item.id)}" ${selectedReplacementIds.has(item.id) ? "checked" : ""} aria-label="Select ${escapeHtml(item.studentName || "replacement")}">`}</td>
         <td><div class="row">${replacementTableActionsHtml(item)}</div></td>
@@ -10695,8 +10649,8 @@
         .filter(item => replacementTaskColumn(item) === column)
         .sort((a, b) => activityTime(b.lastActionAt || b.updatedAt || b.createdAt) - activityTime(a.lastActionAt || a.updatedAt || a.createdAt));
       $("replacementActionTitle").textContent = replacementColumnLabel(column);
-      $("replacementActionSubtitle").textContent = `${items.length} case${items.length === 1 ? "" : "s"} matched current replacement filters. Showing latest ${Math.min(LIST_PAGE_SIZE, items.length)} first.`;
-      $("replacementActionList").innerHTML = items.slice(0, LIST_PAGE_SIZE).map(item => `
+      $("replacementActionSubtitle").textContent = `${items.length} case${items.length === 1 ? "" : "s"} matched current replacement filters. Scroll the list to review all matches.`;
+      $("replacementActionList").innerHTML = items.map(item => `
         <div class="replacement-task">
           <div class="row spread"><strong>${escapeHtml(item.studentName || "-")}</strong><span class="pill">${escapeHtml(item.status || "-")}</span></div>
           <div class="subtle">
@@ -10987,23 +10941,11 @@
     }
 
     function pageSlice(items, page, pageSize = LIST_PAGE_SIZE) {
-      const safePage = clampPage(page, items.length, pageSize);
-      const start = (safePage - 1) * pageSize;
-      return { page: safePage, start, items: items.slice(start, start + pageSize), pages: Math.max(1, Math.ceil(items.length / pageSize)) };
+      return { page: 1, start: 0, items: items || [], pages: 1 };
     }
 
     function listPagerHtml(key, page, total, pageSize = LIST_PAGE_SIZE) {
-      if (total <= pageSize) return "";
-      const pages = Math.max(1, Math.ceil(total / pageSize));
-      const start = total ? (page - 1) * pageSize + 1 : 0;
-      const end = Math.min(total, page * pageSize);
-      return `<div class="row spread list-pager" style="margin-top:10px;">
-        <span class="subtle">Showing ${start}-${end} of ${total} | Page ${page} of ${pages}</span>
-        <div class="row">
-          <button class="btn ghost small" data-list-page="${escapeHtml(key)}|prev" ${page <= 1 ? "disabled" : ""}>&lt;</button>
-          <button class="btn ghost small" data-list-page="${escapeHtml(key)}|next" ${page >= pages ? "disabled" : ""}>&gt;</button>
-        </div>
-      </div>`;
+      return "";
     }
 
     function checklistHtml(name, values, selected = []) {
@@ -11236,13 +11178,49 @@
       pager.innerHTML = html || "";
     }
 
-    function scrollToListStart(id) {
+    function resetScrollRenderLimit(key, total = SCROLL_RENDER_BATCH) {
+      scrollRenderLimits[key] = Math.min(Math.max(0, total), SCROLL_RENDER_BATCH);
+    }
+
+    function scrollLimitedRows(key, rows) {
+      const total = rows.length;
+      if (!Object.prototype.hasOwnProperty.call(scrollRenderLimits, key)) resetScrollRenderLimit(key, total);
+      const limit = Math.min(total, scrollRenderLimits[key]);
+      return rows.slice(0, limit);
+    }
+
+    function scrollPanelFor(id) {
       const target = $(id);
-      if (!target) return;
-      const scroller = target.matches(".table-wrap, .schedule-wrap, .teacher-timetable-wrap, .timetable-wrap")
+      if (!target) return null;
+      return target.matches(".table-wrap, .schedule-wrap, .teacher-timetable-wrap, .timetable-wrap, .list, .scroll-panel")
         ? target
-        : target.querySelector(".table-wrap, .schedule-wrap, .teacher-timetable-wrap, .timetable-wrap");
-      const node = scroller || target;
+        : target.querySelector(".table-wrap, .schedule-wrap, .teacher-timetable-wrap, .timetable-wrap, .list, .scroll-panel") || target;
+    }
+
+    function bindScrollExpansion(containerId, key, total, renderFn) {
+      const node = scrollPanelFor(containerId);
+      if (!node) return;
+      node.onscroll = () => {
+        if ((scrollRenderLimits[key] || 0) >= total) return;
+        const nearBottom = node.scrollTop + node.clientHeight >= node.scrollHeight - 220;
+        if (!nearBottom) return;
+        const scrollTop = node.scrollTop;
+        const scrollLeft = node.scrollLeft;
+        scrollRenderLimits[key] = Math.min(total, (scrollRenderLimits[key] || SCROLL_RENDER_BATCH) + SCROLL_RENDER_BATCH);
+        renderFn();
+        requestAnimationFrame(() => {
+          const nextNode = scrollPanelFor(containerId);
+          if (nextNode) {
+            nextNode.scrollTop = scrollTop;
+            nextNode.scrollLeft = scrollLeft;
+          }
+        });
+      };
+    }
+
+    function scrollToListStart(id) {
+      const node = scrollPanelFor(id);
+      if (!node) return;
       if (typeof node.scrollTo === "function") node.scrollTo({ top: 0, left: 0, behavior: "smooth" });
       else {
         node.scrollTop = 0;
@@ -11463,8 +11441,55 @@
       if (mutations.some(mutation => [...mutation.addedNodes].some(node => node.nodeType === 1 && (node.matches?.("table") || node.querySelector?.("table"))))) queueTableColumnEnhancement();
     });
 
+    const scrollPanelSelectors = [
+      ".table-wrap",
+      ".list",
+      ".replacement-column",
+      ".schedule-wrap",
+      ".teacher-timetable-wrap",
+      "#teacherDirectoryList",
+      "#studentNoShowList",
+      "#leadList",
+      "#tutorLeadList",
+      "#replacementList",
+      "#replacementCreditSummary",
+      "#replacementActionList",
+      "#activityList",
+      "#publicHolidayCalendar",
+      "#teacherLeaveSummary",
+      "#userList",
+      "#roleList"
+    ];
+
+    function scrollPanelKey(node, index) {
+      return node.id || `${node.className || node.tagName || "panel"}|${index}`;
+    }
+
+    function captureScrollPanels() {
+      return [...document.querySelectorAll(scrollPanelSelectors.join(","))].map((node, index) => ({
+        key: scrollPanelKey(node, index),
+        top: node.scrollTop || 0,
+        left: node.scrollLeft || 0
+      }));
+    }
+
+    function restoreScrollPanels(snapshot = []) {
+      if (!snapshot.length) return;
+      requestAnimationFrame(() => {
+        const nodes = [...document.querySelectorAll(scrollPanelSelectors.join(","))];
+        snapshot.forEach(item => {
+          const node = nodes.find((candidate, index) => scrollPanelKey(candidate, index) === item.key);
+          if (node) {
+            node.scrollTop = item.top;
+            node.scrollLeft = item.left;
+          }
+        });
+      });
+    }
+
     function renderAll() {
       renderAllCallCount += 1;
+      const scrollSnapshot = captureScrollPanels();
       if (initialDataLoadComplete) processExpiredReservations();
       const old = Object.fromEntries(["monthSelect", "reportMonth", "businessDashboardMonth", "businessDashboardYear", "weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "typeFilter", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear", "slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher", "teacherStudentRecordTeacher", "teacherStudentRecordStatus", "teacherStudentRecordSearch", "teacherDirectorySubject", "reportTeacher", "tutorLeadFilterStatus", "tutorLeadFilterCategory"].map(id => [id, $(id)?.value]));
       hydrateSelects();
@@ -11495,6 +11520,7 @@
       symbolizeActionButtons();
       enhanceTableColumnControls();
       renderAccessControls();
+      restoreScrollPanels(scrollSnapshot);
     }
 
     function clearTeacherForm() {
@@ -14867,17 +14893,19 @@
     };
     function resetTutorLeadPageAndRender() {
       tutorLeadPage = 1;
+      resetScrollRenderLimit("tutorLeads", filteredTutorLeads().length);
       renderTutorCrm();
+      scrollToListStart("tutorLeadList");
     }
     $("tutorLeadCardViewBtn").onclick = () => {
       tutorLeadViewMode = "cards";
       uiStateSet("TutorLeadViewMode", tutorLeadViewMode);
-      renderTutorCrm();
+      resetTutorLeadPageAndRender();
     };
     $("tutorLeadTableViewBtn").onclick = () => {
       tutorLeadViewMode = "table";
       uiStateSet("TutorLeadViewMode", tutorLeadViewMode);
-      renderTutorCrm();
+      resetTutorLeadPageAndRender();
     };
     ["tutorLeadFilterStatus", "tutorLeadFilterCategory"].forEach(id => $(id).addEventListener("change", resetTutorLeadPageAndRender));
     $("tutorLeadSearch").addEventListener("input", resetTutorLeadPageAndRender);
@@ -15187,17 +15215,19 @@
     });
     ["reportTeacher", "reportMonth", "reportYear"].forEach(id => $(id).addEventListener("change", renderReport));
     ["businessDashboardMonth", "businessDashboardYear"].forEach(id => $(id).addEventListener("change", renderBusinessDashboard));
-    $("studentSearch").addEventListener("input", () => { studentListPage = 1; renderStudents(); });
-    $("teacherCardSearch").addEventListener("input", () => { teacherListPage = 1; renderTeachers(); });
-    $("teacherDirectorySearch").addEventListener("input", () => { teacherDirectoryPage = 1; renderTeacherDirectory(); });
-    $("teacherDirectorySubject").addEventListener("change", () => { teacherDirectoryPage = 1; renderTeacherDirectory(); });
-    $("registeredStudentFilter").addEventListener("change", () => { registeredStudentPage = 1; renderRegisteredStudents(); });
-    $("registeredStudentSearch").addEventListener("input", () => { registeredStudentPage = 1; renderRegisteredStudents(); });
-    ["teacherStudentRecordTeacher", "teacherStudentRecordStatus"].forEach(id => $(id).addEventListener("change", () => { teacherStudentRecordPage = 1; renderTeacherStudentRecords(); }));
-    $("teacherStudentRecordSearch").addEventListener("input", () => { teacherStudentRecordPage = 1; renderTeacherStudentRecords(); });
+    $("studentSearch").addEventListener("input", () => { studentListPage = 1; renderStudents(); scrollToListStart("studentList"); });
+    $("teacherCardSearch").addEventListener("input", () => { teacherListPage = 1; renderTeachers(); scrollToListStart("teacherList"); });
+    $("teacherDirectorySearch").addEventListener("input", () => { teacherDirectoryPage = 1; renderTeacherDirectory(); scrollToListStart("teacherDirectoryList"); });
+    $("teacherDirectorySubject").addEventListener("change", () => { teacherDirectoryPage = 1; renderTeacherDirectory(); scrollToListStart("teacherDirectoryList"); });
+    $("registeredStudentFilter").addEventListener("change", () => { registeredStudentPage = 1; renderRegisteredStudents(); scrollToListStart("registeredStudentList"); });
+    $("registeredStudentSearch").addEventListener("input", () => { registeredStudentPage = 1; renderRegisteredStudents(); scrollToListStart("registeredStudentList"); });
+    ["teacherStudentRecordTeacher", "teacherStudentRecordStatus"].forEach(id => $(id).addEventListener("change", () => { teacherStudentRecordPage = 1; renderTeacherStudentRecords(); scrollToListStart("teacherStudentRecordList"); }));
+    $("teacherStudentRecordSearch").addEventListener("input", () => { teacherStudentRecordPage = 1; renderTeacherStudentRecords(); scrollToListStart("teacherStudentRecordList"); });
     const resetLeadPageAndRender = () => {
       leadPage = 1;
+      resetScrollRenderLimit("crmLeads", filteredLeads().length);
       renderLeads();
+      scrollToListStart("leadList");
     };
     ["leadFilterStatus", "leadFilterUrgency"].forEach(id => $(id).addEventListener("change", resetLeadPageAndRender));
     $("leadSearch").addEventListener("input", resetLeadPageAndRender);
@@ -15226,14 +15256,18 @@
       const selectionStart = control.selectionStart;
       const selectionEnd = control.selectionEnd;
       clearTimeout(leadColumnFilterTimer);
-      leadColumnFilterTimer = setTimeout(() => {
-        if (leadFilter) {
-          leadPage = 1;
-          renderLeads();
-        } else {
-          tutorLeadPage = 1;
-          renderTutorCrm();
-        }
+        leadColumnFilterTimer = setTimeout(() => {
+          if (leadFilter) {
+            leadPage = 1;
+            resetScrollRenderLimit("crmLeads", filteredLeads().length);
+            renderLeads();
+            scrollToListStart("leadList");
+          } else {
+            tutorLeadPage = 1;
+            resetScrollRenderLimit("tutorLeads", filteredTutorLeads().length);
+            renderTutorCrm();
+            scrollToListStart("tutorLeadList");
+          }
         const replacement = $(controlId);
         if (replacement) {
           replacement.focus({ preventScroll: true });
@@ -15249,8 +15283,7 @@
     $("clearTutorLeadColumnFiltersBtn").onclick = () => {
       document.querySelectorAll("[data-tutor-lead-column-filter]").forEach(input => input.value = "");
       openColumnFilterId = "";
-      tutorLeadPage = 1;
-      renderTutorCrm();
+      resetTutorLeadPageAndRender();
     };
     $("leadCardViewBtn").onclick = () => { leadViewMode = "cards"; uiStateSet("LeadViewMode", leadViewMode); resetLeadPageAndRender(); };
     $("leadTableViewBtn").onclick = () => { leadViewMode = "table"; uiStateSet("LeadViewMode", leadViewMode); resetLeadPageAndRender(); };
@@ -15441,12 +15474,12 @@
     $("exportCrmPdfBtn").onclick = () => openPrintReport("CRM Leads Monthly Dashboard", ["No.", ...crmDashboardExportHeaders()], numbered(crmDashboardExportRows()));
     $("exportAllTeacherPayoutCsvBtn").onclick = () => downloadCsv("class-one-all-teacher-payout.csv", ["No.", "Teacher", "Category", "Tier", "Rate", "Share", "Completed", "Not Show", "Cancelled", "Lesson Pay", "Not Show Pay", "Total Pay"], numbered(teacherMonthlyPayoutRows()));
     $("exportAllTeacherPayoutPdfBtn").onclick = () => openPrintReport("All Teachers Monthly Payout", ["No.", "Teacher", "Category", "Tier", "Rate", "Share", "Completed", "Not Show", "Cancelled", "Lesson Pay", "Not Show Pay", "Total Pay"], numbered(teacherMonthlyPayoutRows()));
-    ["replacementFilterStatus", "replacementFilterReason"].forEach(id => $(id).addEventListener("change", () => { replacementPage = 1; renderReplacements(); }));
-    $("replacementSearch").addEventListener("input", () => { replacementPage = 1; renderReplacements(); });
-    ["noShowMonth", "noShowTeacherFilter", "noShowSubjectFilter"].forEach(id => $(id).addEventListener("change", () => { studentNoShowPage = 1; renderReplacements(); }));
-    $("noShowSearch").addEventListener("input", () => { studentNoShowPage = 1; renderReplacements(); });
-    $("replacementBoardViewBtn").onclick = () => { replacementViewMode = "board"; replacementPage = 1; uiStateSet("ReplacementViewMode", replacementViewMode); renderReplacements(); };
-    $("replacementTableViewBtn").onclick = () => { replacementViewMode = "table"; replacementPage = 1; uiStateSet("ReplacementViewMode", replacementViewMode); renderReplacements(); };
+    ["replacementFilterStatus", "replacementFilterReason"].forEach(id => $(id).addEventListener("change", () => { replacementPage = 1; renderReplacements(); scrollToListStart("replacementList"); }));
+    $("replacementSearch").addEventListener("input", () => { replacementPage = 1; renderReplacements(); scrollToListStart("replacementList"); });
+    ["noShowMonth", "noShowTeacherFilter", "noShowSubjectFilter"].forEach(id => $(id).addEventListener("change", () => { studentNoShowPage = 1; renderReplacements(); scrollToListStart("studentNoShowList"); }));
+    $("noShowSearch").addEventListener("input", () => { studentNoShowPage = 1; renderReplacements(); scrollToListStart("studentNoShowList"); });
+    $("replacementBoardViewBtn").onclick = () => { replacementViewMode = "board"; replacementPage = 1; uiStateSet("ReplacementViewMode", replacementViewMode); renderReplacements(); scrollToListStart("replacementList"); };
+    $("replacementTableViewBtn").onclick = () => { replacementViewMode = "table"; replacementPage = 1; uiStateSet("ReplacementViewMode", replacementViewMode); renderReplacements(); scrollToListStart("replacementList"); };
     $("clearReplacementFiltersBtn").onclick = () => {
       $("replacementFilterStatus").value = "all";
       $("replacementFilterReason").value = "all";
@@ -15456,7 +15489,12 @@
     };
     $("exportReplacementCsvBtn").onclick = () => downloadCsv("class-one-class-management-replacements.csv", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Notes", "Last Updated"], numbered(replacementExportRows()));
     $("exportReplacementPdfBtn").onclick = () => openPrintReport("Class Management - Replacement Records", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Notes", "Last Updated"], numbered(replacementExportRows()));
-    const resetActivityPageAndRender = () => { activityPage = 1; renderActivityLog(); };
+    const resetActivityPageAndRender = () => {
+      activityPage = 1;
+      resetScrollRenderLimit("activityLog", filteredActivityLogs().length);
+      renderActivityLog();
+      scrollToListStart("activityList");
+    };
     ["activityFilterType", "activitySearch", "activityFromDate", "activityToDate"].forEach(id => $(id).addEventListener("input", resetActivityPageAndRender));
     $("activityFilterType").addEventListener("change", resetActivityPageAndRender);
     $("clearActivityFiltersBtn").onclick = () => {
