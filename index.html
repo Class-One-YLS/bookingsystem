@@ -871,22 +871,22 @@
         </div>
       </div>
       <div class="sidebar-nav">
+        <button class="nav-btn" data-tab="reports" data-short="📊" data-title="Business Dashboard" title="Business Dashboard" aria-label="Business Dashboard">Business Dashboard</button>
         <button class="nav-btn active" data-tab="schedule" data-short="Week">Weekly Timetable</button>
         <button class="nav-btn" data-tab="teacherOverview" data-short="Tutor">Teacher Overview</button>
         <button class="nav-btn" data-tab="replacements" data-short="Class">Class Management</button>
-        <button class="nav-btn" data-tab="teachers" data-short="Teach">Teachers</button>
         <button class="nav-btn" data-tab="students" data-short="Stu">Students</button>
+        <button class="nav-btn" data-tab="teachers" data-short="Teach">Teachers</button>
+        <button class="nav-btn" data-tab="users" data-short="Users">Users</button>
+        <button class="nav-btn settings-nav" data-tab="settings" data-short="Set" data-title="Sync Settings" title="Sync Settings" aria-label="Sync Settings">&#9881;</button>
+        <button class="nav-btn" data-tab="activity" data-short="Log">Activity Log</button>
         <button class="nav-btn" data-tab="teacherStudentRecords" data-short="TSR">Teacher Student Records</button>
         <button class="nav-btn" data-tab="crm" data-short="CRM">CRM Leads</button>
         <button class="nav-btn" data-tab="tutorCrm" data-short="TCRM">Tutor CRM</button>
         <button class="nav-btn" data-tab="publicHoliday" data-short="PH">Public Holiday</button>
         <button class="nav-btn" data-tab="policySettings" data-short="Policy">Policy Settings</button>
-        <button class="nav-btn" data-tab="reports" data-short="Rpt">Reports</button>
-        <button class="nav-btn" data-tab="activity" data-short="Log">Activity Log</button>
-        <button class="nav-btn" data-tab="users" data-short="Users">Users</button>
       </div>
       <div class="sidebar-footer">
-        <button class="nav-btn settings-nav" data-tab="settings" data-short="Set" data-title="Sync Settings" title="Sync Settings" aria-label="Sync Settings">&#9881;</button>
       </div>
     </aside>
 
@@ -1198,7 +1198,7 @@
               </div>
             </div>
             <div class="flow-card">
-              <div class="flow-title"><strong>Reports</strong><span class="flow-tag">Admin</span></div>
+              <div class="flow-title"><strong>Business Dashboard</strong><span class="flow-tag">Admin</span></div>
               <div class="flow-path">Select month/year &gt; Generate report &gt; Check numbers &gt; Export</div>
               <div class="flow-steps">
                 <div><span>&gt;</span><p>Use CRM dashboard to check monthly leads and yearly comparison.</p></div>
@@ -1304,7 +1304,7 @@
                 <div><span>&gt;</span><p><strong>Class cancelled:</strong> Click class &gt; Choose Cancelled/Public Holiday/Teacher Leave &gt; Add remark &gt; Save. It turns grey and is not counted for payout.</p></div>
                 <div><span>&gt;</span><p><strong>Undo wrong cancellation:</strong> Open Class Management &gt; Find the case &gt; Click Undo Cancellation &gt; Original class returns to booked.</p></div>
                 <div><span>&gt;</span><p><strong>Teacher partial leave:</strong> Mark only affected class slots as Teacher Leave.</p></div>
-                <div><span>&gt;</span><p><strong>Teacher payout:</strong> Open Reports &gt; Select teacher/month/year &gt; Generate report &gt; Export PDF.</p></div>
+                <div><span>&gt;</span><p><strong>Teacher payout:</strong> Open Business Dashboard &gt; Select teacher/month/year &gt; Generate report &gt; Export PDF.</p></div>
                 <div><span>&gt;</span><p><strong>Before important edits:</strong> Pull From Sheet &gt; Edit &gt; Save &gt; Confirm auto-sync or Push manually.</p></div>
               </div>
             </div>
@@ -2359,20 +2359,20 @@
     const DB_STORE = "state";
     const MONTHLY_LEAD_PATTERN = /^(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)[\s_-]*\d{4}/i;
     const APP_TABS = [
+      { id: "reports", label: "Business Dashboard" },
       { id: "schedule", label: "Weekly Timetable" },
       { id: "teacherOverview", label: "Teacher Overview" },
       { id: "replacements", label: "Class Management" },
-      { id: "teachers", label: "Teachers" },
       { id: "students", label: "Students" },
+      { id: "teachers", label: "Teachers" },
+      { id: "users", label: "Users" },
+      { id: "settings", label: "Settings" },
+      { id: "activity", label: "Activity Log" },
       { id: "teacherStudentRecords", label: "Teacher Student Records" },
       { id: "crm", label: "CRM Leads" },
       { id: "tutorCrm", label: "Tutor CRM" },
       { id: "publicHoliday", label: "Public Holiday" },
-      { id: "policySettings", label: "Policy Settings" },
-      { id: "reports", label: "Reports" },
-      { id: "activity", label: "Activity Log" },
-      { id: "settings", label: "Settings" },
-      { id: "users", label: "Users" }
+      { id: "policySettings", label: "Policy Settings" }
     ];
     const ACTION_PERMISSIONS = [
       { id: "view", label: "View" },
