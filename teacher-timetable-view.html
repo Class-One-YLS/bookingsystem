@@ -308,6 +308,128 @@
       font-size: 11px;
       font-weight: 900;
     }
+    .daily-navigator {
+      display: grid;
+      gap: 12px;
+      touch-action: pan-y;
+    }
+    .daily-nav-header {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr) 44px;
+      align-items: center;
+      gap: 10px;
+    }
+    .daily-nav-header .btn {
+      width: 44px;
+      padding: 0;
+      font-size: 25px;
+    }
+    .daily-date-label {
+      text-align: center;
+      min-width: 0;
+    }
+    .daily-date-label strong {
+      display: block;
+      font-size: clamp(16px, 2.4vw, 22px);
+      line-height: 1.15;
+    }
+    .daily-date-label span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .daily-week-strip {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .daily-day-button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 4px;
+      background: #fbfefd;
+      color: var(--ink);
+      font-weight: 900;
+      min-height: 54px;
+    }
+    .daily-day-button span,
+    .daily-day-button strong {
+      display: block;
+      line-height: 1.15;
+    }
+    .daily-day-button span {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+    .daily-day-button strong {
+      margin-top: 3px;
+      font-size: 15px;
+    }
+    .daily-day-button .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      margin: 5px auto 0;
+      background: #cbd5e1;
+    }
+    .daily-day-button.has-classes .dot { background: var(--mint-dark); }
+    .daily-day-button.active {
+      background: var(--mint);
+      border-color: var(--mint);
+      color: #0f3324;
+    }
+    .daily-day-button.active span { color: #0f3324; }
+    .daily-list-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .daily-list-shell {
+      min-height: 120px;
+      overflow: hidden;
+    }
+    .daily-list {
+      animation-duration: .23s;
+      animation-timing-function: ease;
+      animation-fill-mode: both;
+    }
+    .daily-list.slide-next { animation-name: daily-slide-next; }
+    .daily-list.slide-prev { animation-name: daily-slide-prev; }
+    .daily-list.slide-still { animation-name: daily-fade; }
+    @keyframes daily-slide-next {
+      from { opacity: .2; transform: translateX(32px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes daily-slide-prev {
+      from { opacity: .2; transform: translateX(-32px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes daily-fade {
+      from { opacity: .35; }
+      to { opacity: 1; }
+    }
+    .daily-empty {
+      display: grid;
+      grid-column: 1 / -1;
+      justify-items: center;
+      gap: 8px;
+      padding: 24px 12px;
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      background: #fbfefd;
+      color: var(--muted);
+      text-align: center;
+      font-weight: 800;
+    }
+    .daily-empty strong {
+      color: var(--ink);
+      font-size: 18px;
+    }
     .simple-table { min-width: 760px; }
     .student-table { min-width: 900px; }
     .simple-table th { background: #e8f8f0; }
@@ -418,9 +540,25 @@
       <div class="metric"><span>Income To Date</span><strong id="metricIncome">RM 0.00</strong></div>
     </div>
 
-    <section>
-      <h2>Today's Classes</h2>
-      <div id="upcomingList" class="cards"></div>
+    <section id="dailyNavigatorSection">
+      <div class="daily-navigator" id="dailyNavigator">
+        <div class="daily-nav-header">
+          <button class="btn ghost" id="previousDayBtn" title="Previous day" aria-label="Previous day">&lsaquo;</button>
+          <div class="daily-date-label">
+            <strong id="dailyDateLabel">Today</strong>
+            <span id="dailyDateContext">Loading classes...</span>
+          </div>
+          <button class="btn ghost" id="nextDayBtn" title="Next day" aria-label="Next day">&rsaquo;</button>
+        </div>
+        <div class="daily-week-strip" id="dailyWeekStrip" aria-label="Daily classes week strip"></div>
+        <div class="daily-list-title">
+          <h2 id="dailyClassesTitle">Today's Classes (0)</h2>
+          <span class="subtle" id="dailyCacheStatus">Loaded from monthly timetable</span>
+        </div>
+        <div class="daily-list-shell">
+          <div id="upcomingList" class="daily-list cards"></div>
+        </div>
+      </div>
     </section>
 
     <section id="monthCalendarSection">
@@ -567,6 +705,10 @@
     let lastLoadedVersion = 0;
     let selectedWeekStartISO = "";
     let weekSwipeStart = null;
+    let selectedDailyDateISO = "";
+    let dailySwipeStart = null;
+    let dailySlideDirection = "still";
+    let monthTimetableCache = new Map();
     let studentSaveTimer = null;
     let teacherStudentPage = 1;
     let monthListPage = 1;
@@ -921,7 +1063,38 @@
       return { from: localISO(monthStart), to: localISO(toDate), month, year };
     }
 
-    async function loadTimetable({ silent = false } = {}) {
+    function teacherCacheKey(year, month) {
+      const teacherId = params.get("teacherId") || params.get("teacher") || "";
+      return `${teacherId}|${year}|${String(month).padStart(2, "0")}`;
+    }
+
+    function cacheCurrentTimetable(range, data) {
+      if (!data) return;
+      monthTimetableCache.set(teacherCacheKey(range.year, range.month), {
+        data: typeof structuredClone === "function" ? structuredClone(data) : JSON.parse(JSON.stringify(data)),
+        version: Number(data.version || 0),
+        cachedAt: new Date().toISOString()
+      });
+      if (monthTimetableCache.size > 6) {
+        const oldestKey = monthTimetableCache.keys().next().value;
+        monthTimetableCache.delete(oldestKey);
+      }
+    }
+
+    function useCachedTimetable(range) {
+      const cached = monthTimetableCache.get(teacherCacheKey(range.year, range.month));
+      if (!cached?.data) return false;
+      timetableData = normalizeLoadedTimetable(typeof structuredClone === "function" ? structuredClone(cached.data) : JSON.parse(JSON.stringify(cached.data)));
+      lastLoadedVersion = Number(cached.version || timetableData.version || lastLoadedVersion || 0);
+      $("teacherChip").textContent = timetableData.teacher?.name || "Teacher";
+      setSyncChip(`Cache: ${MONTHS[range.month]} ${range.year}`);
+      setStatus(`Loaded ${MONTHS[range.month]} ${range.year} from local month cache.`);
+      renderAll();
+      $("teacherDataContent").classList.remove("hide");
+      return true;
+    }
+
+    async function loadTimetable({ silent = false, force = false } = {}) {
       const teacherId = params.get("teacherId") || params.get("teacher") || "";
       const token = params.get("token") || "";
       if (!teacherId || !token) {
@@ -930,6 +1103,7 @@
         throw new Error("Teacher link token is invalid or not synced yet.");
       }
       const range = selectedMonthRange();
+      if (!force && useCachedTimetable(range)) return;
       const url = new URL(`${API_BASE}/api/teacher-view`);
       url.searchParams.set("key", STATE_KEY);
       url.searchParams.set("teacherId", teacherId);
@@ -945,6 +1119,7 @@
         throw new Error(teacherApiErrorMessage(error));
       }
       timetableData = normalizeLoadedTimetable(data);
+      cacheCurrentTimetable(range, timetableData);
       lastLoadedVersion = Number(data.version || 0);
       $("teacherChip").textContent = data.teacher.name || "Teacher";
       lastAutoSyncAt = new Date();
@@ -970,7 +1145,7 @@
       }
     }
 
-    async function autoSyncTimetable() {
+	    async function autoSyncTimetable() {
       if (autoSyncInProgress) return;
       if (studentSaveTimer) {
         setSyncChip("Auto-sync: paused while editing");
@@ -979,9 +1154,9 @@
       autoSyncInProgress = true;
       setSyncChip("Auto-sync: checking...");
       try {
-        const latest = await loadTeacherVersion();
-        if (Number(latest.version || 0) > lastLoadedVersion) {
-          await loadTimetable({ silent: true });
+	        const latest = await loadTeacherVersion();
+	        if (Number(latest.version || 0) > lastLoadedVersion) {
+	          await loadTimetable({ silent: true, force: true });
         } else {
           setSyncChip(`Auto-sync: ${clockLabel(new Date())}`);
         }
@@ -1066,6 +1241,139 @@
       const cells = scheduleCells().filter(cell => cell.date >= fromISO && cell.date <= toISO && !["open", "reserved", "off"].includes(cell.kind) && cell.status !== "off" && !cell.unavailable);
       return cells.map(cell => ({ kind: "cell", date: cell.date, time: cell.time, cell }))
         .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+    }
+
+    function todayISO() {
+      return localISO(new Date());
+    }
+
+    function dateRelationLabel(dateISO) {
+      const today = todayISO();
+      if (dateISO === today) return "Today";
+      if (dateISO === dateOffsetISO(today, 1)) return "Tomorrow";
+      if (dateISO === dateOffsetISO(today, -1)) return "Yesterday";
+      const date = parseISODate(dateISO);
+      return date.toLocaleDateString("en-GB", { weekday: "long" });
+    }
+
+    function dailyHeaderLabel(dateISO) {
+      const date = parseISODate(dateISO);
+      const relation = dateRelationLabel(dateISO);
+      const dateText = date.toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "short", year: "numeric" });
+      if (["Today", "Tomorrow", "Yesterday"].includes(relation)) {
+        return `${relation} · ${date.toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "short" })}`;
+      }
+      return dateText;
+    }
+
+    function ensureDailyDateForSelectedMonth(preferExisting = true) {
+      const month = Number($("monthSelect").value);
+      const year = Number($("yearSelect").value);
+      const current = selectedDailyDateISO ? parseISODate(selectedDailyDateISO) : null;
+      if (preferExisting && current && current.getMonth() === month && current.getFullYear() === year) return;
+      const today = parseISODate(todayISO());
+      selectedDailyDateISO = today.getMonth() === month && today.getFullYear() === year
+        ? todayISO()
+        : localISO(new Date(year, month, 1));
+      const minimum = new Date(FIRST_VIEW_YEAR, FIRST_VIEW_MONTH, 1);
+      if (parseISODate(selectedDailyDateISO) < minimum) selectedDailyDateISO = localISO(minimum);
+    }
+
+    function entriesForDay(dateISO) {
+      return classEntries(dateISO, dateISO).sort((a, b) => minutes(a.time) - minutes(b.time));
+    }
+
+    function classCardHtml(entry) {
+      const meta = entryMeta(entry);
+      const passed = meta.status === "completed";
+      const notShow = meta.status === "student_not_show";
+      const statusText = passed ? "Passed" : (notShow ? "Student Not Show" : `${statusLabel(meta.status)} | ${meta.type}`);
+      return `<div class="class-card${passed ? " is-passed" : ""}${notShow ? " is-not-show" : ""}">
+        <strong>${escapeHtml(meta.studentName)} ${meta.subject ? `(${escapeHtml(meta.subject)})` : ""}</strong>
+        <div class="class-time">${timeLabel(entry.time)}</div>
+        <div class="subtle">${dateLabel(entry.date)}</div>
+        <span class="pill">${escapeHtml(statusText)}</span>
+        ${meta.remark ? `<div class="subtle" style="margin-top:8px;">${escapeHtml(meta.remark)}</div>` : ""}
+      </div>`;
+    }
+
+    function renderDailyWeekStrip() {
+      const selected = parseISODate(selectedDailyDateISO);
+      const start = mondayOf(selected);
+      const dates = weekDates(localISO(start));
+      $("dailyWeekStrip").innerHTML = dates.map(date => {
+        const dateISO = localISO(date);
+        const count = entriesForDay(dateISO).length;
+        const active = dateISO === selectedDailyDateISO;
+        return `<button class="daily-day-button${count ? " has-classes" : ""}${active ? " active" : ""}" data-daily-date="${dateISO}" aria-label="${escapeHtml(dateLabel(dateISO))}, ${count} class${count === 1 ? "" : "es"}">
+          <span>${escapeHtml(DAYS[(date.getDay() + 6) % 7].slice(0, 3))}</span>
+          <strong>${date.getDate()}</strong>
+          <i class="dot" aria-hidden="true"></i>
+        </button>`;
+      }).join("");
+    }
+
+    function renderDailyNavigator() {
+      if (!timetableData) return;
+      ensureDailyDateForSelectedMonth(true);
+      const entries = entriesForDay(selectedDailyDateISO);
+      const relation = dateRelationLabel(selectedDailyDateISO);
+      $("dailyDateLabel").textContent = dailyHeaderLabel(selectedDailyDateISO);
+      $("dailyDateContext").textContent = dateLabel(selectedDailyDateISO);
+      $("dailyClassesTitle").textContent = `${relation}'s Classes (${entries.length})`;
+      $("dailyCacheStatus").textContent = `Using loaded ${MONTHS[parseISODate(selectedDailyDateISO).getMonth()]} timetable`;
+      renderDailyWeekStrip();
+      const list = $("upcomingList");
+      list.className = `daily-list cards slide-${dailySlideDirection || "still"}`;
+      list.innerHTML = entries.length
+        ? entries.map(classCardHtml).join("")
+        : `<div class="daily-empty"><div style="font-size:30px;">🌙</div><strong>No classes scheduled.</strong><span>Enjoy your day.</span></div>`;
+      const todayEntries = entriesForDay(todayISO()).filter(entry => !CANCELLED.includes(entryMeta(entry).status));
+      const remaining = todayEntries.filter(entry => entryMeta(entry).status !== "completed" && !slotHasPassed(entry.date, entry.time));
+      $("metricUpcoming").textContent = remaining.length;
+      window.setTimeout(() => {
+        if (list) list.classList.remove("slide-next", "slide-prev", "slide-still");
+      }, 260);
+    }
+
+    async function navigateDaily(offset) {
+      const previousScroll = { x: window.scrollX, y: window.scrollY };
+      const targetISO = dateOffsetISO(selectedDailyDateISO || todayISO(), offset);
+      const minimumDate = new Date(FIRST_VIEW_YEAR, FIRST_VIEW_MONTH, 1);
+      if (parseISODate(targetISO) < minimumDate) return;
+      dailySlideDirection = offset > 0 ? "next" : "prev";
+      const targetDate = parseISODate(targetISO);
+      const currentMonth = Number($("monthSelect").value);
+      const currentYear = Number($("yearSelect").value);
+      selectedDailyDateISO = targetISO;
+      if (targetDate.getMonth() !== currentMonth || targetDate.getFullYear() !== currentYear) {
+        ensureYearOption(targetDate.getFullYear());
+        $("yearSelect").value = String(targetDate.getFullYear());
+        fillMonthSelect(targetDate.getFullYear(), targetDate.getMonth());
+        $("monthSelect").value = String(targetDate.getMonth());
+        resetSelectedWeek(true);
+        await loadTimetable();
+      } else {
+        renderDailyNavigator();
+      }
+      window.scrollTo(previousScroll.x, previousScroll.y);
+    }
+
+    async function selectDailyDate(dateISO) {
+      const previous = selectedDailyDateISO || todayISO();
+      const offset = parseISODate(dateISO) >= parseISODate(previous) ? 1 : -1;
+      selectedDailyDateISO = dateISO;
+      dailySlideDirection = offset > 0 ? "next" : "prev";
+      const target = parseISODate(dateISO);
+      if (target.getMonth() !== Number($("monthSelect").value) || target.getFullYear() !== Number($("yearSelect").value)) {
+        ensureYearOption(target.getFullYear());
+        $("yearSelect").value = String(target.getFullYear());
+        fillMonthSelect(target.getFullYear(), target.getMonth());
+        $("monthSelect").value = String(target.getMonth());
+        await loadTimetable();
+      } else {
+        renderDailyNavigator();
+      }
     }
 
     function entryMeta(entry) {
@@ -1404,27 +1712,6 @@
       setTimeout(() => popup.print(), 350);
     }
 
-    function renderUpcoming() {
-      const from = localISO(new Date());
-      const to = from;
-      const entries = classEntries(from, to)
-        .filter(entry => !CANCELLED.includes(entryMeta(entry).status))
-        .sort((a, b) => minutes(a.time) - minutes(b.time));
-      const remaining = entries.filter(entry => entryMeta(entry).status !== "completed" && !slotHasPassed(entry.date, entry.time));
-      $("metricUpcoming").textContent = remaining.length;
-      $("upcomingList").innerHTML = entries.map(entry => {
-        const meta = entryMeta(entry);
-        const passed = meta.status === "completed";
-        const notShow = meta.status === "student_not_show";
-        return `<div class="class-card${passed ? " is-passed" : ""}${notShow ? " is-not-show" : ""}">
-          <strong>${escapeHtml(meta.studentName)} ${meta.subject ? `(${escapeHtml(meta.subject)})` : ""}</strong>
-          <div class="class-time">${timeLabel(entry.time)}</div>
-          <div class="subtle">${dateLabel(entry.date)}</div>
-          <span class="pill">${escapeHtml(passed ? "Passed" : (notShow ? "Student Not Show" : meta.type))}</span>
-        </div>`;
-      }).join("") || `<div class="subtle">No classes today.</div>`;
-    }
-
     function tableHtml(headers, rows) {
       return `<table class="simple-table"><thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
     }
@@ -1667,10 +1954,10 @@
       $("monthlySection").classList.remove("hide");
     }
 
-    function renderAll() {
-      if (!timetableData) return;
-      renderMonthCalendar();
-      renderUpcoming();
+	    function renderAll() {
+	      if (!timetableData) return;
+	      renderMonthCalendar();
+	      renderDailyNavigator();
       renderMonthList();
       renderLeaveList();
       renderIncomeHistory();
@@ -1679,24 +1966,33 @@
       renderVisibility();
     }
 
-    $("monthSelect").addEventListener("change", () => {
-      monthListPage = 1;
-      leaveListPage = 1;
-      incomeListPage = 1;
-      resetSelectedWeek(true);
-      loadTimetable().catch(error => showTimetableLoadFailure(error));
-    });
+	    $("monthSelect").addEventListener("change", () => {
+	      monthListPage = 1;
+	      leaveListPage = 1;
+	      incomeListPage = 1;
+	      ensureDailyDateForSelectedMonth(false);
+	      resetSelectedWeek(true);
+	      loadTimetable().catch(error => showTimetableLoadFailure(error));
+	    });
     $("yearSelect").addEventListener("change", () => {
-      monthListPage = 1;
-      leaveListPage = 1;
-      incomeListPage = 1;
-      fillMonthSelect(Number($("yearSelect").value), Number($("monthSelect").value));
-      resetSelectedWeek(true);
-      loadTimetable().catch(error => showTimetableLoadFailure(error));
-    });
-    $("refreshBtn").addEventListener("click", () => loadTimetable().catch(error => showTimetableLoadFailure(error)));
-    $("previousWeekBtn").addEventListener("click", () => navigateWeek(-1).catch(error => showTimetableLoadFailure(error)));
-    $("nextWeekBtn").addEventListener("click", () => navigateWeek(1).catch(error => showTimetableLoadFailure(error)));
+	      monthListPage = 1;
+	      leaveListPage = 1;
+	      incomeListPage = 1;
+	      fillMonthSelect(Number($("yearSelect").value), Number($("monthSelect").value));
+	      ensureDailyDateForSelectedMonth(false);
+	      resetSelectedWeek(true);
+	      loadTimetable().catch(error => showTimetableLoadFailure(error));
+	    });
+	    $("refreshBtn").addEventListener("click", () => loadTimetable({ force: true }).catch(error => showTimetableLoadFailure(error)));
+	    $("previousWeekBtn").addEventListener("click", () => navigateWeek(-1).catch(error => showTimetableLoadFailure(error)));
+	    $("nextWeekBtn").addEventListener("click", () => navigateWeek(1).catch(error => showTimetableLoadFailure(error)));
+	    $("previousDayBtn").addEventListener("click", () => navigateDaily(-1).catch(error => showTimetableLoadFailure(error)));
+	    $("nextDayBtn").addEventListener("click", () => navigateDaily(1).catch(error => showTimetableLoadFailure(error)));
+	    $("dailyWeekStrip").addEventListener("click", event => {
+	      const button = event.target.closest("[data-daily-date]");
+	      if (!button) return;
+	      selectDailyDate(button.dataset.dailyDate).catch(error => showTimetableLoadFailure(error));
+	    });
     $("monthCalendarSection").addEventListener("touchstart", event => {
       if (event.touches.length !== 1 || event.target.closest(".timetable-wrap")) {
         weekSwipeStart = null;
@@ -1704,14 +2000,29 @@
       }
       weekSwipeStart = { x: event.touches[0].clientX, y: event.touches[0].clientY };
     }, { passive: true });
-    $("monthCalendarSection").addEventListener("touchend", event => {
-      if (!weekSwipeStart || !event.changedTouches.length) return;
-      const deltaX = event.changedTouches[0].clientX - weekSwipeStart.x;
-      const deltaY = event.changedTouches[0].clientY - weekSwipeStart.y;
-      weekSwipeStart = null;
-      if (Math.abs(deltaX) < 55 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.25) return;
-      navigateWeek(deltaX < 0 ? 1 : -1).catch(error => setStatus(error.message, "error"));
-    }, { passive: true });
+	    $("monthCalendarSection").addEventListener("touchend", event => {
+	      if (!weekSwipeStart || !event.changedTouches.length) return;
+	      const deltaX = event.changedTouches[0].clientX - weekSwipeStart.x;
+	      const deltaY = event.changedTouches[0].clientY - weekSwipeStart.y;
+	      weekSwipeStart = null;
+	      if (Math.abs(deltaX) < 55 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.25) return;
+	      navigateWeek(deltaX < 0 ? 1 : -1).catch(error => setStatus(error.message, "error"));
+	    }, { passive: true });
+	    $("dailyNavigatorSection").addEventListener("touchstart", event => {
+	      if (event.touches.length !== 1) {
+	        dailySwipeStart = null;
+	        return;
+	      }
+	      dailySwipeStart = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+	    }, { passive: true });
+	    $("dailyNavigatorSection").addEventListener("touchend", event => {
+	      if (!dailySwipeStart || !event.changedTouches.length) return;
+	      const deltaX = event.changedTouches[0].clientX - dailySwipeStart.x;
+	      const deltaY = event.changedTouches[0].clientY - dailySwipeStart.y;
+	      dailySwipeStart = null;
+	      if (Math.abs(deltaX) < 45 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.25) return;
+	      navigateDaily(deltaX < 0 ? 1 : -1).catch(error => setStatus(error.message, "error"));
+	    }, { passive: true });
     $("exportIncomePdfBtn").addEventListener("click", exportIncomePdf);
     $("claimYearSelect").addEventListener("change", () => {
       fillClaimMonthSelect(Number($("claimYearSelect").value), Number($("claimMonthSelect").value));
