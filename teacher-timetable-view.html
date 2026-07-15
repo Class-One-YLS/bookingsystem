@@ -581,6 +581,7 @@
         <h2>Income History</h2>
         <button class="btn ghost" id="exportIncomePdfBtn">Export Month PDF</button>
       </div>
+      <div id="incomeBreakdownPanel" class="hide" style="margin-bottom:12px;"></div>
       <div id="incomeList" class="timetable-wrap"></div>
     </section>
 
@@ -724,6 +725,38 @@
 
     function localISO(date) {
       return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    }
+
+    function getCurrentBusinessDate(reference = new Date()) {
+      const today = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate());
+      const weekStart = new Date(today);
+      weekStart.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekStart.getDate() + 6);
+      return {
+        todayISO: localISO(today),
+        currentMonth: today.getMonth(),
+        currentYear: today.getFullYear(),
+        currentWeekStart: localISO(weekStart),
+        currentWeekEnd: localISO(weekEnd)
+      };
+    }
+
+    function teacherViewSessionKey(key) {
+      return `classone_teacher_view_${teacherId || "unknown"}_${key}`;
+    }
+
+    function teacherViewSessionGet(key, fallback = "") {
+      try {
+        const value = sessionStorage.getItem(teacherViewSessionKey(key));
+        return value === null || value === "" ? fallback : value;
+      } catch (error) {
+        return fallback;
+      }
+    }
+
+    function teacherViewSessionSet(key, value) {
+      try { sessionStorage.setItem(teacherViewSessionKey(key), String(value ?? "")); } catch (error) {}
     }
 
     function parseISODate(value) {
@@ -961,18 +994,39 @@
     }
 
     function fillControls() {
-      const currentYear = new Date().getFullYear();
+      const current = getCurrentBusinessDate();
+      const currentYear = current.currentYear;
       const startYear = FIRST_VIEW_YEAR;
       const endYear = Math.max(currentYear + 4, FIRST_VIEW_YEAR + 4);
       $("yearSelect").innerHTML = Array.from({ length: endYear - startYear + 1 }, (_, index) => startYear + index).map(year => `<option value="${year}">${year}</option>`).join("");
-      const selectedMonth = Number(params.get("month") || new Date().getMonth());
-      const selectedYear = Math.max(FIRST_VIEW_YEAR, Number(params.get("year") || currentYear));
+      const selectedMonth = Number(params.get("month") || teacherViewSessionGet("month", current.currentMonth));
+      const selectedYear = Math.max(FIRST_VIEW_YEAR, Number(params.get("year") || teacherViewSessionGet("year", currentYear)));
       $("yearSelect").value = String(selectedYear);
       fillMonthSelect(selectedYear, selectedMonth);
       $("claimYearSelect").innerHTML = $("yearSelect").innerHTML;
-      $("claimYearSelect").value = String(selectedYear);
-      fillClaimMonthSelect(selectedYear, selectedMonth);
+      const claimYear = Math.max(FIRST_VIEW_YEAR, Number(teacherViewSessionGet("claim_year", selectedYear)));
+      $("claimYearSelect").value = String(claimYear);
+      fillClaimMonthSelect(claimYear, teacherViewSessionGet("claim_month", selectedMonth));
       resetSelectedWeek(true);
+      const savedWeekStart = teacherViewSessionGet("week_start", "");
+      if (savedWeekStart && weekIntersectsMonth(savedWeekStart, selectedYear, selectedMonth)) selectedWeekStartISO = savedWeekStart;
+      const savedDailyDate = teacherViewSessionGet("daily_date", "");
+      if (savedDailyDate) {
+        const dailyDate = parseISODate(savedDailyDate);
+        if (dailyDate.getFullYear() === selectedYear && dailyDate.getMonth() === Number($("monthSelect").value)) selectedDailyDateISO = savedDailyDate;
+      }
+    }
+
+    function persistTeacherViewSelection() {
+      teacherViewSessionSet("month", $("monthSelect").value);
+      teacherViewSessionSet("year", $("yearSelect").value);
+      if (selectedWeekStartISO) teacherViewSessionSet("week_start", selectedWeekStartISO);
+      if (selectedDailyDateISO) teacherViewSessionSet("daily_date", selectedDailyDateISO);
+    }
+
+    function persistTeacherClaimSelection() {
+      teacherViewSessionSet("claim_month", $("claimMonthSelect").value);
+      teacherViewSessionSet("claim_year", $("claimYearSelect").value);
     }
 
     function fillClaimMonthSelect(year, preferredMonth = null) {
@@ -1039,6 +1093,7 @@
       const selectedYear = Number($("yearSelect").value);
       selectedWeekStartISO = candidate;
       if (weekIntersectsMonth(candidate, selectedYear, selectedMonth)) {
+        persistTeacherViewSelection();
         renderMonthCalendar();
         return;
       }
@@ -1049,6 +1104,7 @@
       $("yearSelect").value = String(targetYear);
       fillMonthSelect(targetYear, targetMonth);
       $("monthSelect").value = String(targetMonth);
+      persistTeacherViewSelection();
       await loadTimetable();
     }
 
@@ -1110,6 +1166,8 @@
       url.searchParams.set("token", token);
       url.searchParams.set("from", range.from);
       url.searchParams.set("to", range.to);
+      url.searchParams.set("month", String(range.month));
+      url.searchParams.set("year", String(range.year));
       url.searchParams.set("_", String(Date.now()));
       if (!silent) setStatus("Loading latest timetable...");
       let data;
@@ -1351,9 +1409,11 @@
         $("yearSelect").value = String(targetDate.getFullYear());
         fillMonthSelect(targetDate.getFullYear(), targetDate.getMonth());
         $("monthSelect").value = String(targetDate.getMonth());
+        persistTeacherViewSelection();
         resetSelectedWeek(true);
         await loadTimetable();
       } else {
+        persistTeacherViewSelection();
         renderDailyNavigator();
       }
       window.scrollTo(previousScroll.x, previousScroll.y);
@@ -1370,8 +1430,10 @@
         $("yearSelect").value = String(target.getFullYear());
         fillMonthSelect(target.getFullYear(), target.getMonth());
         $("monthSelect").value = String(target.getMonth());
+        persistTeacherViewSelection();
         await loadTimetable();
       } else {
+        persistTeacherViewSelection();
         renderDailyNavigator();
       }
     }
@@ -1435,6 +1497,13 @@
       return CANCELLED.includes(entryMeta(entry).status);
     }
 
+    function apiIncomeSummaryFor(month, year) {
+      const summary = timetableData?.incomeSummary;
+      if (!summary) return null;
+      if (Number(summary.month) !== Number(month) || Number(summary.year) !== Number(year)) return null;
+      return summary;
+    }
+
     function monthlyTeachingSummary(month, year) {
       const from = localISO(new Date(year, month, 1));
       const to = localISO(new Date(year, month + 1, 0));
@@ -1446,19 +1515,26 @@
       const lessonPay = completed.reduce((sum, entry) => sum + Number(entryMeta(entry).estimatedPay || 0), 0);
       const notShowPay = notShows.reduce((sum, entry) => sum + Number(entryMeta(entry).estimatedPay || 5), 0);
       const notShowRate = notShows.length ? notShowPay / notShows.length : 5;
+      const apiSummary = apiIncomeSummaryFor(month, year);
       return {
         entries,
         completed,
         notShows,
         cancelled,
-        completedCount: completed.length,
-        notShowCount: notShows.length,
+        completedCount: apiSummary ? Number(apiSummary.completedLessons || 0) : completed.length,
+        notShowCount: apiSummary ? Number(apiSummary.noShowCount ?? notShows.length) : notShows.length,
         notShowRate,
-        cancelledCount: cancelled.length,
+        cancelledCount: apiSummary ? Number(apiSummary.cancelledCount ?? cancelled.length) : cancelled.length,
         teacherLeaveCount,
-        lessonPay,
-        notShowPay,
-        incomeTotal: lessonPay + notShowPay
+        lessonPay: apiSummary ? Number(apiSummary.completedIncome || 0) : lessonPay,
+        notShowPay: apiSummary ? Number(apiSummary.noShowAllowance || 0) : notShowPay,
+        incomeTotal: apiSummary ? Number(apiSummary.totalIncome || 0) : lessonPay + notShowPay,
+        incomeMode: apiSummary?.incomeMode || timetableData?.teacher?.incomeMode || "fixed_rate",
+        teacherCategory: apiSummary?.teacherCategory || timetableData?.teacher?.payoutMethod || "Freelance Tutor",
+        approvedClassRate: Number(apiSummary?.approvedClassRate ?? timetableData?.teacher?.rate ?? 0),
+        profitSharePercentage: Number(apiSummary?.profitSharePercentage ?? timetableData?.teacher?.profitShare ?? 0),
+        studentIncomeRows: apiSummary?.studentIncomeRows || [],
+        packageWarnings: apiSummary?.packageWarnings || []
       };
     }
 
@@ -1482,7 +1558,10 @@
         teacherLeaveCount: summary.teacherLeaveCount,
         lessonPay: summary.lessonPay,
         notShowPay: summary.notShowPay,
-        attendancePay
+        attendancePay,
+        incomeMode: summary.incomeMode,
+        profitSharePercentage: summary.profitSharePercentage,
+        approvedClassRate: summary.approvedClassRate
       };
     }
 
@@ -1542,10 +1621,13 @@
       const automatic = claimAutomaticSummary();
       const claim = currentClaimForm();
       const rate = Number(timetableData?.teacher?.rate || 0);
+      const lessonDescription = automatic.incomeMode === "profit_share"
+        ? `${automatic.completedCount} completed lessons by package share (${Number(automatic.profitSharePercentage || 0).toFixed(2)}%)`
+        : (rate > 0 ? `${automatic.completedCount} completed lessons x RM${rate.toFixed(2)}` : `${automatic.completedCount} completed lessons`);
       const rows = [
         {
           project: "Online class incentive",
-          description: rate > 0 ? `${automatic.completedCount} completed lessons x RM${rate.toFixed(2)}` : `${automatic.completedCount} completed lessons`,
+          description: lessonDescription,
           amount: automatic.lessonPay,
           automatic: true
         },
@@ -1639,6 +1721,8 @@
       $("yearSelect").value = String(year);
       fillMonthSelect(year, month);
       $("monthSelect").value = String(month);
+      persistTeacherViewSelection();
+      persistTeacherClaimSelection();
       $("claimLoadStatus").textContent = "Loading timetable and saved claim for this month...";
       await loadTimetable({ silent: true });
       await loadIncentiveClaim();
@@ -1864,11 +1948,44 @@
       $("leaveList").innerHTML = rows.length ? tableHtml(["No.", "Date", "Time", "Student", "Subject", "Status", "Remark"], rows) + pagerHtml("leaveList", leaveListPage, leaveEntries.length) : `<div class="subtle" style="padding:12px;">No cancelled, leave, public holiday, or not-show records in selected month.</div>`;
     }
 
+    function renderIncomeBreakdown(summary) {
+      const panel = $("incomeBreakdownPanel");
+      if (!panel) return;
+      if (summary.incomeMode !== "profit_share") {
+        panel.classList.add("hide");
+        panel.innerHTML = "";
+        return;
+      }
+      const rows = (summary.studentIncomeRows || []).map((row, index) => [
+        String(index + 1),
+        escapeHtml(row.studentName || "Student"),
+        row.packageIncomplete ? `<span class="pill warn">Package incomplete</span>` : `${escapeHtml(money(row.packageAmount))} / ${Number(row.packageTotalClasses || 0)}`,
+        row.packageIncomplete ? "-" : escapeHtml(money(row.lessonRate)),
+        `${Number(row.profitSharePercentage || summary.profitSharePercentage || 0).toFixed(2)}%`,
+        Number(row.completedLessons || 0),
+        row.packageIncomplete ? "-" : escapeHtml(money(row.teacherRatePerLesson)),
+        row.packageIncomplete ? "-" : escapeHtml(money(row.income))
+      ]);
+      const warnings = (summary.packageWarnings || []).length
+        ? `<div class="status warn" style="margin:10px 0 0;">${summary.packageWarnings.map(escapeHtml).join("<br>")}</div>`
+        : "";
+      panel.innerHTML = `
+        <div class="metric" style="margin-bottom:10px;">
+          <span>Income Breakdown</span>
+          <strong>${escapeHtml(money(summary.lessonPay))}</strong>
+          <div class="subtle">Micro Franchisee profit share: ${Number(summary.profitSharePercentage || 0).toFixed(2)}%</div>
+        </div>
+        ${rows.length ? tableHtml(["No.", "Student", "Package", "Lesson Rate", "Share", "Completed", "Teacher / Lesson", "Income"], rows) : `<div class="subtle" style="padding:12px;">No completed package-share lessons in selected month.</div>`}
+        ${warnings}`;
+      panel.classList.remove("hide");
+    }
+
     function renderIncomeHistory() {
       const { month, year } = selectedMonthRange();
       const summary = monthlyTeachingSummary(month, year);
       const entries = summary.entries.filter(entry => incomePayForEntry(entry) > 0);
       $("metricIncome").textContent = money(summary.incomeTotal);
+      renderIncomeBreakdown(summary);
       incomeListPage = clampPage(incomeListPage, entries.length);
       const incomePageData = pageSlice(entries, incomeListPage);
       incomeListPage = incomePageData.page;
@@ -1970,6 +2087,7 @@
 	      monthListPage = 1;
 	      leaveListPage = 1;
 	      incomeListPage = 1;
+        persistTeacherViewSelection();
 	      ensureDailyDateForSelectedMonth(false);
 	      resetSelectedWeek(true);
 	      loadTimetable().catch(error => showTimetableLoadFailure(error));
@@ -1979,6 +2097,7 @@
 	      leaveListPage = 1;
 	      incomeListPage = 1;
 	      fillMonthSelect(Number($("yearSelect").value), Number($("monthSelect").value));
+        persistTeacherViewSelection();
 	      ensureDailyDateForSelectedMonth(false);
 	      resetSelectedWeek(true);
 	      loadTimetable().catch(error => showTimetableLoadFailure(error));
@@ -2026,10 +2145,12 @@
     $("exportIncomePdfBtn").addEventListener("click", exportIncomePdf);
     $("claimYearSelect").addEventListener("change", () => {
       fillClaimMonthSelect(Number($("claimYearSelect").value), Number($("claimMonthSelect").value));
+      persistTeacherClaimSelection();
       incentiveClaimLoadedKey = "";
       $("claimLoadStatus").textContent = "Click Load Month to view this claim period.";
     });
     $("claimMonthSelect").addEventListener("change", () => {
+      persistTeacherClaimSelection();
       incentiveClaimLoadedKey = "";
       $("claimLoadStatus").textContent = "Click Load Month to view this claim period.";
     });
@@ -2103,6 +2224,8 @@
     }
 
     fillControls();
+    persistTeacherViewSelection();
+    persistTeacherClaimSelection();
     loadTimetable()
       .then(startAutoSync)
       .catch(error => showTimetableLoadFailure(error));
