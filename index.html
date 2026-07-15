@@ -11430,6 +11430,38 @@
       return document.querySelector(".nav-btn.active")?.dataset.tab || "schedule";
     }
 
+    let crmVisibleRenderFrame = 0;
+    function renderCrmAfterVisible({ preserveScroll = true } = {}) {
+      const section = $("crm");
+      if (!section || section.classList.contains("hide")) return;
+      const node = scrollPanelFor("leadList");
+      const scrollTop = preserveScroll ? (node?.scrollTop || 0) : 0;
+      const scrollLeft = preserveScroll ? (node?.scrollLeft || 0) : 0;
+      renderLeads();
+      if (preserveScroll) {
+        const nextNode = scrollPanelFor("leadList");
+        if (nextNode) {
+          nextNode.scrollTop = scrollTop;
+          nextNode.scrollLeft = scrollLeft;
+        }
+      }
+    }
+
+    function scheduleCrmVisibleRender({ preserveScroll = true } = {}) {
+      if (crmVisibleRenderFrame) cancelAnimationFrame(crmVisibleRenderFrame);
+      crmVisibleRenderFrame = requestAnimationFrame(() => {
+        renderCrmAfterVisible({ preserveScroll });
+        crmVisibleRenderFrame = requestAnimationFrame(() => {
+          crmVisibleRenderFrame = 0;
+          renderCrmAfterVisible({ preserveScroll });
+        });
+      });
+    }
+
+    function handleTabActivated(tabId) {
+      if (tabId === "crm") scheduleCrmVisibleRender({ preserveScroll: true });
+    }
+
     function restoreSessionActiveTab() {
       const savedTab = uiSessionGet("active_tab", "");
       if (!savedTab || !hasTabAccess(savedTab)) return false;
@@ -11660,6 +11692,7 @@
       enhanceTableColumnControls();
       renderAccessControls();
       restoreScrollPanels(scrollSnapshot);
+      handleTabActivated(activeTabId());
     }
 
     function clearTeacherForm() {
@@ -13891,6 +13924,7 @@
         uiSessionSet("active_tab", nav.dataset.tab);
         renderSectionNav(nav.dataset.tab);
         updateLayoutToggle();
+        handleTabActivated(nav.dataset.tab);
       }
       const sectionJump = e.target.closest("[data-section-jump]");
       if (sectionJump) {
