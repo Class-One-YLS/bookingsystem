@@ -2347,6 +2347,23 @@
     const SESSION_KEY = "classone_session";
     const USER_KEY = "classone_user";
     const UI_STATE_KEY = "classone_ui_state";
+    const UI_SESSION_PREFIX = "classone_ui_";
+    const UI_SESSION_KEYS = [
+      "active_tab",
+      "week_date",
+      "week_start",
+      "schedule_month",
+      "schedule_year",
+      "business_dashboard_month",
+      "business_dashboard_year",
+      "report_month",
+      "report_year",
+      "overview_leave_year",
+      "public_holiday_year",
+      "crm_report_year",
+      "crm_compare_year",
+      "no_show_month"
+    ];
     const DEVICE_ID_KEY = "classone_device_id";
     const SYNC_DEBUG = new URLSearchParams(window.location.search).get("debugSync") === "1";
     const loginMascots = [
@@ -2482,6 +2499,23 @@
       safeStorageSet(UI_STATE_KEY, JSON.stringify(state));
     }
 
+    function uiSessionKey(key) {
+      return `${UI_SESSION_PREFIX}${key}`;
+    }
+
+    function uiSessionGet(key, fallback = "") {
+      const value = safeSessionGet(uiSessionKey(key));
+      return value === "" || value === null ? fallback : value;
+    }
+
+    function uiSessionSet(key, value) {
+      safeSessionSet(uiSessionKey(key), String(value ?? ""));
+    }
+
+    function clearSessionUiSelections() {
+      UI_SESSION_KEYS.forEach(key => safeSessionRemove(uiSessionKey(key)));
+    }
+
     let studentRegularSlotsDraft = [];
     let studentRegularSlotEditId = "";
     let pendingEnrollmentLeadId = "";
@@ -2594,6 +2628,21 @@
     const $ = (id) => document.getElementById(id);
     const uid = (prefix) => prefix + "_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
     const localISO = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+    function getCurrentBusinessDate(reference = new Date()) {
+      const today = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate());
+      const weekStart = new Date(today);
+      weekStart.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekStart.getDate() + 6);
+      return {
+        todayISO: localISO(today),
+        currentMonth: today.getMonth(),
+        currentYear: today.getFullYear(),
+        currentWeekStart: localISO(weekStart),
+        currentWeekEnd: localISO(weekEnd)
+      };
+    }
 
     function pendingReplacementContext() {
       state.ui ||= {};
@@ -4794,26 +4843,66 @@
       $("tutorOnboardingChecks").innerHTML = TUTOR_ONBOARDING_STEPS.map(step => `<label class="pill"><input type="checkbox" value="${escapeHtml(step)}" style="width:auto;min-height:0;margin-right:6px;"> ${escapeHtml(step)}</label>`).join("");
     }
 
+    function setControlValue(id, value) {
+      const el = $(id);
+      if (!el || value === undefined || value === null || value === "") return false;
+      const stringValue = String(value);
+      if (el.tagName === "SELECT" && ![...el.options].some(option => option.value === stringValue)) return false;
+      el.value = stringValue;
+      return true;
+    }
+
+    function monthInputValue(month, year) {
+      return `${year}-${String(Number(month) + 1).padStart(2, "0")}`;
+    }
+
+    function persistScheduleDateState() {
+      if ($("monthSelect")) uiSessionSet("schedule_month", $("monthSelect").value);
+      if ($("yearInput")) uiSessionSet("schedule_year", $("yearInput").value);
+      if ($("weekSelect")) uiSessionSet("week_start", $("weekSelect").value);
+      if ($("weekDateInput")) uiSessionSet("week_date", $("weekDateInput").value);
+    }
+
+    function persistReportDateState() {
+      if ($("reportMonth")) uiSessionSet("report_month", $("reportMonth").value);
+      if ($("reportYear")) uiSessionSet("report_year", $("reportYear").value);
+    }
+
+    function persistBusinessDashboardDateState() {
+      if ($("businessDashboardMonth")) uiSessionSet("business_dashboard_month", $("businessDashboardMonth").value);
+      if ($("businessDashboardYear")) uiSessionSet("business_dashboard_year", $("businessDashboardYear").value);
+    }
+
     function setupMonths() {
-      const now = new Date();
-      $("monthSelect").value = now.getMonth();
-      $("reportMonth").value = now.getMonth();
-      $("businessDashboardMonth").value = now.getMonth();
-      $("overviewViewMode").value = "table";
-      $("yearInput").value = now.getFullYear();
-      $("reportYear").value = now.getFullYear();
-      $("businessDashboardYear").value = now.getFullYear();
-      $("overviewLeaveYear").value = now.getFullYear();
-      $("crmReportYear").value = now.getFullYear();
-      $("crmCompareYear").value = now.getFullYear() - 1;
-      if ($("noShowMonth")) $("noShowMonth").value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      const current = getCurrentBusinessDate();
+      const savedWeekDate = uiSessionGet("week_date", current.todayISO);
+      const savedWeekStart = uiSessionGet("week_start", weekStartFromDate(savedWeekDate || current.todayISO));
+      const scheduleDate = parseISODate(savedWeekStart || current.currentWeekStart);
+      setControlValue("monthSelect", uiSessionGet("schedule_month", scheduleDate.getMonth()));
+      setControlValue("yearInput", uiSessionGet("schedule_year", scheduleDate.getFullYear()));
       refreshWeeks();
-      const monday = new Date(now);
-      monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-      const currentWeekValue = localISO(monday);
-      if ([...$("weekSelect").options].some(o => o.value === currentWeekValue)) $("weekSelect").value = currentWeekValue;
-      $("weekDateInput").value = localISO(now);
+      if (!setControlValue("weekSelect", savedWeekStart)) {
+        const start = parseISODate(savedWeekStart || current.currentWeekStart);
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        $("weekSelect").add(new Option(`${start.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })} - ${end.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}`, localISO(start)));
+        setControlValue("weekSelect", localISO(start));
+      }
+      setControlValue("weekDateInput", savedWeekDate || current.todayISO);
+      setControlValue("reportMonth", uiSessionGet("report_month", current.currentMonth));
+      setControlValue("reportYear", uiSessionGet("report_year", current.currentYear));
+      setControlValue("businessDashboardMonth", uiSessionGet("business_dashboard_month", current.currentMonth));
+      setControlValue("businessDashboardYear", uiSessionGet("business_dashboard_year", current.currentYear));
+      $("overviewViewMode").value = $("overviewViewMode").value || "table";
+      setControlValue("overviewLeaveYear", uiSessionGet("overview_leave_year", current.currentYear));
+      setControlValue("crmReportYear", uiSessionGet("crm_report_year", current.currentYear));
+      setControlValue("crmCompareYear", uiSessionGet("crm_compare_year", current.currentYear - 1));
+      if ($("noShowMonth")) setControlValue("noShowMonth", uiSessionGet("no_show_month", monthInputValue(current.currentMonth, current.currentYear)));
+      if ($("publicHolidayYear")) setControlValue("publicHolidayYear", uiSessionGet("public_holiday_year", current.currentYear));
       updateWeekRangeLabel();
+      persistScheduleDateState();
+      persistReportDateState();
+      persistBusinessDashboardDateState();
     }
 
     function studentScheduleRange() {
@@ -4969,6 +5058,7 @@
       $("weekSelect").value = monday;
       $("weekDateInput").value = value;
       updateWeekRangeLabel();
+      persistScheduleDateState();
       if (shouldRender) renderSchedule();
     }
 
@@ -11340,6 +11430,15 @@
       return document.querySelector(".nav-btn.active")?.dataset.tab || "schedule";
     }
 
+    function restoreSessionActiveTab() {
+      const savedTab = uiSessionGet("active_tab", "");
+      if (!savedTab || !hasTabAccess(savedTab)) return false;
+      const button = document.querySelector(`.nav-btn[data-tab="${CSS.escape(savedTab)}"]`);
+      if (!button || button.classList.contains("hide")) return false;
+      button.click();
+      return true;
+    }
+
     function renderSectionNav(tabId = activeTabId()) {
       const section = $(tabId);
       if (!section) return;
@@ -11531,7 +11630,7 @@
       renderAllCallCount += 1;
       const scrollSnapshot = captureScrollPanels();
       if (initialDataLoadComplete) processExpiredReservations();
-      const old = Object.fromEntries(["monthSelect", "reportMonth", "businessDashboardMonth", "businessDashboardYear", "weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "typeFilter", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear", "slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher", "teacherStudentRecordTeacher", "teacherStudentRecordStatus", "teacherStudentRecordSearch", "teacherDirectorySubject", "reportTeacher", "tutorLeadFilterStatus", "tutorLeadFilterCategory"].map(id => [id, $(id)?.value]));
+      const old = Object.fromEntries(["monthSelect", "yearInput", "weekSelect", "weekDateInput", "reportMonth", "reportYear", "businessDashboardMonth", "businessDashboardYear", "crmReportYear", "crmCompareYear", "publicHolidayYear", "noShowMonth", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "typeFilter", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear", "slotTeacher", "bulkTeacher", "overrideTeacher", "studentTeacher", "teacherStudentRecordTeacher", "teacherStudentRecordStatus", "teacherStudentRecordSearch", "teacherDirectorySubject", "reportTeacher", "tutorLeadFilterStatus", "tutorLeadFilterCategory"].map(id => [id, $(id)?.value]));
       hydrateSelects();
       Object.entries(old).forEach(([id, value]) => { if ($(id) && value) $(id).value = value; });
       updateWeekRangeLabel();
@@ -12591,12 +12690,15 @@
         if (signedInUser?.id) uiStateSet("CurrentUserId", signedInUser.id);
         await withTimeout(hydratePersistentState(), 3000, "Browser cache took too long.");
         hydrateSelects();
+        setupMonths();
         await autoPullOnStart();
+        restoreSessionActiveTab();
         const user = (state.users || []).find(item => String(item.email || "").toLowerCase() === email.toLowerCase());
         if (user) uiStateSet("CurrentUserId", user.id);
         setStatus(`Signed in as ${signedInUser?.name || email}.`);
       } catch (pullError) {
         renderAll();
+        restoreSessionActiveTab();
         setStatus(`Signed in, but latest Neon data could not load: ${pullError.message}`, "warn");
       } finally {
         setWorkspaceLoading(false);
@@ -12652,6 +12754,7 @@
       isLoggingOut = true;
       try {
         clearSessionRecord();
+        clearSessionUiSelections();
         $("loginPassword").value = "";
         setLoginMessage("");
         setWorkspaceLoading(false);
@@ -13785,6 +13888,7 @@
         document.querySelectorAll(".tab").forEach(t => t.classList.toggle("hide", t.id !== nav.dataset.tab));
         clearAnyFormEditingIfSafe();
         $("pageTitle").textContent = nav.dataset.title || nav.textContent;
+        uiSessionSet("active_tab", nav.dataset.tab);
         renderSectionNav(nav.dataset.tab);
         updateLayoutToggle();
       }
@@ -15152,8 +15256,11 @@
       setStatus("Replacement credit added.");
       await autoPushIfConfigured("Replacement credit added.");
     };
-    $("publicHolidayYear").value = new Date().getFullYear();
-    $("publicHolidayYear").addEventListener("change", renderPublicHolidayCalendar);
+    setControlValue("publicHolidayYear", uiSessionGet("public_holiday_year", getCurrentBusinessDate().currentYear));
+    $("publicHolidayYear").addEventListener("change", () => {
+      uiSessionSet("public_holiday_year", $("publicHolidayYear").value);
+      renderPublicHolidayCalendar();
+    });
     $("addPublicHolidayBtn").onclick = () => {
       $("holidayStartDate").value = "";
       $("holidayEndDate").value = "";
@@ -15209,10 +15316,24 @@
       if (["weekSelect", "teacherFilter"].includes(event?.target?.id)) scheduleSmartScrollPausedUntil = 0;
       renderSchedule();
     }
-    ["monthSelect", "yearInput"].forEach(id => $(id).addEventListener("change", () => { scheduleSmartScrollPausedUntil = 0; refreshWeeks(); renderSchedule(); }));
+    ["monthSelect", "yearInput"].forEach(id => $(id).addEventListener("change", () => {
+      scheduleSmartScrollPausedUntil = 0;
+      refreshWeeks();
+      persistScheduleDateState();
+      renderSchedule();
+    }));
     $("weekDateInput").addEventListener("change", () => selectWeekFromCalendar($("weekDateInput").value));
-    ["weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "typeFilter"].forEach(id => $(id).addEventListener("change", renderScheduleAfterFilterChange));
-    ["weekSelect", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear"].forEach(id => $(id).addEventListener("change", renderTeacherOverview));
+    ["weekSelect", "teacherFilter", "subjectFilter", "timeFromFilter", "timeToFilter", "statusFilter", "typeFilter"].forEach(id => $(id).addEventListener("change", event => {
+      if (id === "weekSelect") {
+        $("weekDateInput").value = $("weekSelect").value;
+        persistScheduleDateState();
+      }
+      renderScheduleAfterFilterChange(event);
+    }));
+    ["weekSelect", "overviewTeacherFilter", "overviewViewMode", "overviewLeaveYear"].forEach(id => $(id).addEventListener("change", () => {
+      if (id === "overviewLeaveYear") uiSessionSet("overview_leave_year", $("overviewLeaveYear").value);
+      renderTeacherOverview();
+    }));
     $("addTeacherSlotPeriodBtn").onclick = addTeacherSlotEditPeriod;
     $("toggleTeacherSlotEditBtn").onclick = () => setTeacherSlotEditMode(!teacherSlotEditMode);
     $("exitTeacherSlotEditBtn").onclick = () => setTeacherSlotEditMode(false);
@@ -15234,7 +15355,8 @@
     $("clearOverviewFiltersBtn").onclick = () => {
       $("overviewTeacherFilter").value = "all";
       $("overviewViewMode").value = "table";
-      $("overviewLeaveYear").value = new Date().getFullYear();
+      $("overviewLeaveYear").value = getCurrentBusinessDate().currentYear;
+      uiSessionSet("overview_leave_year", $("overviewLeaveYear").value);
       renderTeacherOverview();
     };
     $("clearSalesFiltersBtn").onclick = () => {
@@ -15253,8 +15375,14 @@
         renderSchedule();
       };
     });
-    ["reportTeacher", "reportMonth", "reportYear"].forEach(id => $(id).addEventListener("change", renderReport));
-    ["businessDashboardMonth", "businessDashboardYear"].forEach(id => $(id).addEventListener("change", renderBusinessDashboard));
+    ["reportTeacher", "reportMonth", "reportYear"].forEach(id => $(id).addEventListener("change", () => {
+      if (id === "reportMonth" || id === "reportYear") persistReportDateState();
+      renderReport();
+    }));
+    ["businessDashboardMonth", "businessDashboardYear"].forEach(id => $(id).addEventListener("change", () => {
+      persistBusinessDashboardDateState();
+      renderBusinessDashboard();
+    }));
     $("studentSearch").addEventListener("input", () => { studentListPage = 1; renderStudents(); scrollToListStart("studentList"); });
     $("teacherCardSearch").addEventListener("input", () => { teacherListPage = 1; renderTeachers(); scrollToListStart("teacherList"); });
     $("teacherDirectorySearch").addEventListener("input", () => { teacherDirectoryPage = 1; renderTeacherDirectory(); scrollToListStart("teacherDirectoryList"); });
@@ -15467,7 +15595,11 @@
       setStatus(`Time slot update failed: ${err.message}`, "error");
       alert(`Time slot update failed: ${err.message}`);
     });
-    ["crmReportYear", "crmCompareYear"].forEach(id => $(id).addEventListener("change", renderCrmDashboard));
+    ["crmReportYear", "crmCompareYear"].forEach(id => $(id).addEventListener("change", () => {
+      if (id === "crmReportYear") uiSessionSet("crm_report_year", $("crmReportYear").value);
+      if (id === "crmCompareYear") uiSessionSet("crm_compare_year", $("crmCompareYear").value);
+      renderCrmDashboard();
+    }));
     $("generateCrmDashboardBtn").onclick = () => animateClick($("generateCrmDashboardBtn"), async () => {
       const year = Number($("crmReportYear").value);
       const compareYear = Number($("crmCompareYear").value || 0);
@@ -15516,7 +15648,12 @@
     $("exportAllTeacherPayoutPdfBtn").onclick = () => openPrintReport("All Teachers Monthly Payout", ["No.", "Teacher", "Category", "Tier", "Rate", "Share", "Completed", "Not Show", "Cancelled", "Lesson Pay", "Not Show Pay", "Total Pay"], numbered(teacherMonthlyPayoutRows()));
     ["replacementFilterStatus", "replacementFilterReason"].forEach(id => $(id).addEventListener("change", () => { replacementPage = 1; renderReplacements(); scrollToListStart("replacementList"); }));
     $("replacementSearch").addEventListener("input", () => { replacementPage = 1; renderReplacements(); scrollToListStart("replacementList"); });
-    ["noShowMonth", "noShowTeacherFilter", "noShowSubjectFilter"].forEach(id => $(id).addEventListener("change", () => { studentNoShowPage = 1; renderReplacements(); scrollToListStart("studentNoShowList"); }));
+    ["noShowMonth", "noShowTeacherFilter", "noShowSubjectFilter"].forEach(id => $(id).addEventListener("change", () => {
+      if (id === "noShowMonth") uiSessionSet("no_show_month", $("noShowMonth").value);
+      studentNoShowPage = 1;
+      renderReplacements();
+      scrollToListStart("studentNoShowList");
+    }));
     $("noShowSearch").addEventListener("input", () => { studentNoShowPage = 1; renderReplacements(); scrollToListStart("studentNoShowList"); });
     $("replacementBoardViewBtn").onclick = () => { replacementViewMode = "board"; replacementPage = 1; uiStateSet("ReplacementViewMode", replacementViewMode); renderReplacements(); scrollToListStart("replacementList"); };
     $("replacementTableViewBtn").onclick = () => { replacementViewMode = "table"; replacementPage = 1; uiStateSet("ReplacementViewMode", replacementViewMode); renderReplacements(); scrollToListStart("replacementList"); };
@@ -15606,6 +15743,7 @@
         try { localStorage.removeItem(USER_KEY); } catch (err) {}
         try { localStorage.removeItem(REMEMBERED_EMAIL_KEY); } catch (err) {}
         try { localStorage.removeItem(UI_STATE_KEY); } catch (err) {}
+        clearSessionUiSelections();
         if (window.indexedDB) indexedDB.deleteDatabase(DB_NAME);
         location.reload();
       }
@@ -15737,6 +15875,7 @@
         hydrateSelects();
         setupMonths();
         renderAll();
+        restoreSessionActiveTab();
         setupCompactSearchFields();
         if (!isAuthenticated()) {
           setRetrySaveVisible(false);
@@ -15745,7 +15884,9 @@
         withTimeout(hydratePersistentState(), 3000, "Browser database took too long.")
           .then(() => {
             hydrateSelects();
+            setupMonths();
             renderAll();
+            restoreSessionActiveTab();
             setupCompactSearchFields();
             setTimeout(() => autoPullOnStart(), 250);
           })
