@@ -2329,7 +2329,7 @@
       apiKey: "73a5baa8e4a70be55d79615e2dfbf4e843fa04b57ec04764",
       stateKey: "production"
     };
-    const FRONTEND_BUILD = "2026.07.14-calendar-parity.1";
+    const FRONTEND_BUILD = "2026.07.15-teacher-save-integrity.1";
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
     const LOGIN_TIMEOUT_MS = 8000;
@@ -2944,7 +2944,7 @@
       }
       return rows;
     };
-    const teacherById = (id) => state.teachers.find(t => t.id === id);
+    const teacherById = (id) => state.teachers.find(t => t.id === id || (id && Array.isArray(t.aliasIds) && t.aliasIds.includes(id)));
     const isTeacherArchived = (teacher) => teacher?.status === "archived" || teacher?.archived === true;
     const isImportedOnlyTeacher = (teacher) => {
       const regularSlots = teacher?.regularSlots || [];
@@ -3507,6 +3507,40 @@
       }));
     }
 
+    function teacherExistsInPayload(payload, teacherId) {
+      if (!teacherId) return false;
+      return (payload?.teachers || []).some(teacher =>
+        teacher?.id === teacherId || (Array.isArray(teacher?.aliasIds) && teacher.aliasIds.includes(teacherId))
+      );
+    }
+
+    function teacherExistsInPatch(patch, teacherId) {
+      if (!teacherId) return false;
+      return (patch?.changes?.teachers || []).some(teacher =>
+        teacher?.id === teacherId || (Array.isArray(teacher?.aliasIds) && teacher.aliasIds.includes(teacherId))
+      );
+    }
+
+    function verifyTeacherSaveStage(teacherId, stage, context = {}) {
+      const inState = Boolean(teacherById(teacherId));
+      const inDraft = teacherExistsInPatch(currentDraftPatch, teacherId);
+      const inRemote = teacherExistsInPayload(confirmedRemotePayload, teacherId);
+      if (SYNC_DEBUG) {
+        console.info("[ClassOne teacher save]", {
+          stage,
+          teacherId,
+          inState,
+          inDraft,
+          inConfirmedRemote: inRemote,
+          ...context
+        });
+      }
+      if (!inState && context.requireState !== false) {
+        throw new Error(`Teacher save integrity check failed at ${stage}. The teacher is not in state.teachers.`);
+      }
+      return { inState, inDraft, inRemote };
+    }
+
     function persistState() {
       const hasDraft = Boolean(hasUnsavedBusinessChanges && state.settings.pendingLocalSync && state.settings.businessDirty);
       const browserPayload = {
@@ -3914,26 +3948,47 @@
         if (!key) return;
         const existing = byCleanName.get(key);
         if (!existing) {
+          teacher.aliasIds = Array.isArray(teacher.aliasIds) ? [...new Set(teacher.aliasIds.filter(Boolean))] : [];
           byCleanName.set(key, teacher);
           result.push(teacher);
           return;
         }
-        existing.name = cleanTeacherName(existing.name || teacher.name);
-        existing.tier = existing.tier && existing.tier !== "standard" ? existing.tier : (teacher.tier || existing.tier || "standard");
-        existing.category = existing.category || teacher.category || "freelance";
-        existing.rate = Number(existing.rate || 0) || Number(teacher.rate || 0);
-        existing.profitShare = Number(existing.profitShare || 0) || Number(teacher.profitShare || 0);
-        existing.photo = existing.photo || teacher.photo || "";
-        existing.viewToken = existing.viewToken || teacher.viewToken || "";
-        existing.viewTokenUpdatedAt = existing.viewTokenUpdatedAt || teacher.viewTokenUpdatedAt || "";
-        existing.subjects = normalizeSubjects([...(existing.subjects || []), ...(teacher.subjects || [])]);
-        existing.status = !isTeacherArchived(existing) || !isTeacherArchived(teacher) ? "active" : "archived";
-        existing.regularSlots = mergeSlots(existing.regularSlots || [], teacher.regularSlots || []);
-        existing.overrideSlots = mergeSlots(existing.overrideSlots || [], teacher.overrideSlots || []);
-        existing.overviewRemarks = mergeTeacherRemarkRecords(existing.overviewRemarks || [], teacher.overviewRemarks || []);
-        existing.overviewRemarkArchive = mergeTeacherRemarkRecords(existing.overviewRemarkArchive || [], teacher.overviewRemarkArchive || []);
+        const merged = mergeDuplicateTeacherRecords(existing, teacher);
+        Object.keys(existing).forEach(prop => delete existing[prop]);
+        Object.assign(existing, merged);
       });
       return result;
+    }
+
+    function mergeDuplicateTeacherRecords(primary, secondary) {
+      const primaryTime = recordTime(primary);
+      const secondaryTime = recordTime(secondary);
+      const latest = secondaryTime > primaryTime ? secondary : primary;
+      const older = latest === primary ? secondary : primary;
+      const latestId = latest.id || older.id || uid("teacher");
+      const aliasIds = new Set([
+        ...(Array.isArray(primary.aliasIds) ? primary.aliasIds : []),
+        ...(Array.isArray(secondary.aliasIds) ? secondary.aliasIds : []),
+        primary.id,
+        secondary.id
+      ].filter(Boolean));
+      aliasIds.delete(latestId);
+      return {
+        ...older,
+        ...latest,
+        id: latestId,
+        aliasIds: [...aliasIds],
+        name: cleanTeacherName(latest.name || older.name),
+        subjects: normalizeSubjects([...(primary.subjects || []), ...(secondary.subjects || [])]),
+        regularSlots: mergeSlots(primary.regularSlots || [], secondary.regularSlots || []),
+        overrideSlots: mergeSlots(primary.overrideSlots || [], secondary.overrideSlots || []),
+        overviewRemarks: mergeTeacherRemarkRecords(primary.overviewRemarks || [], secondary.overviewRemarks || []),
+        overviewRemarkArchive: mergeTeacherRemarkRecords(primary.overviewRemarkArchive || [], secondary.overviewRemarkArchive || []),
+        updatedAt: latest.updatedAt || older.updatedAt || new Date().toISOString(),
+        createdAt: older.createdAt && latest.createdAt
+          ? (String(older.createdAt) < String(latest.createdAt) ? older.createdAt : latest.createdAt)
+          : (older.createdAt || latest.createdAt || new Date().toISOString())
+      };
     }
 
     function mergeTeacherRemarkRecords(primary, secondary) {
@@ -4405,7 +4460,7 @@
       }
       normalizeState();
       persistState();
-      if (show) setStatus("Saved.");
+      if (show) setStatus(isBusinessChange ? "Saved locally, syncing..." : "Saved.");
       if (options.render !== false) renderAll();
       if (isBusinessChange) setSyncMetric("localUiUpdateMs", Math.round(performance.now() - localStartedAt));
       clearAnyFormEditingIfSafe();
@@ -11996,35 +12051,84 @@
     async function saveTeacher() {
       const name = $("teacherName").value.trim();
       if (!name) return alert("Teacher name is required.");
+      const saveButton = $("saveTeacherBtn");
+      const originalButtonText = saveButton?.textContent || "Save Teacher";
+      if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.textContent = "Saving...";
+      }
+      state.teachers ||= [];
       const formId = $("teacherId").value;
       const normalizedName = name.toLowerCase().replace(/\s+/g, " ").trim();
-      const existing = teacherById(formId) || state.teachers.find(t => String(t.name || "").toLowerCase().replace(/\s+/g, " ").trim() === normalizedName) || { id: formId || uid("teacher"), regularSlots: [], overrideSlots: [] };
-      const before = teacherLogSummary(existing);
-      const undoBefore = snapshotCollections({ teachers: [existing.id] });
-      existing.name = name;
-      existing.tier = $("teacherTier").value;
-      existing.category = $("teacherCategory").value;
-      existing.rate = Number($("teacherRate").value || 0);
-      existing.profitShare = Number($("teacherProfitShare").value || 0);
-      existing.subjects = normalizeSubjects([...document.querySelectorAll("#teacherSubjects input:checked")].map(cb => cb.value));
-      existing.email = $("teacherEmail").value.trim();
-      existing.phone = $("teacherPhone").value.trim();
-      existing.zoomMeetingId = $("teacherZoomId").value.trim();
-      existing.zoomPasscode = $("teacherZoomPasscode").value.trim();
-      existing.zoomLink = $("teacherZoomLink").value.trim();
-      existing.internalRemark = $("teacherInternalRemark").value.trim();
-      existing.viewToken = $("teacherViewToken").value || existing.viewToken || randomShareToken();
-      existing.status = existing.status || "active";
-      existing.updatedAt = new Date().toISOString();
-      if (!state.teachers.some(t => t.id === existing.id)) state.teachers.push(existing);
-      const undoAfter = snapshotCollections({ teachers: [existing.id] });
-      logAction(before ? "Teacher Updated" : "Teacher Added", existing.name, before, teacherLogSummary(existing), "Teacher profile saved.", {
-        undo: makeUndoSnapshot(undoBefore, undoAfter)
-      });
-      save();
-      clearTeacherForm();
-      $("teacherProfileModal").classList.add("hide");
-      await autoPushIfConfigured("Teacher profile saved.");
+      try {
+        const existingById = teacherById(formId);
+        const existingByName = state.teachers.find(t => String(t.name || "").toLowerCase().replace(/\s+/g, " ").trim() === normalizedName);
+        const wasExisting = Boolean(existingById || existingByName);
+        const existing = existingById || existingByName || { id: formId || uid("teacher"), regularSlots: [], overrideSlots: [] };
+        const before = wasExisting ? teacherLogSummary(existing) : "";
+        const undoBefore = wasExisting ? snapshotCollections({ teachers: [existing.id] }) : snapshotCollections({ teachers: [] });
+        const now = new Date().toISOString();
+        existing.id ||= formId || uid("teacher");
+        existing.name = name;
+        existing.tier = $("teacherTier").value;
+        existing.category = $("teacherCategory").value;
+        existing.rate = Number($("teacherRate").value || 0);
+        existing.profitShare = Number($("teacherProfitShare").value || 0);
+        existing.subjects = normalizeSubjects([...document.querySelectorAll("#teacherSubjects input:checked")].map(cb => cb.value));
+        existing.email = $("teacherEmail").value.trim();
+        existing.phone = $("teacherPhone").value.trim();
+        existing.zoomMeetingId = $("teacherZoomId").value.trim();
+        existing.zoomPasscode = $("teacherZoomPasscode").value.trim();
+        existing.zoomLink = $("teacherZoomLink").value.trim();
+        existing.internalRemark = $("teacherInternalRemark").value.trim();
+        existing.viewToken = $("teacherViewToken").value || existing.viewToken || randomShareToken();
+        existing.status = existing.status || "active";
+        existing.createdAt ||= now;
+        existing.updatedAt = now;
+        existing.updatedBy = currentUser()?.email || currentUser()?.name || "Class One Admin";
+        existing.deviceId = currentDeviceId();
+        existing.aliasIds = Array.isArray(existing.aliasIds) ? existing.aliasIds.filter(Boolean) : [];
+        if (!state.teachers.some(t => t.id === existing.id)) state.teachers.push(existing);
+        verifyTeacherSaveStage(existing.id, "after state insert", { action: wasExisting ? "update" : "create" });
+
+        const undoAfter = snapshotCollections({ teachers: [existing.id] });
+        logAction(wasExisting ? "Teacher Updated" : "Teacher Added", existing.name, before, teacherLogSummary(existing), "Teacher profile saved.", {
+          undo: makeUndoSnapshot(undoBefore, undoAfter)
+        });
+        const savedLocally = save(false, { label: wasExisting ? "teacher update" : "teacher create", render: false });
+        if (!savedLocally) throw new Error("Teacher could not be created because this user cannot save changes.");
+        verifyTeacherSaveStage(existing.id, "after local save");
+
+        const teacherPatch = buildRecordPatchFromPayload(remoteStatePayload(), confirmedRemotePayload || null);
+        if (!teacherExistsInPayload(confirmedRemotePayload, existing.id) && !teacherExistsInPatch(teacherPatch, existing.id)) {
+          throw new Error("Teacher could not be created because the browser draft did not include the new teacher.");
+        }
+        await saveDraftPatch(teacherPatch);
+        verifyTeacherSaveStage(existing.id, "after browser draft", { draftIncludesTeacher: teacherExistsInPatch(teacherPatch, existing.id) });
+
+        renderTeachers();
+        renderTeacherOverview();
+        renderSyncHealth();
+        clearTeacherForm();
+        $("teacherProfileModal").classList.add("hide");
+        setStatus(`${wasExisting ? "Teacher updated" : "Teacher added"}. Syncing...`, "success", false);
+
+        const synced = await autoPushIfConfigured("Teacher profile saved.");
+        if (synced) {
+          verifyTeacherSaveStage(existing.id, "after Neon sync", { requireState: true });
+          setStatus("Teacher saved to Neon.", "success");
+        } else {
+          setStatus(`${wasExisting ? "Teacher updated" : "Teacher added"} locally. Sync pending.`, "warn");
+        }
+      } catch (error) {
+        setStatus(`Teacher could not be created. ${error.message}`, "error");
+        throw error;
+      } finally {
+        if (saveButton) {
+          saveButton.disabled = false;
+          saveButton.textContent = originalButtonText;
+        }
+      }
     }
 
     function addSlot(teacherId, day, time, subject, date) {
