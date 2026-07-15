@@ -1959,7 +1959,9 @@
       const rows = (summary.studentIncomeRows || []).map((row, index) => [
         String(index + 1),
         escapeHtml(row.studentName || "Student"),
-        row.packageIncomplete ? `<span class="pill warn">Package incomplete</span>` : `${escapeHtml(money(row.packageAmount))} / ${Number(row.packageTotalClasses || 0)}`,
+        row.packageIncomplete
+          ? `<span class="pill warn">Package incomplete</span>`
+          : `<strong>${escapeHtml(row.packageName || "Package")}</strong><br><span class="subtle">${escapeHtml(money(row.packageAmount))} / ${Number(row.packageTotalClasses || 0)}</span>`,
         row.packageIncomplete ? "-" : escapeHtml(money(row.lessonRate)),
         `${Number(row.profitSharePercentage || summary.profitSharePercentage || 0).toFixed(2)}%`,
         Number(row.completedLessons || 0),
@@ -1967,7 +1969,7 @@
         row.packageIncomplete ? "-" : escapeHtml(money(row.income))
       ]);
       const warnings = (summary.packageWarnings || []).length
-        ? `<div class="status warn" style="margin:10px 0 0;">${summary.packageWarnings.map(escapeHtml).join("<br>")}</div>`
+        ? `<div class="status warn" style="margin:10px 0 0;">Some rows need package setup in the Admin Portal.</div>`
         : "";
       panel.innerHTML = `
         <div class="metric" style="margin-bottom:10px;">
