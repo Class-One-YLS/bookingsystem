@@ -17,6 +17,20 @@
       --warn: #fff2c6;
       --danger: #ffe0df;
       --ok: #dcf8ea;
+      --class-regular-bg: #ffffff;
+      --class-regular-border: #d7e5dd;
+      --class-replacement-bg: #dceafe;
+      --class-exam-bg: #fff8cf;
+      --class-assessment-bg: #ffe7b3;
+      --class-trial-bg: #fff2a8;
+      --class-new-bg: #fff8cf;
+      --class-extra-bg: #e8dcff;
+      --class-practical-bg: #9080AE;
+      --class-cancelled-bg: #d0d5dd;
+      --class-not-show-bg: #ffe0df;
+      --class-not-show-text: #7a271a;
+      --class-off-bg: #666666;
+      --class-completed-badge-bg: #22c55e;
     }
     * { box-sizing: border-box; }
     html, body { width: 100%; max-width: 100%; height: 100%; overflow: hidden; }
@@ -550,18 +564,21 @@
     .time-cell.time-pm { background: #E97E97; color: #fff; }
     .schedule-corner, .time-cell { box-shadow: 1px 0 0 var(--line); }
     .slot { width: 100%; text-align: left; padding: 8px; border-radius: 8px; margin-bottom: 6px; background: var(--mint); color: var(--ink); font-weight: 900; font-size: 12px; }
-    .slot.booked { background: #dcf8ea; }
-    .slot.booked.type-assessment, .slot.booked.type-exam, .slot.booked.type-trial-class { background: #fff2a8; }
-    .slot.booked.type-new, .slot.booked.type-new-students { background: #fff8cf; }
-    .slot.booked.type-replacement-class { background: #dceafe; }
-    .slot.booked.type-extra-class { background: #e8dcff; }
-    .slot.booked.type-practical-class { background: #9080AE; color: #fff; }
+    .slot.booked { background: var(--class-regular-bg); border: 1px solid var(--class-regular-border); }
+    .slot.booked.type-exam { background: var(--class-exam-bg); }
+    .slot.booked.type-assessment { background: var(--class-assessment-bg); }
+    .slot.booked.type-trial, .slot.booked.type-trial-class, .slot.booked.type-new-trial { background: var(--class-trial-bg); }
+    .slot.booked.type-new, .slot.booked.type-new-students { background: var(--class-new-bg); }
+    .slot.booked.type-replacement-class { background: var(--class-replacement-bg); }
+    .slot.booked.type-extra-class { background: var(--class-extra-bg); }
+    .slot.booked.type-practical-class { background: var(--class-practical-bg); color: #fff; }
     .slot.booked.type-practical-class small { color: #fff; }
-    .slot.status-student-not-show { background: #d92d20; color: #fff; }
-    .slot.status-student-not-show small { color: #fff; }
-    .slot.status-cancelled, .slot.status-public-holiday, .slot.status-teacher-leave { background: #d0d5dd; color: #17212b; }
+    .slot.status-student-not-show { background: var(--class-not-show-bg); color: var(--class-not-show-text); }
+    .slot.status-student-not-show small { color: var(--class-not-show-text); }
+    .slot.status-cancelled, .slot.status-public-holiday, .slot.status-teacher-leave { background: var(--class-cancelled-bg); color: #17212b; }
     .slot.status-cancelled small, .slot.status-public-holiday small, .slot.status-teacher-leave small { color: #17212b; }
-    .slot.status-completed { background: #dcf8ea; }
+    .slot.status-completed { box-shadow: inset 0 0 0 2px rgba(34,197,94,.18); }
+    .completed-badge { display: inline-flex; align-items: center; min-height: 18px; padding: 0 6px; border-radius: 999px; background: var(--class-completed-badge-bg); color: #fff; font-size: 10px; font-weight: 900; line-height: 1; margin-right: 4px; }
     .slot.fixed { background: #e8edf1; color: var(--ink); cursor: grab; }
     .slot.reserve { background: #dceafe; }
     .teacher-cell-reserved { background: #dceafe; color: #111; }
@@ -7976,7 +7993,8 @@
         const typeClass = ` type-${String(booking.type || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
         const statusText = booking.changedSlot ? "Booked | Changed Slot" : bookingStatusLabel(booking.status);
         const originalText = booking.changedSlot ? ` | ${changedSlotLabel(booking)}` : "";
-        return `<button class="slot booked${reserveClass}${typeClass} ${statusClass(booking.status)}" draggable="true" title="Drag to an open slot to move this class" data-drag-booking-id="${booking.id}" data-booking-id="${booking.id}"${cellAttr}>${escapeHtml(teacher.name)}<small>${escapeHtml(statusText)}: ${escapeHtml(booking.studentName)} | ${escapeHtml(booking.type)} | ${escapeHtml(subject)}${escapeHtml(originalText)} | drag to move</small></button>`;
+        const completedBadge = booking.status === "completed" ? `<span class="completed-badge">Completed</span>` : "";
+        return `<button class="slot booked${reserveClass}${typeClass} ${statusClass(booking.status)}" draggable="true" title="Drag to an open slot to move this class" data-drag-booking-id="${booking.id}" data-booking-id="${booking.id}"${cellAttr}>${escapeHtml(teacher.name)}<small>${completedBadge}${escapeHtml(statusText)}: ${escapeHtml(booking.studentName)} | ${escapeHtml(booking.type)} | ${escapeHtml(subject)}${escapeHtml(originalText)} | drag to move</small></button>`;
       }
       if (slot.locked) {
         const fixedData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, studentName: slot.studentName || "Fixed regular class", slotId: slot.id, reserved: Boolean(slot.reserved) }));

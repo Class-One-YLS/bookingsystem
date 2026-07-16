@@ -19,6 +19,20 @@
       --blue: #dceafe;
       --purple: #e8dcff;
       --grey: #d0d5dd;
+      --class-regular-bg: #ffffff;
+      --class-regular-border: #d7e5dd;
+      --class-replacement-bg: #dceafe;
+      --class-exam-bg: #fff8cf;
+      --class-assessment-bg: #ffe7b3;
+      --class-trial-bg: #fff2a8;
+      --class-new-bg: #fff8cf;
+      --class-extra-bg: #e8dcff;
+      --class-practical-bg: #9080AE;
+      --class-cancelled-bg: #d0d5dd;
+      --class-not-show-bg: #ffe0df;
+      --class-not-show-text: #7a271a;
+      --class-off-bg: #666666;
+      --class-completed-badge-bg: #22c55e;
     }
 
     * { box-sizing: border-box; }
@@ -236,7 +250,7 @@
       font-weight: 900;
     }
     .cell-off {
-      background: #666;
+      background: var(--class-off-bg);
       color: #d8d8d8;
       font-style: italic;
       font-weight: 900;
@@ -246,19 +260,41 @@
     }
     .cell-open { background: #fff; color: #98a2b3; }
     .cell-fixed, .cell-booking {
-      background: #fff;
+      background: var(--class-regular-bg);
       color: #111;
       font-weight: 800;
     }
-    .type-assessment, .type-exam, .type-trial-class { background: var(--warning); }
-    .type-new, .type-new-students { background: var(--new-yellow); }
-    .type-replacement-class { background: var(--blue); }
-    .type-extra-class { background: var(--purple); }
-    .type-practical-class { background: #9080AE; color: #fff; }
-    .type-reserve { background: var(--blue); }
-    .status-completed { background: #dcf8ea; color: #111; }
-    .status-student-not-show { background: var(--danger); color: #fff; }
-    .status-cancelled, .status-public-holiday, .status-teacher-leave { background: var(--grey); color: #111; }
+    .cell-fixed, .cell-booking, .class-card { border-color: var(--class-regular-border); }
+    .type-exam { background: var(--class-exam-bg); }
+    .type-assessment { background: var(--class-assessment-bg); }
+    .type-trial, .type-trial-class, .type-new-trial { background: var(--class-trial-bg); }
+    .type-new, .type-new-students { background: var(--class-new-bg); }
+    .type-replacement-class { background: var(--class-replacement-bg); }
+    .type-extra-class { background: var(--class-extra-bg); }
+    .type-practical-class { background: var(--class-practical-bg); color: #fff; }
+    .type-practical-class .cell-small,
+    .type-practical-class .subtle,
+    .type-practical-class .class-time { color: #fff; }
+    .type-reserve { background: var(--class-replacement-bg); }
+    .status-completed { box-shadow: inset 0 0 0 2px rgba(34,197,94,.18); }
+    .status-student-not-show { background: var(--class-not-show-bg); color: var(--class-not-show-text); }
+    .status-student-not-show .cell-small,
+    .status-student-not-show .subtle,
+    .status-student-not-show .class-time { color: var(--class-not-show-text); }
+    .status-cancelled, .status-public-holiday, .status-teacher-leave { background: var(--class-cancelled-bg); color: #111; }
+    .completed-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 18px;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: var(--class-completed-badge-bg);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 900;
+      line-height: 1;
+      margin: 2px 0;
+    }
     .cell-small {
       display: block;
       margin-top: 2px;
@@ -275,20 +311,17 @@
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 11px;
-      background: #fbfefd;
+      background: var(--class-regular-bg);
     }
     .class-card.is-passed {
-      border-color: #c7cbd1;
-      background: #e5e7eb;
-      color: #111;
+      border-color: var(--class-regular-border);
     }
     .class-card.is-passed .class-time,
-    .class-card.is-passed .subtle { color: #4b5563; }
-    .class-card.is-passed .pill { background: #cbd0d6; color: #111; }
-    .class-card.is-not-show { border-color: #b42318; background: var(--danger); color: #fff; }
+    .class-card.is-passed .subtle { color: var(--muted); }
+    .class-card.is-not-show { border-color: #f1b4ae; background: var(--class-not-show-bg); color: var(--class-not-show-text); }
     .class-card.is-not-show .class-time,
-    .class-card.is-not-show .subtle { color: #fff; }
-    .class-card.is-not-show .pill { background: #fff; color: #b42318; }
+    .class-card.is-not-show .subtle { color: var(--class-not-show-text); }
+    .class-card.is-not-show .pill { background: #fff; color: var(--class-not-show-text); }
     .class-card strong { display: block; margin-bottom: 4px; font-size: 18px; line-height: 1.2; }
     .class-time {
       margin-top: 6px;
@@ -1268,8 +1301,9 @@
         }
         const displayStatus = (cell.status || "booked") === "booked" && slotHasPassed(cell.date, cell.time) ? "completed" : (cell.status || "booked");
         const statusText = displayStatus === "completed" ? (cell.type || "class") : `${statusLabel(displayStatus)} | ${cell.type || "class"}`;
+        const completedBadge = displayStatus === "completed" ? `<span class="completed-badge">Completed</span>` : "";
         const cellClass = cell.kind === "fixed" ? "cell-fixed" : "cell-booking";
-        return `<td class="${cellClass} ${typeClass(cell.type)} ${statusClass(displayStatus)}${outsideClass}">${escapeHtml(cell.studentName || "Class")}${cell.subject ? ` (${escapeHtml(cell.subject)})` : ""}<span class="cell-small">${escapeHtml(statusText)}</span></td>`;
+        return `<td class="${cellClass} ${typeClass(cell.type)} ${statusClass(displayStatus)}${outsideClass}">${escapeHtml(cell.studentName || "Class")}${cell.subject ? ` (${escapeHtml(cell.subject)})` : ""}${completedBadge}<span class="cell-small">${escapeHtml(statusText)}</span></td>`;
       }
       return `<td class="cell-off${outsideClass}">OFF</td>`;
     }
@@ -1345,11 +1379,13 @@
       const meta = entryMeta(entry);
       const passed = meta.status === "completed";
       const notShow = meta.status === "student_not_show";
-      const statusText = passed ? "Passed" : (notShow ? "Student Not Show" : `${statusLabel(meta.status)} | ${meta.type}`);
-      return `<div class="class-card${passed ? " is-passed" : ""}${notShow ? " is-not-show" : ""}">
+      const statusText = passed ? meta.type : (notShow ? "Student Not Show" : `${statusLabel(meta.status)} | ${meta.type}`);
+      const completedBadge = passed ? `<span class="completed-badge">Completed</span>` : "";
+      return `<div class="class-card ${typeClass(meta.type)} ${statusClass(meta.status)}${passed ? " is-passed" : ""}${notShow ? " is-not-show" : ""}">
         <strong>${escapeHtml(meta.studentName)} ${meta.subject ? `(${escapeHtml(meta.subject)})` : ""}</strong>
         <div class="class-time">${timeLabel(entry.time)}</div>
         <div class="subtle">${dateLabel(entry.date)}</div>
+        ${completedBadge}
         <span class="pill">${escapeHtml(statusText)}</span>
         ${meta.remark ? `<div class="subtle" style="margin-top:8px;">${escapeHtml(meta.remark)}</div>` : ""}
       </div>`;
