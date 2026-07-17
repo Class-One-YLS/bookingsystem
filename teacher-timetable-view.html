@@ -33,6 +33,7 @@
       --class-not-show-text: #7a271a;
       --class-off-bg: #666666;
       --class-completed-badge-bg: #22c55e;
+      --class-completed-regular-bg: #dcf8ea;
     }
 
     * { box-sizing: border-box; }
@@ -277,6 +278,9 @@
     .type-practical-class .class-time { color: #fff; }
     .type-reserve { background: var(--class-replacement-bg); }
     .status-completed { box-shadow: inset 0 0 0 2px rgba(34,197,94,.18); }
+    .cell-fixed.status-completed.type-regular-class,
+    .cell-booking.status-completed.type-regular-class,
+    .class-card.is-passed.type-regular-class { background: var(--class-completed-regular-bg); }
     .status-student-not-show { background: var(--class-not-show-bg); color: var(--class-not-show-text); }
     .status-student-not-show .cell-small,
     .status-student-not-show .subtle,
@@ -285,15 +289,49 @@
     .completed-badge {
       display: inline-flex;
       align-items: center;
-      min-height: 18px;
-      padding: 0 6px;
+      min-height: 17px;
+      padding: 0 7px;
       border-radius: 999px;
       background: var(--class-completed-badge-bg);
       color: #fff;
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 900;
       line-height: 1;
-      margin: 2px 0;
+      margin: 2px 0 3px;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 17px;
+      padding: 0 7px;
+      border-radius: 999px;
+      background: #edf4f0;
+      color: var(--ink);
+      font-size: 11px;
+      font-weight: 900;
+      line-height: 1;
+      margin: 2px 0 3px;
+    }
+    .status-badge.status-completed { background: var(--class-completed-badge-bg); color: #fff; }
+    .status-badge.status-cancelled,
+    .status-badge.status-public-holiday,
+    .status-badge.status-teacher-leave { background: #667085; color: #fff; }
+    .status-badge.status-student-not-show { background: #b42318; color: #fff; }
+    .cell-student-name {
+      display: block;
+      font-size: 16px;
+      line-height: 1.15;
+      font-weight: 950;
+      overflow-wrap: anywhere;
+    }
+    .cell-class-details {
+      display: block;
+      margin-top: 2px;
+      color: inherit;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.15;
+      overflow-wrap: anywhere;
     }
     .cell-small {
       display: block;
@@ -310,7 +348,7 @@
     .class-card {
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 11px;
+      padding: 9px;
       background: var(--class-regular-bg);
     }
     .class-card.is-passed {
@@ -322,11 +360,11 @@
     .class-card.is-not-show .class-time,
     .class-card.is-not-show .subtle { color: var(--class-not-show-text); }
     .class-card.is-not-show .pill { background: #fff; color: var(--class-not-show-text); }
-    .class-card strong { display: block; margin-bottom: 4px; font-size: 18px; line-height: 1.2; }
+    .class-card strong { display: block; margin: 2px 0; font-size: 16px; line-height: 1.15; overflow-wrap: anywhere; }
     .class-time {
-      margin-top: 6px;
+      margin-top: 4px;
       color: var(--mint-dark);
-      font-size: 16px;
+      font-size: 14px;
       line-height: 1.2;
       font-weight: 900;
     }
@@ -1300,10 +1338,16 @@
           return `<td class="cell-open${outsideClass}"><span class="cell-small">${escapeHtml(cell.subject || "Open")}</span></td>`;
         }
         const displayStatus = (cell.status || "booked") === "booked" && slotHasPassed(cell.date, cell.time) ? "completed" : (cell.status || "booked");
-        const statusText = displayStatus === "completed" ? (cell.type || "class") : `${statusLabel(displayStatus)} | ${cell.type || "class"}`;
-        const completedBadge = displayStatus === "completed" ? `<span class="completed-badge">Completed</span>` : "";
+        const statusBadge = displayStatus === "completed"
+          ? `<span class="completed-badge">Completed</span>`
+          : `<span class="status-badge ${statusClass(displayStatus)}">${escapeHtml(statusLabel(displayStatus))}</span>`;
+        const details = `${cell.type || "class"}${cell.subject ? ` | ${cell.subject}` : ""}`;
         const cellClass = cell.kind === "fixed" ? "cell-fixed" : "cell-booking";
-        return `<td class="${cellClass} ${typeClass(cell.type)} ${statusClass(displayStatus)}${outsideClass}">${escapeHtml(cell.studentName || "Class")}${cell.subject ? ` (${escapeHtml(cell.subject)})` : ""}${completedBadge}<span class="cell-small">${escapeHtml(statusText)}</span></td>`;
+        return `<td class="${cellClass} ${typeClass(cell.type)} ${statusClass(displayStatus)}${outsideClass}">
+          ${statusBadge}
+          <span class="cell-student-name">${escapeHtml(cell.studentName || "Class")}</span>
+          <span class="cell-class-details">${escapeHtml(details)}</span>
+        </td>`;
       }
       return `<td class="cell-off${outsideClass}">OFF</td>`;
     }
@@ -1379,14 +1423,16 @@
       const meta = entryMeta(entry);
       const passed = meta.status === "completed";
       const notShow = meta.status === "student_not_show";
-      const statusText = passed ? meta.type : (notShow ? "Student Not Show" : `${statusLabel(meta.status)} | ${meta.type}`);
-      const completedBadge = passed ? `<span class="completed-badge">Completed</span>` : "";
+      const statusBadge = passed
+        ? `<span class="completed-badge">Completed</span>`
+        : `<span class="status-badge ${statusClass(meta.status)}">${escapeHtml(notShow ? "Student Not Show" : statusLabel(meta.status))}</span>`;
+      const details = `${meta.type || "class"}${meta.subject ? ` | ${meta.subject}` : ""}`;
       return `<div class="class-card ${typeClass(meta.type)} ${statusClass(meta.status)}${passed ? " is-passed" : ""}${notShow ? " is-not-show" : ""}">
-        <strong>${escapeHtml(meta.studentName)} ${meta.subject ? `(${escapeHtml(meta.subject)})` : ""}</strong>
+        ${statusBadge}
+        <strong>${escapeHtml(meta.studentName)}</strong>
+        <div class="subtle">${escapeHtml(details)}</div>
         <div class="class-time">${timeLabel(entry.time)}</div>
         <div class="subtle">${dateLabel(entry.date)}</div>
-        ${completedBadge}
-        <span class="pill">${escapeHtml(statusText)}</span>
         ${meta.remark ? `<div class="subtle" style="margin-top:8px;">${escapeHtml(meta.remark)}</div>` : ""}
       </div>`;
     }

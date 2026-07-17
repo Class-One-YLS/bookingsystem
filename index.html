@@ -31,6 +31,7 @@
       --class-not-show-text: #7a271a;
       --class-off-bg: #666666;
       --class-completed-badge-bg: #22c55e;
+      --class-completed-regular-bg: #dcf8ea;
     }
     * { box-sizing: border-box; }
     html, body { width: 100%; max-width: 100%; height: 100%; overflow: hidden; }
@@ -563,7 +564,7 @@
     .time-cell.time-am { background: #FBE3AF; color: #111; }
     .time-cell.time-pm { background: #E97E97; color: #fff; }
     .schedule-corner, .time-cell { box-shadow: 1px 0 0 var(--line); }
-    .slot { width: 100%; text-align: left; padding: 8px; border-radius: 8px; margin-bottom: 6px; background: var(--mint); color: var(--ink); font-weight: 900; font-size: 12px; }
+    .slot { width: 100%; text-align: left; padding: 8px 9px; border-radius: 8px; margin-bottom: 6px; background: var(--mint); color: var(--ink); font-weight: 900; font-size: 12px; line-height: 1.2; }
     .slot.booked { background: var(--class-regular-bg); border: 1px solid var(--class-regular-border); }
     .slot.booked.type-exam { background: var(--class-exam-bg); }
     .slot.booked.type-assessment { background: var(--class-assessment-bg); }
@@ -572,13 +573,27 @@
     .slot.booked.type-replacement-class { background: var(--class-replacement-bg); }
     .slot.booked.type-extra-class { background: var(--class-extra-bg); }
     .slot.booked.type-practical-class { background: var(--class-practical-bg); color: #fff; }
-    .slot.booked.type-practical-class small { color: #fff; }
+    .slot.booked.type-practical-class small,
+    .slot.booked.type-practical-class .slot-details { color: #fff; }
     .slot.status-student-not-show { background: var(--class-not-show-bg); color: var(--class-not-show-text); }
-    .slot.status-student-not-show small { color: var(--class-not-show-text); }
+    .slot.status-student-not-show small,
+    .slot.status-student-not-show .slot-details { color: var(--class-not-show-text); }
     .slot.status-cancelled, .slot.status-public-holiday, .slot.status-teacher-leave { background: var(--class-cancelled-bg); color: #17212b; }
-    .slot.status-cancelled small, .slot.status-public-holiday small, .slot.status-teacher-leave small { color: #17212b; }
+    .slot.status-cancelled small,
+    .slot.status-public-holiday small,
+    .slot.status-teacher-leave small,
+    .slot.status-cancelled .slot-details,
+    .slot.status-public-holiday .slot-details,
+    .slot.status-teacher-leave .slot-details { color: #17212b; }
     .slot.status-completed { box-shadow: inset 0 0 0 2px rgba(34,197,94,.18); }
-    .completed-badge { display: inline-flex; align-items: center; min-height: 18px; padding: 0 6px; border-radius: 999px; background: var(--class-completed-badge-bg); color: #fff; font-size: 10px; font-weight: 900; line-height: 1; margin-right: 4px; }
+    .slot.status-completed.type-regular-class { background: var(--class-completed-regular-bg); }
+    .slot-teacher { display: block; font-size: 13px; line-height: 1.15; font-weight: 800; margin-bottom: 3px; }
+    .slot-student { display: block; font-size: 16px; line-height: 1.15; font-weight: 950; margin-top: 3px; overflow-wrap: anywhere; }
+    .slot-details { display: block; color: #3d4b45; font-size: 11px; line-height: 1.15; font-weight: 700; margin-top: 2px; overflow-wrap: anywhere; }
+    .status-badge, .completed-badge { display: inline-flex; align-items: center; min-height: 17px; padding: 0 7px; border-radius: 999px; background: #edf4f0; color: var(--ink); font-size: 11px; font-weight: 900; line-height: 1; margin: 2px 0 3px; vertical-align: middle; }
+    .completed-badge, .status-badge.status-completed { background: var(--class-completed-badge-bg); color: #fff; }
+    .status-badge.status-cancelled, .status-badge.status-public-holiday, .status-badge.status-teacher-leave { background: #667085; color: #fff; }
+    .status-badge.status-student-not-show { background: #b42318; color: #fff; }
     .slot.fixed { background: #e8edf1; color: var(--ink); cursor: grab; }
     .slot.reserve { background: #dceafe; }
     .teacher-cell-reserved { background: #dceafe; color: #111; }
@@ -2559,6 +2574,9 @@
     let isLoggingOut = false;
     let replacementViewMode = uiStateGet("ReplacementViewMode", "board") || "board";
     let replacementPage = 1;
+    let classManagementRenderToken = 0;
+    let noShowRenderToken = 0;
+    let replacementCreditRenderToken = 0;
     const REPLACEMENT_PAGE_SIZE = LIST_PAGE_SIZE;
     const teacherLinkSyncing = new Set();
     const teacherLinkFailed = new Set();
@@ -2648,6 +2666,13 @@
     const $ = (id) => document.getElementById(id);
     const uid = (prefix) => prefix + "_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
     const localISO = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    function debounce(fn, wait = 250) {
+      let timer = null;
+      return (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn(...args), wait);
+      };
+    }
 
     function getCurrentBusinessDate(reference = new Date()) {
       const today = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate());
@@ -2833,6 +2858,7 @@
       updateLoginGreeting();
       updateLoginMascot();
       if (!authenticated && sessionToken()) {
+        setLoginMessage("Your session has expired. Please sign in again.", "warn");
         clearSessionRecord();
       }
       if (!authenticated) setWorkspaceLoading(false);
@@ -2880,16 +2906,56 @@
       return new Set(role?.permissions || []).has(permission);
     }
 
-    function denyPermission(message = "You do not have permission to access this section.") {
+    function firstPermittedTab(user = currentUser()) {
+      return APP_TABS.find(tab => hasTabAccess(tab.id, user))?.id || "schedule";
+    }
+
+    function handleAccessDenied({ context = "section", requiredPermission = "", fallbackTab = "", message = "" } = {}) {
       if (isLoggingOut) return false;
-      setStatus(message, "error");
-      alert(message);
+      if (!sessionToken() || !isAuthenticated()) {
+        if (sessionToken()) setLoginMessage("Your session has expired. Please sign in again.", "warn");
+        renderAuthState();
+        return false;
+      }
+      const user = currentUser();
+      if (!user) {
+        setStatus("Permissions are still loading. Please try again in a moment.", "warn");
+        return false;
+      }
+      if (user.status === "disabled") {
+        clearSessionRecord();
+        setLoginMessage("This user is disabled.", "error");
+        renderAuthState();
+        return false;
+      }
+      const defaultMessage = context === "action"
+        ? "You do not have permission to perform this action."
+        : "You do not have permission to access this section.";
+      const finalMessage = message || defaultMessage;
+      setStatus(requiredPermission ? `${finalMessage} Required: ${requiredPermission}.` : finalMessage, "error");
+      if (fallbackTab) {
+        const fallback = document.querySelector(`.nav-btn[data-tab="${CSS.escape(fallbackTab)}"]`);
+        if (fallback && !fallback.classList.contains("hide")) setTimeout(() => fallback.click(), 0);
+      }
+      return false;
+    }
+
+    function denyPermission(message = "You do not have permission to access this section.") {
+      return handleAccessDenied({
+        context: message.includes("perform this action") ? "action" : "section",
+        requiredPermission: "",
+        message
+      });
+    }
+
+    function accessDeniedToast(message = "Opened an available section for your account.") {
+      setStatus(message, "warn");
       return false;
     }
 
     function requireActionPermission(permission) {
       if (hasActionPermission(permission)) return true;
-      return denyPermission("You do not have permission to perform this action.");
+      return handleAccessDenied({ context: "action", requiredPermission: permission });
     }
 
     window.addEventListener("error", event => {
@@ -7987,19 +8053,33 @@
       }
       if (booking) {
         if (booking.source === "teacher_leave_record") {
-          return `<button class="slot booked ${statusClass(booking.status)}"${cellAttr} disabled>${escapeHtml(teacher.name)}<small>Teacher Leave${booking.remark ? ` | ${escapeHtml(booking.remark)}` : ""}</small></button>`;
+          return `<button class="slot booked ${statusClass(booking.status)}"${cellAttr} disabled>
+            <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
+            <span class="status-badge ${statusClass(booking.status)}">${escapeHtml(bookingStatusLabel(booking.status))}</span>
+            <span class="slot-student">Teacher Leave</span>
+            ${booking.remark ? `<span class="slot-details">${escapeHtml(booking.remark)}</span>` : ""}
+          </button>`;
         }
         const reserveClass = booking.type === "reserve" ? " reserve" : "";
         const typeClass = ` type-${String(booking.type || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
-        const statusText = booking.changedSlot ? "Booked | Changed Slot" : bookingStatusLabel(booking.status);
         const originalText = booking.changedSlot ? ` | ${changedSlotLabel(booking)}` : "";
-        const completedBadge = booking.status === "completed" ? `<span class="completed-badge">Completed</span>` : "";
-        return `<button class="slot booked${reserveClass}${typeClass} ${statusClass(booking.status)}" draggable="true" title="Drag to an open slot to move this class" data-drag-booking-id="${booking.id}" data-booking-id="${booking.id}"${cellAttr}>${escapeHtml(teacher.name)}<small>${completedBadge}${escapeHtml(statusText)}: ${escapeHtml(booking.studentName)} | ${escapeHtml(booking.type)} | ${escapeHtml(subject)}${escapeHtml(originalText)} | drag to move</small></button>`;
+        const displayStatus = booking.status === "completed" ? "Completed" : (booking.changedSlot ? "Changed Slot" : bookingStatusLabel(booking.status));
+        const badgeClass = booking.status === "completed" ? "completed-badge" : `status-badge ${statusClass(booking.status)}`;
+        return `<button class="slot booked${reserveClass}${typeClass} ${statusClass(booking.status)}" draggable="true" title="Drag to an open slot to move this class" data-drag-booking-id="${booking.id}" data-booking-id="${booking.id}"${cellAttr}>
+          <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
+          <span class="${badgeClass}">${escapeHtml(displayStatus)}</span>
+          <span class="slot-student">${escapeHtml(booking.studentName || "Class")}</span>
+          <span class="slot-details">${escapeHtml(booking.type || "class")} | ${escapeHtml(subject || "-")}${escapeHtml(originalText)}</span>
+        </button>`;
       }
       if (slot.locked) {
         const fixedData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, studentName: slot.studentName || "Fixed regular class", slotId: slot.id, reserved: Boolean(slot.reserved) }));
         if (slot.reserved) return `<button class="slot reserve" title="Reserved slot"${cellAttr} data-fixed-slot="${fixedData}">${escapeHtml(teacher.name)}<small>${escapeHtml(reservationLabel(slot))} | ${escapeHtml(subject)}</small></button>`;
-        return `<button class="slot fixed" draggable="true" title="Drag to an open slot to move this fixed regular class" data-drag-fixed-slot="${fixedData}" data-fixed-slot="${fixedData}"${cellAttr}>${escapeHtml(teacher.name)}<small>Fixed regular: ${escapeHtml(slot.studentName || "occupied")} | ${escapeHtml(subject)} | drag to move</small></button>`;
+        return `<button class="slot fixed" draggable="true" title="Drag to an open slot to move this fixed regular class" data-drag-fixed-slot="${fixedData}" data-fixed-slot="${fixedData}"${cellAttr}>
+          <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
+          <span class="slot-student">${escapeHtml(slot.studentName || "occupied")}</span>
+          <span class="slot-details">regular class | ${escapeHtml(subject || "-")}</span>
+        </button>`;
       }
       const futureReservation = futureRegularReservationForDate(slot.teacherId, slot.date, slot.time);
       return `<button class="slot"${cellAttr} data-slot="${escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, slotId: slot.id || "", source: slot.source || "" }))}">${escapeHtml(teacher.name)}<small>${futureReservation ? `Temporary classes only until ${escapeHtml(formatDateFromAny(futureReservation.startDate))} | reserved for ${escapeHtml(futureReservation.studentName || "student")}` : `Available | ${escapeHtml(subject)} | 30 min slot, 25 min class`}</small></button>`;
@@ -10107,8 +10187,30 @@
       return (state.replacements || [])
         .filter(item => status === "all" || item.status === status)
         .filter(item => reason === "all" || item.reason === reason)
-        .filter(item => !search || [item.studentName, item.subject, item.originalTeacherName, item.replacementTeacherName].some(v => String(v || "").toLowerCase().includes(search)))
+        .filter(item => !search || replacementSearchText(item).includes(search))
         .sort((a, b) => `${a.status} ${a.originalDate} ${a.originalTime}`.localeCompare(`${b.status} ${b.originalDate} ${b.originalTime}`));
+    }
+
+    function replacementSearchText(item) {
+      const key = [
+        item.studentName,
+        item.subject,
+        item.originalTeacherName,
+        item.replacementTeacherName,
+        item.reason,
+        item.status,
+        item.type,
+        item.originalDate,
+        item.originalTime,
+        item.replacementDate,
+        item.replacementTime,
+        item.notes
+      ].join("|");
+      if (item._classManagementSearchKey !== key) {
+        item._classManagementSearchKey = key;
+        item._classManagementSearchText = key.toLowerCase();
+      }
+      return item._classManagementSearchText || "";
     }
 
     function replacementCreditBalance(studentId, studentName = "") {
@@ -10213,13 +10315,32 @@
       return remaining === 0;
     }
 
-    function renderReplacementCredits() {
+    function replacementCreditSearchText(item) {
+      const key = [
+        item.studentName,
+        item.reason,
+        item.remark,
+        item.status,
+        item.createdAt,
+        item.updatedAt
+      ].join("|");
+      if (item._replacementCreditSearchKey !== key) {
+        item._replacementCreditSearchKey = key;
+        item._replacementCreditSearchText = key.toLowerCase();
+      }
+      return item._replacementCreditSearchText || "";
+    }
+
+    function renderReplacementCredits(options = {}) {
+      const startedAt = performance.now();
+      const token = ++replacementCreditRenderToken;
       const search = ($("replacementCreditSearch")?.value || "").trim().toLowerCase();
       const rows = (state.replacementCredits || [])
         .filter(item => item.status !== "void")
         .filter(item => Number(item.amount || 0) - Number(item.used || 0) > 0)
-        .filter(item => !search || [item.studentName, item.reason, item.remark, item.status].some(value => String(value || "").toLowerCase().includes(search)))
+        .filter(item => !search || replacementCreditSearchText(item).includes(search))
         .sort((a, b) => cleanStudentName(a.studentName).localeCompare(cleanStudentName(b.studentName)));
+      if (token !== replacementCreditRenderToken) return;
       replacementCreditPage = clampPage(replacementCreditPage, rows.length);
       const creditPageData = pageSlice(rows, replacementCreditPage);
       replacementCreditPage = creditPageData.page;
@@ -10234,6 +10355,16 @@
         </div>
       `).join("") || `<div class="empty">No available replacement credits.</div>`;
       setAutoPager("replacementCreditSummary", listPagerHtml("replacementCredits", replacementCreditPage, rows.length));
+      if (options.scroll) scrollToListStart("replacementCreditSummary");
+      if (SYNC_DEBUG || options.measure) {
+        console.info("[Replacement credit search/render]", {
+          records: (state.replacementCredits || []).length,
+          matched: rows.length,
+          renderMs: Math.round((performance.now() - startedAt) * 10) / 10,
+          renderAllCalls: renderAllCallCount,
+          neonRequests: 0
+        });
+      }
     }
 
     function selectedNoShowMonthRange() {
@@ -10276,13 +10407,30 @@
       return { used: false, status: "Pending" };
     }
 
+    function noShowSearchText(cell) {
+      const key = [
+        cell.studentName,
+        cell.teacherName || teacherById(cell.teacherId)?.name,
+        cell.subject,
+        cell.date,
+        cell.time,
+        cell.status,
+        cell.type
+      ].join("|");
+      if (cell._noShowSearchKey !== key) {
+        cell._noShowSearchKey = key;
+        cell._noShowSearchText = key.toLowerCase();
+      }
+      return cell._noShowSearchText || "";
+    }
+
     function studentNoShowRows() {
       const subjectFilter = $("noShowSubjectFilter")?.value || "all";
       const search = ($("noShowSearch")?.value || "").trim().toLowerCase();
       return classManagementResolvedCells()
         .filter(cell => cell.status === "student_not_show")
         .filter(cell => subjectFilter === "all" || cell.subject === subjectFilter)
-        .filter(cell => !search || String(cell.studentName || "").toLowerCase().includes(search))
+        .filter(cell => !search || noShowSearchText(cell).includes(search))
         .map(cell => {
           const replacement = replacementForNoShowCell(cell);
           const replacementStatus = noShowReplacementStatus(replacement);
@@ -10316,9 +10464,12 @@
       `;
     }
 
-    function renderStudentNoShowList() {
+    function renderStudentNoShowList(options = {}) {
       if (!$("studentNoShowList")) return;
+      const startedAt = performance.now();
+      const token = ++noShowRenderToken;
       const rows = studentNoShowRows();
+      if (token !== noShowRenderToken) return;
       studentNoShowPage = clampPage(studentNoShowPage, rows.length);
       const pageData = pageSlice(rows, studentNoShowPage);
       studentNoShowPage = pageData.page;
@@ -10339,6 +10490,16 @@
         <tbody>${body}</tbody>
       </table>`;
       setAutoPager("studentNoShowList", listPagerHtml("studentNoShows", studentNoShowPage, rows.length));
+      if (options.scroll) scrollToListStart("studentNoShowList");
+      if (SYNC_DEBUG || options.measure) {
+        console.info("[Student no-show search/render]", {
+          records: classManagementResolvedCells().length,
+          matched: rows.length,
+          renderMs: Math.round((performance.now() - startedAt) * 10) / 10,
+          renderAllCalls: renderAllCallCount,
+          neonRequests: 0
+        });
+      }
     }
 
     function studentAttendanceRowsForMonth(studentKey) {
@@ -10778,16 +10939,16 @@
       await autoPushIfConfigured("Time slot updated.");
     }
 
-    function renderReplacements() {
-      renderClassManagementSummary();
-      renderStudentNoShowList();
-      renderReplacementCredits();
+    function renderReplacementListAndSummary(options = {}) {
+      const startedAt = performance.now();
+      const token = ++classManagementRenderToken;
       const rows = filteredReplacements();
       const activeRows = rows.filter(item => item.status !== "Cancellation Withdrawn" && !item.archived);
       const actionNeeded = activeRows.filter(r => replacementTaskColumn(r) === "contact").length;
       const waiting = activeRows.filter(r => replacementTaskColumn(r) === "book").length;
       const done = activeRows.filter(r => replacementTaskColumn(r) === "done").length;
       const withdrawn = rows.filter(r => replacementTaskColumn(r) === "withdraw").length;
+      if (token !== classManagementRenderToken) return;
       $("replacementSummary").innerHTML = `
         <button class="metric" data-replacement-summary="contact"><span class="subtle">Contact parent</span><strong>${actionNeeded}</strong></button>
         <button class="metric" data-replacement-summary="book"><span class="subtle">Book replacement</span><strong>${waiting}</strong></button>
@@ -10810,6 +10971,24 @@
           ${replacementColumnHtml("Withdraw Cancel", "Cancellation withdrawn and archived from active tasks.", rows.filter(item => replacementTaskColumn(item) === "withdraw"))}
         </div>
       `}`;
+      if (options.scroll) scrollToListStart("replacementList");
+      if (SYNC_DEBUG || options.measure) {
+        console.info("[Class Management search/render]", {
+          records: (state.replacements || []).length,
+          matched: rows.length,
+          view: replacementViewMode,
+          renderMs: Math.round((performance.now() - startedAt) * 10) / 10,
+          renderAllCalls: renderAllCallCount,
+          neonRequests: 0
+        });
+      }
+    }
+
+    function renderReplacements() {
+      renderClassManagementSummary();
+      renderStudentNoShowList();
+      renderReplacementCredits();
+      renderReplacementListAndSummary();
     }
 
     function replacementPaginationHtml(total, startIndex, shownCount, totalPages) {
@@ -11181,14 +11360,16 @@
     function renderAccessControls() {
       renderAuthState();
       const user = currentUser();
+      if (!isAuthenticated()) return;
       document.querySelectorAll(".nav-btn[data-tab]").forEach(button => {
         const visible = hasTabAccess(button.dataset.tab, user);
         button.classList.toggle("hide", !visible);
       });
       const active = activeTabId();
       if (!hasTabAccess(active, user)) {
-        const fallback = APP_TABS.find(tab => hasTabAccess(tab.id, user))?.id || "schedule";
+        const fallback = firstPermittedTab(user);
         document.querySelector(`.nav-btn[data-tab="${fallback}"]`)?.click();
+        accessDeniedToast("Opened an available section for your account.");
       }
       document.body.classList.toggle("viewer-mode", !hasActionPermission("edit", user));
       if ($("loginBtn")) {
@@ -14078,14 +14259,15 @@
       if (hasActionPermission(permission)) return;
       event.preventDefault();
       event.stopPropagation();
-      denyPermission("You do not have permission to perform this action.");
+      handleAccessDenied({ context: "action", requiredPermission: permission });
     }, true);
 
     document.addEventListener("click", (e) => {
       const nav = e.target.closest(".nav-btn");
       if (nav) {
         if (!hasTabAccess(nav.dataset.tab)) {
-          return denyPermission("You do not have permission to access this section.");
+          if (!isAuthenticated()) return handleAccessDenied({ context: "section", fallbackTab: firstPermittedTab() });
+          return handleAccessDenied({ context: "section", fallbackTab: firstPermittedTab() });
         }
         if (teacherSlotEditMode && nav.dataset.tab !== "teacherOverview") {
           teacherSlotEditMode = false;
@@ -15449,10 +15631,6 @@
       $("replacementCreditSearchPanel").classList.toggle("hide");
       if (!$("replacementCreditSearchPanel").classList.contains("hide")) $("replacementCreditSearch").focus();
     };
-    $("replacementCreditSearch").addEventListener("input", () => {
-      replacementCreditPage = 1;
-      renderReplacementCredits();
-    });
     $("creditStudent").addEventListener("change", () => {
       const student = studentById($("creditStudent").value);
       if (student) $("creditStudentName").value = student.name || "";
@@ -15866,23 +16044,39 @@
     $("exportCrmPdfBtn").onclick = () => openPrintReport("CRM Leads Monthly Dashboard", ["No.", ...crmDashboardExportHeaders()], numbered(crmDashboardExportRows()));
     $("exportAllTeacherPayoutCsvBtn").onclick = () => downloadCsv("class-one-all-teacher-payout.csv", ["No.", "Teacher", "Category", "Tier", "Rate", "Share", "Completed", "Not Show", "Cancelled", "Lesson Pay", "Not Show Pay", "Total Pay"], numbered(teacherMonthlyPayoutRows()));
     $("exportAllTeacherPayoutPdfBtn").onclick = () => openPrintReport("All Teachers Monthly Payout", ["No.", "Teacher", "Category", "Tier", "Rate", "Share", "Completed", "Not Show", "Cancelled", "Lesson Pay", "Not Show Pay", "Total Pay"], numbered(teacherMonthlyPayoutRows()));
-    ["replacementFilterStatus", "replacementFilterReason"].forEach(id => $(id).addEventListener("change", () => { replacementPage = 1; renderReplacements(); scrollToListStart("replacementList"); }));
-    $("replacementSearch").addEventListener("input", () => { replacementPage = 1; renderReplacements(); scrollToListStart("replacementList"); });
+    const debouncedReplacementSearch = debounce(() => {
+      replacementPage = 1;
+      renderReplacementListAndSummary({ scroll: true, measure: true });
+    }, 250);
+    const debouncedNoShowSearch = debounce(() => {
+      studentNoShowPage = 1;
+      renderStudentNoShowList({ scroll: true, measure: true });
+    }, 250);
+    const debouncedReplacementCreditSearch = debounce(() => {
+      replacementCreditPage = 1;
+      renderReplacementCredits({ scroll: true, measure: true });
+    }, 250);
+    ["replacementFilterStatus", "replacementFilterReason"].forEach(id => $(id).addEventListener("change", () => {
+      replacementPage = 1;
+      renderReplacementListAndSummary({ scroll: true });
+    }));
+    $("replacementSearch").addEventListener("input", debouncedReplacementSearch);
     ["noShowMonth", "noShowTeacherFilter", "noShowSubjectFilter"].forEach(id => $(id).addEventListener("change", () => {
       if (id === "noShowMonth") uiSessionSet("no_show_month", $("noShowMonth").value);
       studentNoShowPage = 1;
-      renderReplacements();
-      scrollToListStart("studentNoShowList");
+      renderClassManagementSummary();
+      renderStudentNoShowList({ scroll: true });
     }));
-    $("noShowSearch").addEventListener("input", () => { studentNoShowPage = 1; renderReplacements(); scrollToListStart("studentNoShowList"); });
-    $("replacementBoardViewBtn").onclick = () => { replacementViewMode = "board"; replacementPage = 1; uiStateSet("ReplacementViewMode", replacementViewMode); renderReplacements(); scrollToListStart("replacementList"); };
-    $("replacementTableViewBtn").onclick = () => { replacementViewMode = "table"; replacementPage = 1; uiStateSet("ReplacementViewMode", replacementViewMode); renderReplacements(); scrollToListStart("replacementList"); };
+    $("noShowSearch").addEventListener("input", debouncedNoShowSearch);
+    $("replacementCreditSearch").addEventListener("input", debouncedReplacementCreditSearch);
+    $("replacementBoardViewBtn").onclick = () => { replacementViewMode = "board"; replacementPage = 1; uiStateSet("ReplacementViewMode", replacementViewMode); renderReplacementListAndSummary({ scroll: true }); };
+    $("replacementTableViewBtn").onclick = () => { replacementViewMode = "table"; replacementPage = 1; uiStateSet("ReplacementViewMode", replacementViewMode); renderReplacementListAndSummary({ scroll: true }); };
     $("clearReplacementFiltersBtn").onclick = () => {
       $("replacementFilterStatus").value = "all";
       $("replacementFilterReason").value = "all";
       $("replacementSearch").value = "";
       replacementPage = 1;
-      renderReplacements();
+      renderReplacementListAndSummary({ scroll: true });
     };
     $("exportReplacementCsvBtn").onclick = () => downloadCsv("class-one-class-management-replacements.csv", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Notes", "Last Updated"], numbered(replacementExportRows()));
     $("exportReplacementPdfBtn").onclick = () => openPrintReport("Class Management - Replacement Records", ["No.", "Status", "Reason", "Student", "Subject", "Original Teacher", "Original Class Time", "Replacement Teacher", "Replacement Class Time", "Notes", "Last Updated"], numbered(replacementExportRows()));
