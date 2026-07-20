@@ -6051,6 +6051,10 @@
       return matches.reduce((selected, booking) => shouldUseBooking(booking, selected) ? booking : selected, null);
     }
 
+    function isDisplayableBookingRecord(booking) {
+      return Boolean(booking) && !isDeletedBookingRecord(booking) && !booking.deleted;
+    }
+
     function calendarCellFromBooking(booking, teacher, slot = null) {
       const status = booking.status || "booked";
       return {
@@ -6346,21 +6350,24 @@
 
     function weeklyFallbackCellsForSlot(dateISO, time, teacherFilter, existingCells = []) {
       const targetTime = normalizeTimeValue(time) || time;
-      const existingKeys = new Set((existingCells || [])
+      const existingByKey = new Map((existingCells || [])
         .filter(cell => !(cell.kind === "open" || cell.status === "available" || cell.available))
-        .map(cell => teacherDateTimeKey(cell.teacherId, cell.date, cell.time)));
+        .map(cell => [teacherDateTimeKey(cell.teacherId, cell.date, cell.time), cell]));
       const teachers = (teacherFilter && teacherFilter !== "all")
         ? [teacherById(teacherFilter)].filter(Boolean)
         : timetableTeachers();
       const fallbackCells = [];
       teachers.forEach(teacher => {
         const cellKey = teacherDateTimeKey(teacher.id, dateISO, targetTime);
-        if (existingKeys.has(cellKey)) return;
+        const existing = existingByKey.get(cellKey);
         const booking = canonicalBookingForSlot(teacher.id, dateISO, targetTime);
-        if (booking && !isDeletedBookingRecord(booking) && !booking.archived && !booking.deleted) {
-          fallbackCells.push(calendarCellFromBooking(booking, teacher, null));
+        if (isDisplayableBookingRecord(booking)) {
+          const existingIsBookingOrOff = existing && (existing.kind === "booking" || existing.bookingId || existing.kind === "off" || existing.unavailable);
+          const bookingIsNewer = !existing || bookingAmendmentTime(booking) >= bookingAmendmentTime(existing.booking || existing.slot || existing);
+          if (!existingIsBookingOrOff || bookingIsNewer) fallbackCells.push(calendarCellFromBooking(booking, teacher, existing?.slot || null));
           return;
         }
+        if (existing) return;
         const slot = directRecurringSlotForCell(teacher, dateISO, targetTime);
         if (slot && (slot.locked || slot.reserved || slot.unavailable || slot.studentName)) {
           fallbackCells.push(calendarCellFromSlot(slot, teacher));
@@ -6408,7 +6415,7 @@
         });
       });
       bookingRecordsForResolution()
-        .filter(booking => !isDeletedBookingRecord(booking) && !booking.archived && !booking.deleted)
+        .filter(booking => isDisplayableBookingRecord(booking))
         .filter(booking => !teacherFilter || teacherFilter === "all" || booking.teacherId === teacherFilter)
         .filter(booking => dateOnly(booking.date) === dateISO)
         .forEach(booking => {
@@ -6654,7 +6661,7 @@
           const renderCells = fallbackCells.length
             ? baseCells.filter(cell => {
               const key = cell.cellKey || teacherDateTimeKey(cell.teacherId, cell.date, cell.time);
-              return !fallbackKeys.has(key) || !(cell.kind === "open" || cell.status === "available" || cell.available);
+              return !fallbackKeys.has(key);
             }).concat(fallbackCells)
             : baseCells;
           let items = renderCells
@@ -7170,15 +7177,15 @@
       const display = teacherOverviewDisplaySlot(teacher, day, time);
       const slot = display.slot;
       if (slot?.futureRegularReservation && display.upcoming) {
-        const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentName: slot.studentName || "Future regular class", slotId: slot.id, interactionSource: "teacher_overview", upcomingStart: slot.startDate, futureRegularReservation: true }));
+        const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentId: slot.studentId || "", studentName: slot.studentName || "Future regular class", slotId: slot.id, interactionSource: "teacher_overview", upcomingStart: slot.startDate, futureRegularReservation: true }));
         return `<td class="teacher-cell-reserved"><button class="teacher-cell-button" data-fixed-slot="${fixedData}" title="Click to change or cancel this future regular class">${escapeHtml(futureRegularReservationLabel(slot))}</button></td>`;
       }
       if (slot?.reserved) {
-        const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentName: slot.studentName || "Reserved", slotId: slot.id, reserved: true, interactionSource: "teacher_overview" }));
+        const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentId: slot.studentId || "", studentName: slot.studentName || "Reserved", slotId: slot.id, reserved: true, interactionSource: "teacher_overview" }));
         return `<td class="teacher-cell-reserved"><button class="teacher-cell-button" data-fixed-slot="${fixedData}" title="Click to release this reservation early">${escapeHtml(reservationLabel(slot))}</button></td>`;
       }
       if (slot?.locked) {
-        const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentName: slot.studentName || "Fixed regular class", slotId: slot.id, interactionSource: "teacher_overview", upcomingStart: display.upcoming ? slot.startDate : "" }));
+        const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentId: slot.studentId || "", studentName: slot.studentName || "Fixed regular class", slotId: slot.id, interactionSource: "teacher_overview", upcomingStart: display.upcoming ? slot.startDate : "" }));
         const title = display.upcoming ? `Upcoming regular class from ${formatDateFromAny(slot.startDate)}` : "Booked regular class";
         return `<td class="teacher-cell-booked${display.upcoming ? " upcoming" : ""}"><button class="teacher-cell-button" data-fixed-slot="${fixedData}" title="${escapeHtml(title)}">${escapeHtml(slot.studentName || "Fixed regular class")} ${slot.subject ? `(${escapeHtml(slot.subject)})` : ""}</button></td>`;
       }
@@ -8515,7 +8522,7 @@
         </button>`;
       }
       if (slot.locked) {
-        const fixedData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, studentName: slot.studentName || "Fixed regular class", slotId: slot.id, reserved: Boolean(slot.reserved) }));
+        const fixedData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, studentId: slot.studentId || "", studentName: slot.studentName || "Fixed regular class", slotId: slot.id, reserved: Boolean(slot.reserved) }));
         if (slot.reserved) return `<button class="slot reserve" title="Reserved slot"${cellAttr} data-fixed-slot="${fixedData}">${escapeHtml(teacher.name)}<small>${escapeHtml(reservationLabel(slot))} | ${escapeHtml(subject)}</small></button>`;
         return `<button class="slot fixed" draggable="true" title="Drag to an open slot to move this fixed regular class" data-drag-fixed-slot="${fixedData}" data-fixed-slot="${fixedData}"${cellAttr}>
           <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
@@ -10013,7 +10020,7 @@
       const booking = existing || { id: uid("booking"), createdAt: now };
       Object.assign(booking, {
         teacherId: teacher.id,
-        studentId: "",
+        studentId: data.studentId || "",
         studentName: cleanStudentName(lead.childName),
         subject: crmLeadSubject(lead, teacher),
         type: config.type,
@@ -11145,7 +11152,7 @@
       return {
         id: fixedSlotBookingId(data),
         teacherId: data.teacherId,
-        studentId: "",
+        studentId: data.studentId || "",
         studentName: data.studentName || "Fixed regular class",
         subject: data.subject || "",
         type: "regular class",
@@ -14101,6 +14108,10 @@
       const now = new Date().toISOString();
       stampBookingStatus(booking, nextStatus, now);
       booking.remark = remark;
+      if (isCancelledStatus(nextStatus)) {
+        booking.outcomeSource = booking.outcomeSource || "admin_cancellation";
+        booking.active = true;
+      }
       if (nextStatus === "booked") booking.publicHolidayOverride = true;
       booking.archived = false;
       if (booking.status === "booked" && slotHasPassed(booking.date, booking.time)) {
@@ -14117,6 +14128,31 @@
       logAction("Class Outcome Updated", booking.studentName || booking.id, before, bookingLogSummary(booking), booking.remark || "", {
         undo: makeUndoSnapshot(undoBefore, snapshotCollections({ bookings: [booking.id], replacements: [...new Set([...replacementIdsBefore, ...replacementIdsAfter])] }))
       });
+      if (SYNC_DEBUG && weeklyTraceTargetMatches(booking.teacherId, dateOnly(booking.date), normalizeTimeValue(booking.time) || booking.time)) {
+        console.group(`DEBUG cancellation save ${dateOnly(booking.date)} ${normalizeTimeValue(booking.time) || booking.time}`);
+        console.info("[class outcome save payload]", {
+          id: booking.id,
+          teacherId: booking.teacherId,
+          studentId: booking.studentId || "",
+          studentName: booking.studentName || "",
+          date: dateOnly(booking.date),
+          day: booking.day || dayFromISO(booking.date),
+          time: normalizeTimeValue(booking.time) || booking.time,
+          normalizedKey: teacherDateTimeKey(booking.teacherId, booking.date, booking.time),
+          status: booking.status,
+          type: booking.type,
+          source: booking.source || "",
+          outcomeSource: booking.outcomeSource || "",
+          sourceSlotId: booking.sourceSlotId || "",
+          updatedAt: booking.updatedAt || "",
+          statusChangedAt: booking.statusChangedAt || "",
+          cancelledAt: booking.cancelledAt || "",
+          archived: Boolean(booking.archived),
+          amendmentTime: bookingAmendmentTime(booking)
+        });
+        console.info("[local state winner after outcome]", weeklyTraceRecord("resolver winner", canonicalResolvedCellForSlot(booking.teacherId, booking.date, booking.time)));
+        console.groupEnd();
+      }
     }
 
     function restoreAutoOpenedSlotIfUnused(booking) {
