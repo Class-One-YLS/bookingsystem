@@ -952,7 +952,7 @@
             <div><label>Status</label><div class="field-actions"><select id="statusFilter"><option value="all">All</option><option value="open">Open only</option><option value="booked">Booked/Fixed only</option></select><button class="btn ghost" data-clear-filter="statusFilter">Clear</button></div></div>
             <div><label>Class Type</label><div class="field-actions"><select id="typeFilter"></select><button class="btn ghost" data-clear-filter="typeFilter">Clear</button></div></div>
             <div><label>&nbsp;</label><button class="btn ghost" id="clearSalesFiltersBtn">Clear Filters</button></div>
-            <div><label>&nbsp;</label><button class="btn mint" id="addTeacherLeaveBtn">Add Teacher On Leave</button></div>
+            <div><label>&nbsp;</label><button class="btn mint small" id="addTeacherLeaveBtn">Add Leave</button></div>
           </div>
           <div class="sales-summary" id="salesSummary"></div>
           <div id="pendingReplacementBanner" class="panel hide" style="margin-top:12px;"></div>
@@ -2251,7 +2251,7 @@
 
       <div id="teacherLeaveModal" class="modal hide">
     <div class="modal-card">
-      <div class="row spread"><h2 id="teacherLeaveModalTitle">Add Teacher On Leave</h2><button class="btn ghost small" data-close>Close</button></div>
+      <div class="row spread"><h2 id="teacherLeaveModalTitle">Add Leave</h2><button class="btn ghost small" data-close>Close</button></div>
       <div class="grid two" style="margin-top:14px;">
         <div><label>Teacher</label><select id="teacherLeaveTeacher"></select></div>
         <div><label>Leave Type</label><select id="teacherLeavePeriodType"><option value="whole_day">Whole day</option><option value="time_range">Selected time range</option></select></div>
@@ -2272,6 +2272,20 @@
       <div class="row" style="margin-top:14px;">
         <button class="btn ghost" id="previewTeacherLeaveBtn">Preview Affected Classes</button>
         <button class="btn mint" id="saveTeacherLeaveBtn">Confirm Teacher Leave</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="teacherLeaveExistsModal" class="modal hide">
+    <div class="modal-card">
+      <div class="row spread"><h2>Teacher Leave Already Exists</h2><button class="btn ghost small" data-close>Close</button></div>
+      <input id="existingTeacherLeaveId" type="hidden">
+      <div class="subtle" style="margin-top:8px;">This teacher is already marked on leave for the selected date or time period.</div>
+      <div id="existingTeacherLeaveDetails" class="card" style="margin-top:12px;"></div>
+      <div class="row" style="margin-top:14px;">
+        <button class="btn danger" id="undoExistingTeacherLeaveBtn">Undo Leave</button>
+        <button class="btn ghost" id="keepExistingTeacherLeaveBtn">Keep Leave</button>
+        <button class="btn ghost" id="cancelExistingTeacherLeaveBtn">Cancel</button>
       </div>
     </div>
   </div>
@@ -3908,8 +3922,11 @@
         item.fromTime = normalizeTimeValue(item.fromTime || "08:00") || "08:00";
         item.toTime = normalizeTimeValue(item.toTime || "21:30") || "21:30";
         item.type ||= "teacher_leave";
-        item.status = item.status === "cancelled" ? "cancelled" : "active";
+        item.status = ["cancelled", "undone"].includes(item.status) ? item.status : "active";
         item.remark ||= "";
+        item.affectedBookingIds = Array.isArray(item.affectedBookingIds) ? item.affectedBookingIds : [];
+        item.affectedOverrideIds = Array.isArray(item.affectedOverrideIds) ? item.affectedOverrideIds : [];
+        item.replacementRecordIds = Array.isArray(item.replacementRecordIds) ? item.replacementRecordIds : [];
         item.createdAt ||= new Date().toISOString();
         item.updatedAt ||= item.createdAt;
       });
@@ -5318,13 +5335,37 @@
     function teacherLeaveForSlot(teacherId, date, time) {
       const targetTime = normalizeTimeValue(time) || time;
       return (state.teacherLeaves || []).find(leave =>
-        leave.status !== "cancelled" &&
+        isActiveTeacherLeave(leave) &&
         leave.teacherId === teacherId &&
         leave.startDate <= date &&
         leave.endDate >= date &&
         minutes(leave.fromTime) <= minutes(targetTime) &&
         minutes(targetTime) <= minutes(leave.toTime)
       ) || null;
+    }
+
+    function isActiveTeacherLeave(leave) {
+      return Boolean(leave) && !["cancelled", "undone"].includes(leave.status || "active");
+    }
+
+    function teacherLeaveOverlapsValues(leave, values) {
+      if (!isActiveTeacherLeave(leave) || leave.teacherId !== values.teacherId) return false;
+      const leaveStart = dateOnly(leave.startDate || leave.date);
+      const leaveEnd = dateOnly(leave.endDate || leaveStart);
+      const valuesStart = dateOnly(values.startDate);
+      const valuesEnd = dateOnly(values.endDate || valuesStart);
+      if (!leaveStart || !valuesStart || leaveEnd < valuesStart || valuesEnd < leaveStart) return false;
+      const leaveWholeDay = Boolean(leave.wholeDay || leave.type === "whole_day") || ((leave.fromTime || "08:00") === "08:00" && (leave.toTime || "21:30") === "21:30");
+      if (leaveWholeDay || values.wholeDay) return true;
+      const leaveFrom = minutes(leave.fromTime || "08:00");
+      const leaveTo = minutes(leave.toTime || "21:30");
+      const valuesFrom = minutes(values.fromTime);
+      const valuesTo = minutes(values.toTime);
+      return leaveFrom <= valuesTo && valuesFrom <= leaveTo;
+    }
+
+    function findOverlappingTeacherLeave(values, excludeLeaveId = "") {
+      return (state.teacherLeaves || []).find(leave => leave.id !== excludeLeaveId && teacherLeaveOverlapsValues(leave, values)) || null;
     }
 
     function teacherLeavePseudoBooking(slot, leave) {
@@ -5364,6 +5405,13 @@
         teacherLeaveId: leave.id,
         previousKind: cell.kind || "open",
         previousStatus: cell.status || "available",
+        previousAvailable: Boolean(cell.available),
+        previousLocked: Boolean(cell.locked),
+        previousBookingId: cell.bookingId || "",
+        previousOverrideId: cell.slotId || cell.recurringScheduleId || "",
+        previousSource: cell.source || "",
+        changedByTeacherLeave: true,
+        changedAt: now,
         remark: leave.reason || leave.remark || "Teacher on leave",
         createdAt: now,
         updatedAt: now,
@@ -5475,6 +5523,13 @@
         return [];
       }
       const teacher = teacherById(values.teacherId);
+      const overlappingLeave = findOverlappingTeacherLeave(values, editingTeacherLeaveId || "");
+      if (overlappingLeave) {
+        showExistingTeacherLeaveModal(overlappingLeave);
+        box.classList.add("hide");
+        box.innerHTML = "";
+        return { bookedCells: [], openCells: [] };
+      }
       const cells = teacherLeaveAffectedCells(values, { includeTeacherLeaveId: editingTeacherLeaveId });
       const openCells = teacherLeaveOpenCells(values, { includeTeacherLeaveId: editingTeacherLeaveId });
       box.classList.remove("hide");
@@ -5517,9 +5572,9 @@
         setStatus("Unable to open the Teacher Leave form.", "error");
         return;
       }
-      const leave = leaveId ? (state.teacherLeaves || []).find(item => item.id === leaveId && item.status !== "cancelled") : null;
+      const leave = leaveId ? (state.teacherLeaves || []).find(item => item.id === leaveId && isActiveTeacherLeave(item)) : null;
       editingTeacherLeaveId = leave ? leave.id : "";
-      $("teacherLeaveModalTitle").textContent = leave ? "Edit Teacher On Leave" : "Add Teacher On Leave";
+      $("teacherLeaveModalTitle").textContent = leave ? "Edit Teacher Leave" : "Add Leave";
       $("saveTeacherLeaveBtn").textContent = leave ? "Update Teacher Leave" : "Confirm Teacher Leave";
       const selectedTeacher = $("teacherFilter")?.value && $("teacherFilter").value !== "all" ? $("teacherFilter").value : ($("overviewTeacherFilter")?.value || "");
       $("teacherLeaveTeacher").value = leave?.teacherId || selectedTeacher || activeTeachers()[0]?.id || "";
@@ -5541,6 +5596,63 @@
       const range = leave.startDate === leave.endDate ? formatDateFromAny(leave.startDate) : `${formatDateFromAny(leave.startDate)} to ${formatDateFromAny(leave.endDate)}`;
       const time = leave.wholeDay || leave.type === "whole_day" ? "Whole day" : `${timeLabel(leave.fromTime)} - ${timeLabel(leave.toTime)}`;
       return `${teacher?.name || "-"} | ${range} | ${time}`;
+    }
+
+    function teacherLeaveImpactCounts(leave) {
+      const teacher = teacherById(leave.teacherId);
+      const affectedBookingIds = Array.isArray(leave.affectedBookingIds) && leave.affectedBookingIds.length
+        ? leave.affectedBookingIds
+        : (state.bookings || []).filter(booking => booking.teacherLeaveId === leave.id).map(booking => booking.id);
+      const affectedOverrideIds = Array.isArray(leave.affectedOverrideIds) && leave.affectedOverrideIds.length
+        ? leave.affectedOverrideIds
+        : (teacher?.overrideSlots || []).filter(slot => slot.teacherLeaveId === leave.id && slot.source === "teacher_leave").map(slot => slot.id);
+      const replacements = (state.replacements || []).filter(item => item.teacherLeaveId === leave.id);
+      const pendingReplacements = replacements.filter(item => !item.replacementBookingId && !item.archived);
+      const usedReplacements = replacements.filter(item => item.replacementBookingId && !item.archived);
+      return {
+        affectedBookingIds,
+        affectedOverrideIds,
+        replacements,
+        pendingReplacements,
+        usedReplacements
+      };
+    }
+
+    function renderExistingTeacherLeaveDetails(leave) {
+      const impact = teacherLeaveImpactCounts(leave);
+      return `
+        <strong>${escapeHtml(teacherLeaveSummary(leave))}</strong>
+        <div class="subtle" style="margin-top:6px;">${escapeHtml(leave.remark || leave.reason || "Teacher unavailable")}</div>
+        <div class="grid metrics" style="margin-top:10px;">
+          <div class="metric"><span class="subtle">Booked classes affected</span><strong>${impact.affectedBookingIds.length}</strong></div>
+          <div class="metric"><span class="subtle">Open slots set OFF</span><strong>${impact.affectedOverrideIds.length}</strong></div>
+          <div class="metric"><span class="subtle">Replacements created</span><strong>${impact.replacements.length}</strong></div>
+          <div class="metric"><span class="subtle">Used replacements</span><strong>${impact.usedReplacements.length}</strong></div>
+        </div>
+        <div class="subtle" style="margin-top:10px;">Created by ${escapeHtml(leave.createdBy || "-")} at ${escapeHtml(leave.createdAt ? new Date(leave.createdAt).toLocaleString("en-GB") : "-")}.</div>
+        <div class="subtle" style="margin-top:8px;">Undo this leave?</div>
+        ${impact.usedReplacements.length ? `<div class="status warn" style="margin-top:10px;">${impact.usedReplacements.length} replacement record${impact.usedReplacements.length === 1 ? "" : "s"} already booked/used. Undo will keep them for manual review.</div>` : ""}
+      `;
+    }
+
+    function showExistingTeacherLeaveModal(leave) {
+      $("existingTeacherLeaveId").value = leave.id;
+      $("existingTeacherLeaveDetails").innerHTML = renderExistingTeacherLeaveDetails(leave);
+      $("teacherLeaveExistsModal").classList.remove("hide");
+    }
+
+    function checkTeacherLeaveOverlapFromForm() {
+      if ($("teacherLeaveModal")?.classList.contains("hide")) return null;
+      let values;
+      try { values = teacherLeaveFormValues(); } catch (error) { return null; }
+      if (!values.teacherId || !values.startDate || !values.endDate) return null;
+      const overlappingLeave = findOverlappingTeacherLeave(values, editingTeacherLeaveId || "");
+      if (overlappingLeave) {
+        showExistingTeacherLeaveModal(overlappingLeave);
+        $("teacherLeavePreview").classList.add("hide");
+        $("teacherLeavePreview").innerHTML = "";
+      }
+      return overlappingLeave;
     }
 
     function bookingFromResolvedCellForLeave(cell, leave, now) {
@@ -5627,24 +5739,42 @@
       const now = leave.updatedAt || new Date().toISOString();
       let changed = 0;
       let replacementsCreated = 0;
+      const affectedBookingIds = [];
+      const replacementRecordIds = [];
       cells.forEach(cell => {
         const booking = bookingFromResolvedCellForLeave(cell, leave, now);
         const before = bookingLogSummary(booking);
         booking.previousStatus = booking.previousStatus || booking.status || "booked";
         booking.previousOutcome = booking.previousOutcome || {
+          kind: cell.kind || "booking",
           status: booking.status || "booked",
           archived: Boolean(booking.archived),
+          available: Boolean(cell.available),
+          locked: Boolean(cell.locked ?? true),
+          bookingId: booking.id,
+          overrideId: cell.slotId || cell.recurringScheduleId || "",
+          source: booking.source || "",
           remark: booking.remark || "",
           updatedAt: booking.updatedAt || ""
         };
         stampBookingStatus(booking, "teacher_leave", now);
         booking.archived = true;
         booking.teacherLeaveId = leave.id;
+        booking.previousKind = booking.previousOutcome.kind || "booking";
+        booking.previousStatus = booking.previousOutcome.status || booking.previousStatus || "booked";
+        booking.previousAvailable = Boolean(booking.previousOutcome.available);
+        booking.previousLocked = Boolean(booking.previousOutcome.locked);
+        booking.previousBookingId = booking.previousOutcome.bookingId || booking.id;
+        booking.previousOverrideId = booking.previousOutcome.overrideId || "";
+        booking.previousSource = booking.previousOutcome.source || "";
+        booking.changedByTeacherLeave = true;
         booking.remark = [booking.remark, leave.reason || leave.remark || "Teacher on leave"].filter(Boolean).join("\n");
         booking.changedAt = now;
+        affectedBookingIds.push(booking.id);
         if (leave.createReplacementRecords) {
           const replacement = upsertTeacherLeaveReplacement(booking, leave, now);
           if (replacement.created) replacementsCreated += 1;
+          if (replacement.record?.id) replacementRecordIds.push(replacement.record.id);
           state.replacementCredits ||= [];
           if (!state.replacementCredits.some(credit => credit.sourceBookingId === booking.id && credit.status !== "void")) {
             addReplacementCredit({
@@ -5653,14 +5783,15 @@
               amount: 1,
               reason: "Teacher Leave",
               remark: "Auto credit from teacher leave.",
-              sourceBookingId: booking.id
+              sourceBookingId: booking.id,
+              teacherLeaveId: leave.id
             });
           }
         }
         logAction("Teacher Leave Applied", booking.studentName || booking.id, before, bookingLogSummary(booking), leave.reason || leave.remark || "Teacher on leave");
         changed += 1;
       });
-      return { changed, replacementsCreated };
+      return { changed, replacementsCreated, affectedBookingIds, replacementRecordIds };
     }
 
     function applyTeacherLeaveToOpenSlots(leave, openCells) {
@@ -5669,6 +5800,7 @@
       const now = leave.updatedAt || new Date().toISOString();
       teacher.overrideSlots ||= [];
       let openSlotsBlocked = 0;
+      const affectedOverrideIds = [];
       openCells.forEach(cell => {
         const offSlot = teacherLeaveOffSlotFromCell(cell, leave, now);
         const existing = teacher.overrideSlots.find(slot =>
@@ -5686,39 +5818,66 @@
         } else {
           teacher.overrideSlots.push(offSlot);
         }
+        affectedOverrideIds.push(existing?.id || offSlot.id);
         openSlotsBlocked += 1;
       });
       if (openSlotsBlocked) teacher.updatedAt = now;
-      return { openSlotsBlocked };
+      return { openSlotsBlocked, affectedOverrideIds };
     }
 
     function restoreTeacherLeaveEffects(leave, options = {}) {
       const now = options.now || new Date().toISOString();
       const restoreClasses = options.restoreClasses !== false;
       const archiveUnusedReplacements = options.archiveUnusedReplacements !== false;
+      const leaveTime = activityTime(leave.updatedAt || leave.createdAt);
+      const affectedBookingIdSet = new Set([...(leave.affectedBookingIds || []), ...(state.bookings || []).filter(booking => booking.teacherLeaveId === leave.id).map(booking => booking.id)].filter(Boolean));
+      const affectedReplacementIdSet = new Set([...(leave.replacementRecordIds || []), ...(state.replacements || []).filter(item => item.teacherLeaveId === leave.id).map(item => item.id)].filter(Boolean));
+      const affectedOverrideIdSet = new Set([...(leave.affectedOverrideIds || [])].filter(Boolean));
       let restoredCount = 0;
       let archivedReplacementCount = 0;
       let restoredOpenSlotCount = 0;
+      let skippedConflictCount = 0;
+      let keptUsedReplacementCount = 0;
+      let voidedCreditCount = 0;
+      let keptUsedCreditCount = 0;
       const teacher = teacherById(leave.teacherId);
       if (teacher?.overrideSlots) {
         const beforeLength = teacher.overrideSlots.length;
-        teacher.overrideSlots = teacher.overrideSlots.filter(slot => !(slot.teacherLeaveId === leave.id && slot.source === "teacher_leave"));
+        teacher.overrideSlots = teacher.overrideSlots.filter(slot => !(
+          (slot.teacherLeaveId === leave.id && slot.source === "teacher_leave") ||
+          (affectedOverrideIdSet.has(slot.id) && slot.source === "teacher_leave")
+        ));
         restoredOpenSlotCount = beforeLength - teacher.overrideSlots.length;
         if (restoredOpenSlotCount) teacher.updatedAt = now;
       }
       if (restoreClasses) {
-        (state.bookings || []).filter(booking => booking.teacherLeaveId === leave.id).forEach(booking => {
+        (state.bookings || []).filter(booking => affectedBookingIdSet.has(booking.id) || booking.teacherLeaveId === leave.id).forEach(booking => {
+          const editedAfterLeave = leaveTime && bookingAmendmentTime(booking) > leaveTime;
+          if (editedAfterLeave && booking.status !== "teacher_leave" && booking.teacherLeaveId !== leave.id) {
+            skippedConflictCount += 1;
+            return;
+          }
           const previous = booking.previousOutcome || {};
           stampBookingStatus(booking, previous.status || booking.previousStatus || "booked", now);
           booking.archived = Boolean(previous.archived);
           booking.remark = previous.remark || "";
           booking.teacherLeaveId = "";
+          booking.changedByTeacherLeave = false;
           booking.changedAt = now;
+          booking.updatedBy = currentUser()?.email || currentUser()?.name || "";
+          booking.deviceId = currentDeviceId();
           restoredCount += 1;
         });
       }
       if (archiveUnusedReplacements) {
-        (state.replacements || []).filter(item => item.teacherLeaveId === leave.id && !item.replacementBookingId).forEach(item => {
+        (state.replacements || []).filter(item => affectedReplacementIdSet.has(item.id) || item.teacherLeaveId === leave.id).forEach(item => {
+          if (item.replacementBookingId) {
+            keptUsedReplacementCount += 1;
+            item.latestAction = "Teacher leave undone; linked replacement kept for manual review";
+            item.lastActionAt = now;
+            item.updatedAt = now;
+            return;
+          }
           item.status = "Teacher Leave Cancelled";
           item.archived = true;
           item.replacementNeeded = false;
@@ -5728,7 +5887,22 @@
           archivedReplacementCount += 1;
         });
       }
-      return { restoredCount, archivedReplacementCount, restoredOpenSlotCount };
+      (state.replacementCredits || []).filter(credit =>
+        credit.teacherLeaveId === leave.id ||
+        (credit.sourceBookingId && affectedBookingIdSet.has(credit.sourceBookingId))
+      ).forEach(credit => {
+        if (Number(credit.used || 0) > 0) {
+          keptUsedCreditCount += 1;
+          credit.remark = [credit.remark, "Teacher leave undone; used credit kept for manual review."].filter(Boolean).join("\n");
+          credit.updatedAt = now;
+          return;
+        }
+        credit.status = "void";
+        credit.voidedAt = now;
+        credit.updatedAt = now;
+        voidedCreditCount += 1;
+      });
+      return { restoredCount, archivedReplacementCount, restoredOpenSlotCount, skippedConflictCount, keptUsedReplacementCount, voidedCreditCount, keptUsedCreditCount };
     }
 
     async function saveTeacherLeave() {
@@ -5744,16 +5918,22 @@
       const latestLoaded = await autoLoadLatestNeonIfNeeded("saving teacher leave");
       if (!latestLoaded) return;
       const now = new Date().toISOString();
-      const existingLeave = editingTeacherLeaveId ? (state.teacherLeaves || []).find(item => item.id === editingTeacherLeaveId && item.status !== "cancelled") : null;
+      const existingLeave = editingTeacherLeaveId ? (state.teacherLeaves || []).find(item => item.id === editingTeacherLeaveId && isActiveTeacherLeave(item)) : null;
+      const overlappingLeave = findOverlappingTeacherLeave(values, existingLeave?.id || "");
+      if (!existingLeave && overlappingLeave) {
+        showExistingTeacherLeaveModal(overlappingLeave);
+        return;
+      }
       const snapshotTeacherIds = [...new Set([values.teacherId, existingLeave?.teacherId].filter(Boolean))];
       const beforeSnapshot = existingLeave
         ? snapshotCollections({
           teachers: snapshotTeacherIds,
           teacherLeaves: [existingLeave.id],
           bookings: (state.bookings || []).filter(item => item.teacherLeaveId === existingLeave.id).map(item => item.id),
-          replacements: (state.replacements || []).filter(item => item.teacherLeaveId === existingLeave.id).map(item => item.id)
+          replacements: (state.replacements || []).filter(item => item.teacherLeaveId === existingLeave.id).map(item => item.id),
+          replacementCredits: (state.replacementCredits || []).filter(item => item.teacherLeaveId === existingLeave.id).map(item => item.id)
         })
-        : snapshotCollections({ teachers: snapshotTeacherIds, bookings: [], replacements: [] });
+        : snapshotCollections({ teachers: snapshotTeacherIds, bookings: [], replacements: [], replacementCredits: [] });
       if (existingLeave) restoreTeacherLeaveEffects(existingLeave, { now, restoreClasses: true, archiveUnusedReplacements: true });
       const leave = existingLeave || {
         id: uid("leave"),
@@ -5784,13 +5964,17 @@
       if (!existingLeave) state.teacherLeaves.push(leave);
       const result = values.cancelAffectedClasses ? applyTeacherLeaveToResolvedCells(leave, cells) : { changed: 0, replacementsCreated: 0 };
       const openResult = applyTeacherLeaveToOpenSlots(leave, openCells);
+      leave.affectedBookingIds = result.affectedBookingIds || [];
+      leave.affectedOverrideIds = openResult.affectedOverrideIds || [];
+      leave.replacementRecordIds = result.replacementRecordIds || [];
       const actionName = existingLeave ? "Teacher Leave Updated" : "Teacher Leave Added";
       logAction(actionName, teacherById(values.teacherId)?.name || values.teacherId, existingLeave ? "Existing leave updated" : "", `${teacherLeaveSummary(leave)} | ${result.changed} booked class${result.changed === 1 ? "" : "es"} marked Teacher Leave | ${openResult.openSlotsBlocked} open slot${openResult.openSlotsBlocked === 1 ? "" : "s"} changed to OFF | ${result.replacementsCreated} replacement record${result.replacementsCreated === 1 ? "" : "s"} created`, leave.remark || "", {
         undo: makeUndoSnapshot(beforeSnapshot, snapshotCollections({
           teachers: snapshotTeacherIds,
           teacherLeaves: [leave.id],
           bookings: (state.bookings || []).filter(item => item.teacherLeaveId === leave.id).map(item => item.id),
-          replacements: (state.replacements || []).filter(item => item.teacherLeaveId === leave.id).map(item => item.id)
+          replacements: (state.replacements || []).filter(item => item.teacherLeaveId === leave.id).map(item => item.id),
+          replacementCredits: (state.replacementCredits || []).filter(item => item.teacherLeaveId === leave.id).map(item => item.id)
         }))
       });
       $("teacherLeaveModal").classList.add("hide");
@@ -8052,7 +8236,7 @@
     function teacherLeaveRuleRows(teacher) {
       const year = Number($("overviewLeaveYear").value || new Date().getFullYear());
       return (state.teacherLeaves || [])
-        .filter(leave => leave.teacherId === teacher.id && leave.status !== "cancelled")
+        .filter(leave => leave.teacherId === teacher.id && isActiveTeacherLeave(leave))
         .filter(leave => {
           const start = Number((leave.startDate || "").slice(0, 4));
           const end = Number((leave.endDate || leave.startDate || "").slice(0, 4));
@@ -8061,28 +8245,72 @@
         .sort((a, b) => `${a.startDate || ""}${a.fromTime || ""}`.localeCompare(`${b.startDate || ""}${b.fromTime || ""}`));
     }
 
-    async function cancelTeacherLeave(leaveId) {
+    function teacherLeaveAffectedCollectionIds(leave) {
+      const bookingIds = [...new Set([
+        ...(leave?.affectedBookingIds || []),
+        ...(state.bookings || []).filter(booking => booking.teacherLeaveId === leave?.id).map(booking => booking.id)
+      ].filter(Boolean))];
+      const replacementIds = [...new Set([
+        ...(leave?.replacementRecordIds || []),
+        ...(state.replacements || []).filter(item => item.teacherLeaveId === leave?.id).map(item => item.id)
+      ].filter(Boolean))];
+      const replacementCreditIds = [...new Set((state.replacementCredits || [])
+        .filter(credit => credit.teacherLeaveId === leave?.id || (credit.sourceBookingId && bookingIds.includes(credit.sourceBookingId)))
+        .map(credit => credit.id))];
+      return {
+        teachers: [leave?.teacherId].filter(Boolean),
+        teacherLeaves: [leave?.id].filter(Boolean),
+        bookings: bookingIds,
+        replacements: replacementIds,
+        replacementCredits: replacementCreditIds
+      };
+    }
+
+    async function undoTeacherLeave(leaveId) {
       if (!requireActionPermission("edit")) return;
-      const leave = (state.teacherLeaves || []).find(item => item.id === leaveId && item.status !== "cancelled");
+      const leave = (state.teacherLeaves || []).find(item => item.id === leaveId && isActiveTeacherLeave(item));
       if (!leave) return;
-      const affectedCount = (state.bookings || []).filter(booking => booking.teacherLeaveId === leave.id).length;
-      const replacementCount = (state.replacements || []).filter(item => item.teacherLeaveId === leave.id && !item.replacementBookingId && !item.archived).length;
-      const restore = confirm(`Cancel this teacher leave?\n\nAffected classes: ${affectedCount}\nUnused replacement records: ${replacementCount}\n\nOK = Restore previous class statuses and archive unused replacement records.\nCancel = Keep current class outcomes and only cancel the leave block.`);
-      const before = cloneForUndo(leave);
       const now = new Date().toISOString();
-      leave.status = "cancelled";
-      leave.cancelledAt = now;
-      leave.updatedAt = leave.cancelledAt;
-      const { restoredCount, archivedReplacementCount, restoredOpenSlotCount } = restore
-        ? restoreTeacherLeaveEffects(leave, { now, restoreClasses: true, archiveUnusedReplacements: true })
-        : restoreTeacherLeaveEffects(leave, { now, restoreClasses: false, archiveUnusedReplacements: false });
-      logAction("Teacher Leave Cancelled", teacherById(leave.teacherId)?.name || leave.teacherId, before, cloneForUndo(leave), `${teacherLeaveSummary(leave)} | restored classes: ${restoredCount} | restored open slots: ${restoredOpenSlotCount} | archived replacements: ${archivedReplacementCount}`);
+      const affectedIds = teacherLeaveAffectedCollectionIds(leave);
+      const undoBefore = snapshotCollections(affectedIds);
+      const summary = restoreTeacherLeaveEffects(leave, { now, restoreClasses: true, archiveUnusedReplacements: true });
+      leave.status = "undone";
+      leave.undoneAt = now;
+      leave.undoneBy = currentUser()?.email || currentUser()?.name || "";
+      leave.updatedAt = now;
+      leave.updatedBy = leave.undoneBy;
+      leave.deviceId = currentDeviceId();
+      leave.undoSummary = summary;
+      const undoAfter = snapshotCollections(teacherLeaveAffectedCollectionIds(leave));
+      logAction(
+        "Teacher Leave Undone",
+        teacherById(leave.teacherId)?.name || leave.teacherId,
+        `${teacherLeaveSummary(leave)} | active`,
+        `${teacherLeaveSummary(leave)} | undone`,
+        `Restored classes: ${summary.restoredCount} | Open slots restored: ${summary.restoredOpenSlotCount} | Unused replacements reversed: ${summary.archivedReplacementCount} | Used replacements kept: ${summary.keptUsedReplacementCount} | Credits voided: ${summary.voidedCreditCount}${summary.skippedConflictCount ? ` | Skipped newer edits: ${summary.skippedConflictCount}` : ""}`,
+        { undo: makeUndoSnapshot(undoBefore, undoAfter) }
+      );
+      $("teacherLeaveExistsModal")?.classList.add("hide");
+      $("teacherLeaveModal")?.classList.add("hide");
+      editingTeacherLeaveId = "";
       save(false);
       renderSchedule();
       renderTeacherOverview();
       renderReplacements();
       renderActivityLog();
-      await autoPushIfConfigured(restore ? "Teacher leave cancelled and previous classes restored." : "Teacher leave cancelled.");
+      const synced = await autoPushIfConfigured("Teacher leave undone.");
+      const manualReview = summary.keptUsedReplacementCount || summary.keptUsedCreditCount || summary.skippedConflictCount;
+      setStatus(
+        `${synced ? "Teacher leave undone and synced." : "Teacher leave undone locally. Not synced to Teacher View yet."}${manualReview ? " Some linked replacements/credits need manual review." : ""}`,
+        synced && !manualReview ? "success" : "warn"
+      );
+    }
+
+    function cancelTeacherLeave(leaveId) {
+      if (!requireActionPermission("edit")) return;
+      const leave = (state.teacherLeaves || []).find(item => item.id === leaveId && isActiveTeacherLeave(item));
+      if (!leave) return;
+      showExistingTeacherLeaveModal(leave);
     }
 
     function renderTeacherLeaveSummary(teacher) {
@@ -8106,7 +8334,7 @@
                   </div>
 	                  <div class="row">
 	                    <button class="btn ghost small" data-edit-teacher-leave="${escapeHtml(leave.id)}">Edit Leave</button>
-	                    <button class="btn danger small" data-cancel-teacher-leave="${escapeHtml(leave.id)}">Cancel Leave</button>
+	                    <button class="btn danger small" data-cancel-teacher-leave="${escapeHtml(leave.id)}">Undo Leave</button>
 	                  </div>
                 </div>
               </div>
@@ -10324,7 +10552,7 @@
         .reduce((sum, item) => sum + Number(item.amount || 0) - Number(item.used || 0), 0);
     }
 
-    function addReplacementCredit({ studentId = "", studentName = "", amount = 1, reason = "", remark = "", sourceBookingId = "" }) {
+    function addReplacementCredit({ studentId = "", studentName = "", amount = 1, reason = "", remark = "", sourceBookingId = "", teacherLeaveId = "" }) {
       const now = new Date().toISOString();
       const student = studentById(studentId) || (state.students || []).find(s => cleanStudentName(s.name).toLowerCase() === cleanStudentName(studentName).toLowerCase());
       const credit = {
@@ -10336,6 +10564,7 @@
         reason: reason || "Manual adjustment",
         remark: remark || "",
         sourceBookingId,
+        teacherLeaveId,
         status: "active",
         createdAt: now,
         updatedAt: now
@@ -14349,6 +14578,7 @@
       if (/reset|start from zero|clear browser/.test(text)) return "reset";
       if (/import|pull|push|sync|neon|sheet|load from|save to/.test(text)) return "import";
       if (/delete|remove|void/.test(text)) return "delete";
+      if (/undo leave|teacher leave/.test(text)) return "edit";
       if (/archive|restore|undo cancellation|drop/.test(text)) return "archive";
       if (/save/.test(text)) return "save";
       if (/edit|add|new|book|confirm|set |update|create|disable|password|open slot|off/.test(text)) return "edit";
@@ -14397,11 +14627,11 @@
       const viewTeacherLeave = e.target.closest("[data-view-teacher-leave]");
       if (viewTeacherLeave) {
         const data = JSON.parse(viewTeacherLeave.dataset.viewTeacherLeave || "{}");
-        const leave = (state.teacherLeaves || []).find(item => item.id === data.teacherLeaveId && item.status !== "cancelled")
+        const leave = (state.teacherLeaves || []).find(item => item.id === data.teacherLeaveId && isActiveTeacherLeave(item))
           || teacherLeaveForSlot(data.teacherId, dateOnly(data.date), normalizeTimeValue(data.time) || data.time);
         if (!leave) return setStatus("Teacher is on leave during this period.", "warn");
-        if (!canPerformAction("edit")) return setStatus("Teacher is on leave during this period.", "warn");
-        if (confirm(`Teacher is on leave during this period.\n\n${teacherLeaveSummary(leave)}\n\nOpen this leave record?`)) openTeacherLeaveModal(leave.id);
+        if (!hasActionPermission("edit")) return setStatus("Teacher is on leave during this period.", "warn");
+        showExistingTeacherLeaveModal(leave);
         return;
       }
       const openOffSlot = e.target.closest("[data-open-off-slot]");
@@ -15732,6 +15962,26 @@
     };
     $("restoreCancelledClassBtn").onclick = () => restoreCancelledClass($("undoReplacementId").value);
     $("ignoreCancelledClassBtn").onclick = () => keepCancelledNoReplacement($("undoReplacementId").value);
+    $("undoExistingTeacherLeaveBtn").onclick = async () => {
+      const leaveId = $("existingTeacherLeaveId").value;
+      if (!leaveId) return;
+      $("undoExistingTeacherLeaveBtn").disabled = true;
+      try {
+        await undoTeacherLeave(leaveId);
+      } finally {
+        $("undoExistingTeacherLeaveBtn").disabled = false;
+      }
+    };
+    $("keepExistingTeacherLeaveBtn").onclick = () => {
+      $("teacherLeaveExistsModal").classList.add("hide");
+      $("teacherLeaveModal").classList.add("hide");
+      editingTeacherLeaveId = "";
+      setStatus("Existing teacher leave kept. No duplicate leave was created.", "warn");
+    };
+    $("cancelExistingTeacherLeaveBtn").onclick = () => {
+      $("teacherLeaveExistsModal").classList.add("hide");
+      setStatus("Teacher leave action cancelled.", "warn");
+    };
     $("addReplacementCreditBtn").onclick = () => {
       $("creditStudent").value = "all";
       $("creditStudentName").value = "";
@@ -15784,11 +16034,13 @@
       updateTeacherLeaveTimeFields();
       $("teacherLeavePreview").classList.add("hide");
       $("teacherLeavePreview").innerHTML = "";
+      checkTeacherLeaveOverlapFromForm();
     });
-    ["teacherLeaveTeacher", "teacherLeaveStartDate", "teacherLeaveFromTime", "teacherLeaveToTime", "teacherLeaveAction"].forEach(id => {
+    ["teacherLeaveTeacher", "teacherLeaveStartDate", "teacherLeaveEndDate", "teacherLeaveFromTime", "teacherLeaveToTime", "teacherLeaveAction"].forEach(id => {
       $(id).addEventListener("change", () => {
         $("teacherLeavePreview").classList.add("hide");
         $("teacherLeavePreview").innerHTML = "";
+        checkTeacherLeaveOverlapFromForm();
       });
     });
     $("previewTeacherLeaveBtn").onclick = () => animateClick($("previewTeacherLeaveBtn"), renderTeacherLeavePreview);
