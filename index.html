@@ -3054,6 +3054,7 @@
       return hasOnlyTeacherSheetSlots && !hasProfileData;
     };
     const activeTeachers = () => state.teachers.filter(t => !isTeacherArchived(t) && !isImportedOnlyTeacher(t));
+    const timetableTeachers = () => state.teachers.filter(t => !isTeacherArchived(t));
     const studentById = (id) => state.students.find(s => s.id === id);
     const escapeHtml = (text) => String(text ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
     const byName = (a, b) => String(a.name || "").localeCompare(String(b.name || ""), "en", { sensitivity: "base" });
@@ -3855,7 +3856,7 @@
           remark.createdBy ||= "Admin";
         });
       });
-      state.teachers = mergeDuplicateTeachers(state.teachers).filter(teacher => !isImportedOnlyTeacher(teacher));
+      state.teachers = mergeDuplicateTeachers(state.teachers);
       state.students.forEach(student => {
         student.name = cleanStudentName(student.name);
         student.subjects = normalizeSubjects(Array.isArray(student.subjects) ? student.subjects : [student.subject].filter(Boolean));
@@ -4957,12 +4958,15 @@
 
     function hydrateSelects() {
       const teacherOptions = [...activeTeachers()].sort(byName).map(t => ({ value: t.id, label: `${t.name} (${(t.subjects || []).join(", ") || "No subject"})` }));
+      const timetableTeacherOptions = [...timetableTeachers()].sort(byName).map(t => ({ value: t.id, label: `${t.name} (${(t.subjects || []).join(", ") || "Imported timetable"})` }));
       const reportTeacherOptions = [...state.teachers].filter(t => !isImportedOnlyTeacher(t)).sort(byName).map(t => ({ value: t.id, label: `${t.name}${isTeacherArchived(t) ? " (Archived)" : ""} (${(t.subjects || []).join(", ") || "No subject"})` }));
       const studentOptions = [...state.students].sort(byName).filter(s => (s.status || "registered") !== "archived").map(s => ({ value: s.id, label: `${s.name}${s.package ? " - " + s.package : ""}` }));
       const packageOptions = [...new Set(state.students.map(s => s.package).filter(Boolean))].sort();
       ["monthSelect", "reportMonth", "businessDashboardMonth"].forEach(id => fillSelect($(id), Array.from({ length: 12 }, (_, i) => ({ value: i, label: new Date(2026, i, 1).toLocaleString("en", { month: "long" }) }))));
-      ["teacherFilter", "teacherStudentRecordTeacher", "noShowTeacherFilter"].forEach(id => fillSelect($(id), teacherOptions, "All Teachers"));
-      fillSelect($("teacherLeaveTeacher"), teacherOptions, "Choose teacher");
+      fillSelect($("teacherFilter"), timetableTeacherOptions, "All Teachers");
+      fillSelect($("noShowTeacherFilter"), timetableTeacherOptions, "All Teachers");
+      fillSelect($("teacherStudentRecordTeacher"), teacherOptions, "All Teachers");
+      fillSelect($("teacherLeaveTeacher"), timetableTeacherOptions, "Choose teacher");
       ["overviewTeacherFilter"].forEach(id => fillSelect($(id), teacherOptions, "Choose Teacher"));
       ["slotTeacher", "bulkTeacher", "overrideTeacher", "editTimeSlotTeacher"].forEach(id => fillSelect($(id), teacherOptions));
       fillSelect($("reportTeacher"), reportTeacherOptions);
@@ -5281,7 +5285,7 @@
       const dateStr = localISO(date);
       const day = DAYS[(date.getDay() + 6) % 7];
       const slots = [];
-      activeTeachers().forEach(t => {
+      timetableTeachers().forEach(t => {
         const latestOverrides = latestOverrideSlotsForDate(t, dateStr, day);
         const regularByTime = new Map();
         const keptRegularKeys = new Set();
@@ -5443,7 +5447,7 @@
     }
 
     function populateTeacherLeaveFormOptions() {
-      const teacherOptions = [...activeTeachers()].sort(byName).map(t => ({ value: t.id, label: `${t.name} (${(t.subjects || []).join(", ") || "No subject"})` }));
+      const teacherOptions = [...timetableTeachers()].sort(byName).map(t => ({ value: t.id, label: `${t.name} (${(t.subjects || []).join(", ") || "Imported timetable"})` }));
       fillSelect($("teacherLeaveTeacher"), teacherOptions, "Choose teacher");
       ["teacherLeaveFromTime", "teacherLeaveToTime"].forEach(id => fillSelect($(id), halfHourOptions()));
       $("teacherLeaveFromTime").value = "08:00";
@@ -5577,7 +5581,7 @@
       $("teacherLeaveModalTitle").textContent = leave ? "Edit Teacher Leave" : "Add Leave";
       $("saveTeacherLeaveBtn").textContent = leave ? "Update Teacher Leave" : "Confirm Teacher Leave";
       const selectedTeacher = $("teacherFilter")?.value && $("teacherFilter").value !== "all" ? $("teacherFilter").value : ($("overviewTeacherFilter")?.value || "");
-      $("teacherLeaveTeacher").value = leave?.teacherId || selectedTeacher || activeTeachers()[0]?.id || "";
+      $("teacherLeaveTeacher").value = leave?.teacherId || selectedTeacher || timetableTeachers()[0]?.id || "";
       $("teacherLeavePeriodType").value = leave ? (leave.wholeDay || leave.type === "whole_day" ? "whole_day" : "time_range") : "whole_day";
       $("teacherLeaveStartDate").value = leave?.startDate || leave?.date || $("weekDateInput")?.value || todayISO();
       $("teacherLeaveEndDate").value = leave?.endDate || $("teacherLeaveStartDate").value;
@@ -6309,7 +6313,7 @@
 
     function resolvedCellsForDate(date) {
       const dateISO = localISO(date);
-      return activeTeachers().flatMap(teacher => resolveTeacherCalendar(state, { teacherId: teacher.id, from: dateISO, to: dateISO }).cells);
+      return timetableTeachers().flatMap(teacher => resolveTeacherCalendar(state, { teacherId: teacher.id, from: dateISO, to: dateISO }).cells);
     }
 
     function canonicalResolvedCellForSlot(teacherId, date, time) {
@@ -10710,7 +10714,7 @@
     function classManagementResolvedCells() {
       const { from, to } = selectedNoShowMonthRange();
       const teacherFilter = $("noShowTeacherFilter")?.value || "all";
-      const teachers = teacherFilter === "all" ? activeTeachers() : activeTeachers().filter(teacher => teacher.id === teacherFilter);
+      const teachers = teacherFilter === "all" ? timetableTeachers() : timetableTeachers().filter(teacher => teacher.id === teacherFilter);
       return teachers.flatMap(teacher => resolveTeacherCalendar(state, { teacherId: teacher.id, from, to }).cells);
     }
 
@@ -12463,7 +12467,7 @@
     }
 
     async function runTeacherViewParityCheck() {
-      const selectedTeacher = teacherById($("teacherFilter")?.value) || teacherById($("overviewTeacherFilter")?.value) || activeTeachers()[0];
+      const selectedTeacher = teacherById($("teacherFilter")?.value) || teacherById($("overviewTeacherFilter")?.value) || timetableTeachers()[0];
       if (!selectedTeacher) return alert("Add or choose a teacher first.");
       const dates = weekDates();
       const from = localISO(dates[0]);
@@ -12476,7 +12480,7 @@
     }
 
     function openSyncDebugModal() {
-      const teacherOptions = activeTeachers().sort(byName).map(teacher => `<option value="${escapeHtml(teacher.id)}">${escapeHtml(teacher.name)}</option>`).join("");
+      const teacherOptions = timetableTeachers().sort(byName).map(teacher => `<option value="${escapeHtml(teacher.id)}">${escapeHtml(teacher.name)}</option>`).join("");
       $("syncDebugTeacher").innerHTML = teacherOptions;
       const selected = teacherById($("teacherFilter")?.value);
       if (selected) $("syncDebugTeacher").value = selected.id;
