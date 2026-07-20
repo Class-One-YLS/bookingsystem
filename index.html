@@ -5331,6 +5331,7 @@
       return {
         id: `leave_${leave.id}_${slot.date}_${slot.time}`,
         teacherId: slot.teacherId,
+        teacherLeaveId: leave.id,
         date: slot.date,
         day: slot.day || dayFromISO(slot.date),
         time: slot.time,
@@ -5342,6 +5343,33 @@
         source: "teacher_leave_record",
         updatedAt: leave.updatedAt || leave.createdAt || "",
         slotRevisionAt: leave.updatedAt || leave.createdAt || ""
+      };
+    }
+
+    function teacherLeaveOffSlotFromCell(cell, leave, now = new Date().toISOString()) {
+      const teacherId = cell.teacherId || leave.teacherId;
+      const date = dateOnly(cell.date || leave.startDate);
+      const time = normalizeTimeValue(cell.time) || cell.time;
+      const id = `teacher_leave_off_${leave.id}_${teacherId}_${date}_${time}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+      return {
+        id,
+        teacherId,
+        date,
+        day: cell.day || dayFromISO(date),
+        time,
+        subject: cell.subject || "",
+        unavailable: true,
+        status: "teacher_leave",
+        source: "teacher_leave",
+        teacherLeaveId: leave.id,
+        previousKind: cell.kind || "open",
+        previousStatus: cell.status || "available",
+        remark: leave.reason || leave.remark || "Teacher on leave",
+        createdAt: now,
+        updatedAt: now,
+        createdBy: currentUser()?.email || currentUser()?.name || "",
+        updatedBy: currentUser()?.email || currentUser()?.name || "",
+        deviceId: currentDeviceId()
       };
     }
 
@@ -5422,6 +5450,20 @@
         .sort((a, b) => minutes(a.time) - minutes(b.time));
     }
 
+    function teacherLeaveOpenCells(values, options = {}) {
+      const includeTeacherLeaveId = options.includeTeacherLeaveId || "";
+      const calendar = resolveTeacherCalendar(state, { teacherId: values.teacherId, from: values.startDate, to: values.endDate });
+      return (calendar.cells || [])
+        .filter(cell => cell.teacherId === values.teacherId)
+        .filter(cell => cell.date === values.startDate)
+        .filter(cell => minutes(cell.time) >= minutes(values.fromTime) && minutes(cell.time) <= minutes(values.toTime))
+        .filter(cell => {
+          if (includeTeacherLeaveId && cell.status === "teacher_leave" && cell.teacherLeaveId === includeTeacherLeaveId && cell.kind === "off") return true;
+          return cell.kind === "open" && cell.available && !cell.unavailable && cell.status !== "teacher_leave";
+        })
+        .sort((a, b) => minutes(a.time) - minutes(b.time));
+    }
+
     function renderTeacherLeavePreview() {
       const box = $("teacherLeavePreview");
       const values = teacherLeaveFormValues();
@@ -5434,20 +5476,32 @@
       }
       const teacher = teacherById(values.teacherId);
       const cells = teacherLeaveAffectedCells(values, { includeTeacherLeaveId: editingTeacherLeaveId });
+      const openCells = teacherLeaveOpenCells(values, { includeTeacherLeaveId: editingTeacherLeaveId });
       box.classList.remove("hide");
       box.innerHTML = `
         <strong>Preview Affected Classes</strong>
         <div class="subtle" style="margin-top:6px;">${escapeHtml(teacher?.name || "-")} | ${escapeHtml(formatDateFromAny(values.startDate))} | ${values.wholeDay ? "Whole day" : `${escapeHtml(timeLabel(values.fromTime))} - ${escapeHtml(timeLabel(values.toTime))}`} | Time range is inclusive.</div>
-        <div class="subtle">Total affected classes: ${cells.length}</div>
+        <div class="grid metrics" style="margin-top:10px;">
+          <div class="metric"><span class="subtle">Booked classes affected</span><strong>${cells.length}</strong></div>
+          <div class="metric"><span class="subtle">Open slots changed to OFF</span><strong>${openCells.length}</strong></div>
+          <div class="metric"><span class="subtle">Replacement credits created</span><strong>${values.createReplacementRecords ? cells.length : 0}</strong></div>
+        </div>
+        <h4 style="margin:14px 0 8px;">Booked Classes</h4>
         ${cells.length ? tableHtml(["Time", "Student", "Subject", "Class Type", "Current Status"], cells.map(cell => [
           timeLabel(cell.time),
           cell.studentName || "Class",
           cell.subject || "",
           cell.type || "class",
           bookingStatusLabel(cell.status || "booked")
-        ])) : `<div class="empty">No active classes were found during this leave period. The teacher can still be marked unavailable.</div>`}
+        ])) : `<div class="empty">No active booked classes were found during this leave period.</div>`}
+        <h4 style="margin:14px 0 8px;">Open Slots</h4>
+        ${openCells.length ? tableHtml(["Time", "Subject", "Current Status"], openCells.map(cell => [
+          timeLabel(cell.time),
+          cell.subject || "",
+          "Available"
+        ])) : `<div class="empty">No open slots will be changed to OFF.</div>`}
       `;
-      return cells;
+      return { bookedCells: cells, openCells };
     }
 
     function openTeacherLeaveModal(leaveId = "") {
@@ -5609,12 +5663,49 @@
       return { changed, replacementsCreated };
     }
 
+    function applyTeacherLeaveToOpenSlots(leave, openCells) {
+      const teacher = teacherById(leave.teacherId);
+      if (!teacher) return { openSlotsBlocked: 0 };
+      const now = leave.updatedAt || new Date().toISOString();
+      teacher.overrideSlots ||= [];
+      let openSlotsBlocked = 0;
+      openCells.forEach(cell => {
+        const offSlot = teacherLeaveOffSlotFromCell(cell, leave, now);
+        const existing = teacher.overrideSlots.find(slot =>
+          slot.teacherLeaveId === leave.id &&
+          slot.source === "teacher_leave" &&
+          dateOnly(slot.date) === offSlot.date &&
+          (normalizeTimeValue(slot.time) || slot.time) === offSlot.time
+        );
+        if (existing) {
+          Object.assign(existing, offSlot, {
+            id: existing.id || offSlot.id,
+            createdAt: existing.createdAt || offSlot.createdAt,
+            createdBy: existing.createdBy || offSlot.createdBy
+          });
+        } else {
+          teacher.overrideSlots.push(offSlot);
+        }
+        openSlotsBlocked += 1;
+      });
+      if (openSlotsBlocked) teacher.updatedAt = now;
+      return { openSlotsBlocked };
+    }
+
     function restoreTeacherLeaveEffects(leave, options = {}) {
       const now = options.now || new Date().toISOString();
       const restoreClasses = options.restoreClasses !== false;
       const archiveUnusedReplacements = options.archiveUnusedReplacements !== false;
       let restoredCount = 0;
       let archivedReplacementCount = 0;
+      let restoredOpenSlotCount = 0;
+      const teacher = teacherById(leave.teacherId);
+      if (teacher?.overrideSlots) {
+        const beforeLength = teacher.overrideSlots.length;
+        teacher.overrideSlots = teacher.overrideSlots.filter(slot => !(slot.teacherLeaveId === leave.id && slot.source === "teacher_leave"));
+        restoredOpenSlotCount = beforeLength - teacher.overrideSlots.length;
+        if (restoredOpenSlotCount) teacher.updatedAt = now;
+      }
       if (restoreClasses) {
         (state.bookings || []).filter(booking => booking.teacherLeaveId === leave.id).forEach(booking => {
           const previous = booking.previousOutcome || {};
@@ -5637,7 +5728,7 @@
           archivedReplacementCount += 1;
         });
       }
-      return { restoredCount, archivedReplacementCount };
+      return { restoredCount, archivedReplacementCount, restoredOpenSlotCount };
     }
 
     async function saveTeacherLeave() {
@@ -5654,13 +5745,15 @@
       if (!latestLoaded) return;
       const now = new Date().toISOString();
       const existingLeave = editingTeacherLeaveId ? (state.teacherLeaves || []).find(item => item.id === editingTeacherLeaveId && item.status !== "cancelled") : null;
+      const snapshotTeacherIds = [...new Set([values.teacherId, existingLeave?.teacherId].filter(Boolean))];
       const beforeSnapshot = existingLeave
         ? snapshotCollections({
+          teachers: snapshotTeacherIds,
           teacherLeaves: [existingLeave.id],
           bookings: (state.bookings || []).filter(item => item.teacherLeaveId === existingLeave.id).map(item => item.id),
           replacements: (state.replacements || []).filter(item => item.teacherLeaveId === existingLeave.id).map(item => item.id)
         })
-        : snapshotCollections({ bookings: [], replacements: [] });
+        : snapshotCollections({ teachers: snapshotTeacherIds, bookings: [], replacements: [] });
       if (existingLeave) restoreTeacherLeaveEffects(existingLeave, { now, restoreClasses: true, archiveUnusedReplacements: true });
       const leave = existingLeave || {
         id: uid("leave"),
@@ -5686,12 +5779,15 @@
         deviceId: currentDeviceId()
       });
       const cells = teacherLeaveAffectedCells(values);
+      const openCells = teacherLeaveOpenCells(values);
       state.teacherLeaves ||= [];
       if (!existingLeave) state.teacherLeaves.push(leave);
       const result = values.cancelAffectedClasses ? applyTeacherLeaveToResolvedCells(leave, cells) : { changed: 0, replacementsCreated: 0 };
+      const openResult = applyTeacherLeaveToOpenSlots(leave, openCells);
       const actionName = existingLeave ? "Teacher Leave Updated" : "Teacher Leave Added";
-      logAction(actionName, teacherById(values.teacherId)?.name || values.teacherId, existingLeave ? "Existing leave updated" : "", `${teacherLeaveSummary(leave)} | ${result.changed} affected class${result.changed === 1 ? "" : "es"} | ${result.replacementsCreated} replacement record${result.replacementsCreated === 1 ? "" : "s"} created`, leave.remark || "", {
+      logAction(actionName, teacherById(values.teacherId)?.name || values.teacherId, existingLeave ? "Existing leave updated" : "", `${teacherLeaveSummary(leave)} | ${result.changed} booked class${result.changed === 1 ? "" : "es"} marked Teacher Leave | ${openResult.openSlotsBlocked} open slot${openResult.openSlotsBlocked === 1 ? "" : "s"} changed to OFF | ${result.replacementsCreated} replacement record${result.replacementsCreated === 1 ? "" : "s"} created`, leave.remark || "", {
         undo: makeUndoSnapshot(beforeSnapshot, snapshotCollections({
+          teachers: snapshotTeacherIds,
           teacherLeaves: [leave.id],
           bookings: (state.bookings || []).filter(item => item.teacherLeaveId === leave.id).map(item => item.id),
           replacements: (state.replacements || []).filter(item => item.teacherLeaveId === leave.id).map(item => item.id)
@@ -5704,8 +5800,8 @@
       renderTeacherOverview();
       renderReplacements();
       renderActivityLog();
-      const synced = await autoPushIfConfigured(`Teacher leave saved. ${result.changed} class${result.changed === 1 ? "" : "es"} updated.`);
-      setStatus(synced ? `Teacher leave added. Affected classes and replacements have been updated.` : `Teacher leave saved locally and is syncing to Neon. Not synced to Teacher View yet.`, synced ? "success" : "warn");
+      const synced = await autoPushIfConfigured(`Teacher leave saved. ${result.changed} class${result.changed === 1 ? "" : "es"} updated, ${openResult.openSlotsBlocked} open slot${openResult.openSlotsBlocked === 1 ? "" : "s"} blocked.`);
+      setStatus(synced ? `Teacher leave added. ${result.changed} booked class${result.changed === 1 ? "" : "es"} updated and ${openResult.openSlotsBlocked} open slot${openResult.openSlotsBlocked === 1 ? "" : "s"} changed to OFF.` : `Teacher leave saved locally and is syncing to Neon. Not synced to Teacher View yet.`, synced ? "success" : "warn");
       } finally {
         teacherLeaveSaveInProgress = false;
         if (saveButton) saveButton.disabled = false;
@@ -5803,7 +5899,9 @@
     }
 
     function calendarCellFromSlot(slot, teacher) {
-      const locked = Boolean(slot.locked || slot.reserved);
+      const leaveUnavailable = Boolean(slot.unavailable && (slot.status === "teacher_leave" || slot.teacherLeaveId));
+      const locked = Boolean(slot.locked || slot.reserved || leaveUnavailable);
+      const unavailableStatus = slot.unavailable ? (slot.status || "off") : "";
       return {
         cellKey: `${slot.teacherId || teacher?.id || ""}|${dateOnly(slot.date)}|${normalizeTimeValue(slot.time) || slot.time}`,
         teacherId: slot.teacherId || teacher?.id || "",
@@ -5819,8 +5917,9 @@
         studentId: slot.studentId || "",
         studentName: slot.reserved ? (slot.reservationName || slot.studentName || "") : (slot.studentName || ""),
         subject: slot.subject || "",
-        type: slot.unavailable ? "off" : (slot.reserved ? "reserve" : (slot.locked ? "regular class" : "open slot")),
-        status: slot.unavailable ? "off" : (slot.locked || slot.reserved ? "booked" : "available"),
+        type: slot.unavailable ? (unavailableStatus === "teacher_leave" ? "teacher leave" : "off") : (slot.reserved ? "reserve" : (slot.locked ? "regular class" : "open slot")),
+        status: slot.unavailable ? unavailableStatus : (slot.locked || slot.reserved ? "booked" : "available"),
+        teacherLeaveId: slot.teacherLeaveId || "",
         minutes: 25,
         remark: slot.remark || "",
         locked,
@@ -5996,7 +6095,7 @@
           }
           const leave = slot ? teacherLeaveForSlot(teacherId, dateISO, time) : null;
           if (leave && slot) {
-            finalCell = calendarCellFromBooking(teacherLeavePseudoBooking(slot, leave), teacher, slot);
+            finalCell = calendarCellFromSlot(teacherLeaveOffSlotFromCell(slot, leave, leave.updatedAt || leave.createdAt || new Date().toISOString()), teacher);
             cells.push(finalCell);
             if (traceStages.length) {
               traceStages.push(weeklyTraceRecord("Stage 9 Render Weekly Timetable", finalCell));
@@ -7974,10 +8073,10 @@
       leave.status = "cancelled";
       leave.cancelledAt = now;
       leave.updatedAt = leave.cancelledAt;
-      const { restoredCount, archivedReplacementCount } = restore
+      const { restoredCount, archivedReplacementCount, restoredOpenSlotCount } = restore
         ? restoreTeacherLeaveEffects(leave, { now, restoreClasses: true, archiveUnusedReplacements: true })
-        : { restoredCount: 0, archivedReplacementCount: 0 };
-      logAction("Teacher Leave Cancelled", teacherById(leave.teacherId)?.name || leave.teacherId, before, cloneForUndo(leave), `${teacherLeaveSummary(leave)} | restored classes: ${restoredCount} | archived replacements: ${archivedReplacementCount}`);
+        : restoreTeacherLeaveEffects(leave, { now, restoreClasses: false, archiveUnusedReplacements: false });
+      logAction("Teacher Leave Cancelled", teacherById(leave.teacherId)?.name || leave.teacherId, before, cloneForUndo(leave), `${teacherLeaveSummary(leave)} | restored classes: ${restoredCount} | restored open slots: ${restoredOpenSlotCount} | archived replacements: ${archivedReplacementCount}`);
       save(false);
       renderSchedule();
       renderTeacherOverview();
@@ -8048,6 +8147,10 @@
       const cellKey = teacherDateTimeKey(slot.teacherId, slot.date, slot.time);
       const cellAttr = cellKey ? ` data-cell-key="${escapeHtml(cellKey)}"` : "";
       if (slot.unavailable) {
+        if (slot.status === "teacher_leave" || slot.teacherLeaveId || slot.source === "teacher_leave") {
+          const leaveData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, teacherLeaveId: slot.teacherLeaveId || "", date: slot.date, time: slot.time }));
+          return `<button class="slot unavailable status-teacher-leave"${cellAttr} data-view-teacher-leave="${leaveData}">${escapeHtml(teacher.name)}<small>Teacher Leave${slot.remark ? ` | ${escapeHtml(slot.remark)}` : ""}</small></button>`;
+        }
         const offData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, slotId: slot.id || "", slotWasOff: true, interactionSource: "weekly_timetable" }));
         return `<button class="slot unavailable"${cellAttr} data-open-off-slot="${offData}">${escapeHtml(teacher.name)}<small>OFF${slot.remark ? ` | ${escapeHtml(slot.remark)}` : ""}</small></button>`;
       }
@@ -14290,6 +14393,16 @@
       if (sectionJump) {
         const target = document.getElementById(sectionJump.dataset.sectionJump);
         if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      const viewTeacherLeave = e.target.closest("[data-view-teacher-leave]");
+      if (viewTeacherLeave) {
+        const data = JSON.parse(viewTeacherLeave.dataset.viewTeacherLeave || "{}");
+        const leave = (state.teacherLeaves || []).find(item => item.id === data.teacherLeaveId && item.status !== "cancelled")
+          || teacherLeaveForSlot(data.teacherId, dateOnly(data.date), normalizeTimeValue(data.time) || data.time);
+        if (!leave) return setStatus("Teacher is on leave during this period.", "warn");
+        if (!canPerformAction("edit")) return setStatus("Teacher is on leave during this period.", "warn");
+        if (confirm(`Teacher is on leave during this period.\n\n${teacherLeaveSummary(leave)}\n\nOpen this leave record?`)) openTeacherLeaveModal(leave.id);
+        return;
       }
       const openOffSlot = e.target.closest("[data-open-off-slot]");
       if (openOffSlot) {
