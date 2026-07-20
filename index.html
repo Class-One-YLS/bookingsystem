@@ -5683,7 +5683,7 @@
         remark: values.reason,
         updatedAt: now,
         updatedBy: currentUser()?.email || currentUser()?.name || "",
-        deviceId: DEVICE_ID
+        deviceId: currentDeviceId()
       });
       const cells = teacherLeaveAffectedCells(values);
       state.teacherLeaves ||= [];
@@ -10592,7 +10592,7 @@
       existing.publicHolidayReplacementDefault = $("policyPublicHolidayReplacement").value || "yes";
       existing.updatedAt = now;
       existing.updatedBy = currentUser()?.email || currentUser()?.name || "";
-      existing.deviceId = DEVICE_ID;
+      existing.deviceId = currentDeviceId();
       if (!(state.policyRules || []).some(item => item.id === existing.id)) state.policyRules.push(existing);
       logAction("Policy Settings Updated", existing.name, before, cloneForUndo(existing), "Teacher pay and replacement policy updated.");
       save(false);
