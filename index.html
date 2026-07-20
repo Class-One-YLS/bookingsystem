@@ -6208,6 +6208,7 @@
 
     function logWeeklyResolutionTrace({ teacher, dateISO, time, stages }) {
       if (!weeklyTraceTargetMatches(teacher.id, dateISO, time)) return;
+      console.group(`DEBUG ${dateISO} ${normalizeTimeValue(time) || time} ${teacher.name || teacher.id || ""}`);
       console.info("[weekly timetable resolver trace]", {
         teacherId: teacher.id,
         teacherName: teacher.name,
@@ -6215,6 +6216,7 @@
         time: normalizeTimeValue(time) || time,
         stages
       });
+      console.groupEnd();
     }
 
     function resolveTeacherCalendar(_state, { teacherId, from, to } = {}) {
@@ -6324,6 +6326,96 @@
         dateOnly(cell.date) === dateISO &&
         (normalizeTimeValue(cell.time) || cell.time) === targetTime
       ) || null;
+    }
+
+    function directRecurringSlotForCell(teacher, dateISO, time) {
+      if (!teacher) return null;
+      const day = dayFromISO(dateISO);
+      const targetTime = normalizeTimeValue(time) || time;
+      const latestOverrides = latestOverrideSlotsForDate(teacher, dateISO, day);
+      const override = latestOverrides.get(teacherDateTimeKey(teacher.id, dateISO, targetTime));
+      const recurring = (teacher.regularSlots || [])
+        .filter(slot => slot.day === day)
+        .map(slot => ({ ...slot, time: normalizeTimeValue(slot.time) || slot.time }))
+        .filter(slot => slot.time === targetTime)
+        .filter(slot => (!dateOnly(slot.startDate) || dateOnly(slot.startDate) <= dateISO) && (!dateOnly(slot.endDate) || dateOnly(slot.endDate) >= dateISO));
+      const regular = latestRegularSlot(recurring);
+      if (overrideSupersedesRegularSlot(override, regular)) return override ? { ...override, teacherId: teacher.id, date: dateISO, day, source: "override" } : null;
+      return regular ? { ...regular, teacherId: teacher.id, date: dateISO, day, source: regular.source || "regular" } : null;
+    }
+
+    function weeklyFallbackCellsForSlot(dateISO, time, teacherFilter, existingCells = []) {
+      const targetTime = normalizeTimeValue(time) || time;
+      const existingKeys = new Set((existingCells || [])
+        .filter(cell => !(cell.kind === "open" || cell.status === "available" || cell.available))
+        .map(cell => teacherDateTimeKey(cell.teacherId, cell.date, cell.time)));
+      const teachers = (teacherFilter && teacherFilter !== "all")
+        ? [teacherById(teacherFilter)].filter(Boolean)
+        : timetableTeachers();
+      const fallbackCells = [];
+      teachers.forEach(teacher => {
+        const cellKey = teacherDateTimeKey(teacher.id, dateISO, targetTime);
+        if (existingKeys.has(cellKey)) return;
+        const booking = canonicalBookingForSlot(teacher.id, dateISO, targetTime);
+        if (booking && !isDeletedBookingRecord(booking) && !booking.archived && !booking.deleted) {
+          fallbackCells.push(calendarCellFromBooking(booking, teacher, null));
+          return;
+        }
+        const slot = directRecurringSlotForCell(teacher, dateISO, targetTime);
+        if (slot && (slot.locked || slot.reserved || slot.unavailable || slot.studentName)) {
+          fallbackCells.push(calendarCellFromSlot(slot, teacher));
+        }
+      });
+      if (SYNC_DEBUG && fallbackCells.length) {
+        const debugMatchedCell = fallbackCells.find(cell => weeklyTraceTargetMatches(cell.teacherId, dateISO, targetTime));
+        if (debugMatchedCell) console.group(`DEBUG ${dateISO} ${targetTime} ${debugMatchedCell.teacherName || debugMatchedCell.teacherId || ""}`);
+        console.warn("[weekly timetable fallback surfaced hidden cell]", {
+          date: dateISO,
+          time: targetTime,
+          teacherFilter,
+          canonicalKey: `${teacherFilter || "all"}|${dateISO}|${targetTime}`,
+          renderedFallbacks: fallbackCells.map(cell => ({
+            cellKey: cell.cellKey || teacherDateTimeKey(cell.teacherId, cell.date, cell.time),
+            teacherId: cell.teacherId,
+            teacherName: cell.teacherName,
+            bookingId: cell.bookingId,
+            recurringScheduleId: cell.recurringScheduleId,
+            studentId: cell.studentId,
+            studentName: cell.studentName,
+            subject: cell.subject,
+            type: cell.type,
+            status: cell.status,
+            kind: cell.kind,
+            source: cell.source,
+            updatedAt: cell.updatedAt,
+            normalizedTime: normalizeTimeValue(cell.time) || cell.time,
+            loadedFrom: cell.bookingId ? "state.bookings fallback" : "teacher.regularSlots fallback"
+          }))
+        });
+        if (debugMatchedCell) console.groupEnd();
+      }
+      return fallbackCells;
+    }
+
+    function weeklyRawTimeCandidatesForDate(dateISO, teacherFilter) {
+      const times = new Set();
+      const teachers = (teacherFilter && teacherFilter !== "all")
+        ? [teacherById(teacherFilter)].filter(Boolean)
+        : timetableTeachers();
+      teachers.forEach(teacher => {
+        (teacher.regularSlots || []).forEach(slot => {
+          if (directRecurringSlotForCell(teacher, dateISO, slot.time)) times.add(normalizeTimeValue(slot.time) || slot.time);
+        });
+      });
+      bookingRecordsForResolution()
+        .filter(booking => !isDeletedBookingRecord(booking) && !booking.archived && !booking.deleted)
+        .filter(booking => !teacherFilter || teacherFilter === "all" || booking.teacherId === teacherFilter)
+        .filter(booking => dateOnly(booking.date) === dateISO)
+        .forEach(booking => {
+          const time = normalizeTimeValue(booking.time) || booking.time;
+          if (time) times.add(time);
+        });
+      return [...times].filter(Boolean);
     }
 
     function canonicalCellAvailabilityResult(cell, options = {}) {
@@ -6526,6 +6618,7 @@
       const dates = weekDates();
       finalizePassedClassesForRange(dates[0], dates[dates.length - 1]);
       const times = new Set();
+      const teacherFilterForTimes = $("teacherFilter")?.value || "all";
       const resolvedByDate = new Map(dates.map(date => [localISO(date), resolvedCellsForDate(date)]));
       weeklyResolvedCellsByKey = new Map();
       weeklyBookingsById = new Map();
@@ -6535,6 +6628,7 @@
         if (cell.bookingId && cell.booking) weeklyBookingsById.set(cell.bookingId, cell.booking);
       });
       [...resolvedByDate.values()].flat().forEach(cell => times.add(cell.time));
+      dates.forEach(date => weeklyRawTimeCandidatesForDate(localISO(date), teacherFilterForTimes).forEach(time => times.add(time)));
       const sortedTimes = [...times].sort((a, b) => minutes(a) - minutes(b));
       const summary = { open: 0, booked: 0, fixed: 0, visibleTeachers: new Set() };
       let html = `<div class="cell head schedule-corner"></div>${dates.map(d => `<div class="cell head">${DAYS[(d.getDay() + 6) % 7].slice(0, 3)}<br><span class="subtle">${d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span></div>`).join("")}`;
@@ -6547,8 +6641,23 @@
           const typeFilter = $("typeFilter").value;
           const timeFrom = $("timeFromFilter").value;
           const timeTo = $("timeToFilter").value;
-          let items = (resolvedByDate.get(localISO(d)) || [])
-            .filter(cell => cell.time === t)
+          const cellDate = localISO(d);
+          const cellDay = DAYS[(d.getDay() + 6) % 7];
+          const baseCells = (resolvedByDate.get(cellDate) || []).filter(cell => cell.time === t);
+          const fallbackCells = weeklyFallbackCellsForSlot(cellDate, t, teacherFilter, baseCells);
+          fallbackCells.forEach(cell => {
+            const key = cell.cellKey || teacherDateTimeKey(cell.teacherId, cell.date, cell.time);
+            if (key) weeklyResolvedCellsByKey.set(key, cell);
+            if (cell.bookingId && cell.booking) weeklyBookingsById.set(cell.bookingId, cell.booking);
+          });
+          const fallbackKeys = new Set(fallbackCells.map(cell => cell.cellKey || teacherDateTimeKey(cell.teacherId, cell.date, cell.time)));
+          const renderCells = fallbackCells.length
+            ? baseCells.filter(cell => {
+              const key = cell.cellKey || teacherDateTimeKey(cell.teacherId, cell.date, cell.time);
+              return !fallbackKeys.has(key) || !(cell.kind === "open" || cell.status === "available" || cell.available);
+            }).concat(fallbackCells)
+            : baseCells;
+          let items = renderCells
             .filter(cell => teacherFilter === "all" || cell.teacherId === teacherFilter)
             .filter(cell => subjectFilter === "all" || cell.subject === subjectFilter || (teacherById(cell.teacherId)?.subjects || []).includes(subjectFilter))
             .filter(cell => slotMatchesTimeRange({ time: cell.time }, timeFrom, timeTo))
@@ -6567,8 +6676,6 @@
             else if (x.slot.locked) summary.fixed += 1;
             else summary.open += 1;
           });
-          const cellDate = localISO(d);
-          const cellDay = DAYS[(d.getDay() + 6) % 7];
           html += `<div class="cell" data-cell-date="${cellDate}" data-cell-day="${cellDay}" data-cell-time="${t}">${filtered.map(x => slotHtml(x.slot, x.booking)).join("") || ""}</div>`;
         });
       });
