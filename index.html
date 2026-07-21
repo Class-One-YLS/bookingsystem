@@ -10806,7 +10806,7 @@
       const booking = existing || { id: uid("booking"), createdAt: now };
       Object.assign(booking, {
         teacherId: teacher.id,
-        studentId: data.studentId || "",
+        studentId: lead.studentId || "",
         studentName: cleanStudentName(lead.childName),
         subject: crmLeadSubject(lead, teacher),
         type: config.type,
