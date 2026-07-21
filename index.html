@@ -2668,6 +2668,7 @@
     let pendingCrmBookingKind = "";
     let pendingOpenAndBook = false;
     let pendingMoveDraftBookingId = "";
+    let moveBookingSaveInProgress = false;
     let outcomeInteractionSource = "weekly_timetable";
     let outcomeModalDraft = null;
     let weeklyResolvedCellsByKey = new Map();
@@ -4408,6 +4409,88 @@
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       }));
+    }
+
+    function movedBookingId(sourceBooking, slot, transactionId) {
+      return `${transactionId}_${sourceBooking.id || "source"}_${slot.teacherId}_${dateOnly(slot.date)}_${normalizeTimeValue(slot.time) || slot.time}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+    }
+
+    function createMovedDestinationBooking(sourceBooking, slot, transactionId, now, remark = "") {
+      const original = originalSlotSnapshot(sourceBooking);
+      const passed = slotHasPassed(slot.date, slot.time);
+      return {
+        ...cloneJson(sourceBooking),
+        id: movedBookingId(sourceBooking, slot, transactionId),
+        teacherId: slot.teacherId,
+        date: dateOnly(slot.date),
+        day: slot.day || dayFromISO(slot.date),
+        time: normalizeTimeValue(slot.time) || slot.time,
+        subject: sourceBooking.subject || slot.subject || "",
+        status: passed ? "completed" : "booked",
+        outcome: passed ? "completed" : "booked",
+        classOutcome: passed ? "completed" : "booked",
+        archived: passed,
+        deleted: false,
+        source: "moved_booking",
+        movedFromOccurrenceId: sourceBooking.id || "",
+        movedFromRecurringClassId: sourceBooking.sourceSlotId || sourceBooking.recurringScheduleId || "",
+        movedFromDate: original.date,
+        movedFromTime: original.time,
+        moveTransactionId: transactionId,
+        changedSlot: { ...original, changedAt: now, reason: remark || "Moved by drag and drop" },
+        replacementCreditCreated: false,
+        updatedAt: now,
+        statusChangedAt: now,
+        slotRevisionAt: now,
+        createdAt: now,
+        ...(passed ? { completedAt: slotDateTime(slot.date, slot.time).toISOString() } : { completedAt: "" }),
+        rebookedByBookingId: "",
+        supersededByBookingId: "",
+        rebookedAt: "",
+        supersededAt: "",
+        deletedAt: "",
+        deletedBy: ""
+      };
+    }
+
+    function markMovedSourceCancelled(sourceBooking, destinationBooking, transactionId, now, remark = "") {
+      const previousRemark = sourceBooking.remark || "";
+      stampBookingStatus(sourceBooking, "cancelled", now);
+      sourceBooking.outcomeSource = "drag_move";
+      sourceBooking.moveTransactionId = transactionId;
+      sourceBooking.movedToBookingId = destinationBooking.id;
+      sourceBooking.movedToDate = destinationBooking.date;
+      sourceBooking.movedToTime = destinationBooking.time;
+      sourceBooking.replacementCreditCreated = false;
+      sourceBooking.archived = false;
+      sourceBooking.active = true;
+      sourceBooking.source = sourceBooking.source || "fixed_regular_manual";
+      sourceBooking.remark = [
+        previousRemark,
+        `Moved to ${formatClassDateTime(destinationBooking.date, destinationBooking.time)}. No replacement credit created.`,
+        remark ? `Move remark: ${remark}` : ""
+      ].filter(Boolean).join("\n");
+    }
+
+    function moveBookedOccurrence(sourceBooking, slot, remark = "", options = {}) {
+      if (!sourceBooking) throw new Error("Booking not found.");
+      if (!slot) throw new Error("Target slot not found.");
+      const validationMessage = moveValidationMessage(sourceBooking, slot);
+      if (validationMessage) throw new Error(validationMessage);
+      const transactionId = uid("move");
+      const now = new Date().toISOString();
+      const destinationBooking = createMovedDestinationBooking(sourceBooking, slot, transactionId, now, remark);
+      const undoBefore = options.sourceWasDraft
+        ? { bookings: [] }
+        : snapshotCollections({ bookings: [sourceBooking.id, destinationBooking.id] });
+      const before = bookingLogSummary(sourceBooking);
+      markMovedSourceCancelled(sourceBooking, destinationBooking, transactionId, now, remark);
+      state.bookings.push(destinationBooking);
+      const after = `${formatClassDateTime(sourceBooking.date, sourceBooking.time)} cancelled | ${bookingLogSummary(destinationBooking)}`;
+      logAction("Class Moved", sourceBooking.studentName || sourceBooking.id, before, after, "Original occurrence cancelled without replacement credit.", {
+        undo: makeUndoSnapshot(undoBefore, snapshotCollections({ bookings: [sourceBooking.id, destinationBooking.id] }))
+      });
+      return { sourceBooking, destinationBooking, transactionId };
     }
 
     function money(value) {
@@ -11548,31 +11631,24 @@
     }
 
     async function confirmMoveBooking() {
-      const booking = state.bookings.find(item => item.id === $("moveBookingId").value);
-      const slot = JSON.parse($("moveSlot").value || "null");
-      const message = moveValidationMessage(booking, slot);
-      if (message) return alert(message);
-      const before = bookingLogSummary(booking);
-      const remark = $("moveRemark").value.trim();
-      const original = originalSlotSnapshot(booking);
-      markOriginalSlotAvailable(original, "Class moved; original slot opened.");
-      booking.teacherId = slot.teacherId;
-      booking.date = slot.date;
-      booking.day = slot.day;
-      booking.time = slot.time;
-      booking.subject = booking.subject || slot.subject || "";
-      const changedAt = new Date().toISOString();
-      booking.changedSlot = { ...original, changedAt, reason: remark || "Moved by drag and drop" };
-      booking.archived = false;
-      booking.updatedAt = changedAt;
-      booking.slotRevisionAt = changedAt;
-      if (remark) booking.remark = [booking.remark, `Moved: ${remark}`].filter(Boolean).join("\n");
-      logAction("Booking Moved", booking.studentName || booking.id, before, bookingLogSummary(booking), remark || "Moved by drag and drop.");
-      pendingMoveDraftBookingId = "";
-      $("moveBookingModal").classList.add("hide");
-      save(false);
-      renderAll();
-      await autoPushIfConfigured("Booking moved.");
+      if (moveBookingSaveInProgress) return;
+      const button = $("confirmMoveBookingBtn");
+      moveBookingSaveInProgress = true;
+      if (button) button.disabled = true;
+      try {
+        const booking = state.bookings.find(item => item.id === $("moveBookingId").value);
+        const slot = JSON.parse($("moveSlot").value || "null");
+        const remark = $("moveRemark").value.trim();
+        moveBookedOccurrence(booking, slot, remark, { sourceWasDraft: pendingMoveDraftBookingId === booking?.id });
+        pendingMoveDraftBookingId = "";
+        $("moveBookingModal").classList.add("hide");
+        save(false);
+        renderAll();
+        await autoPushIfConfigured("Class moved.");
+      } finally {
+        moveBookingSaveInProgress = false;
+        if (button) button.disabled = false;
+      }
     }
 
     function updateEditTimeSlotEndField() {
