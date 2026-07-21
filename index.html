@@ -2579,6 +2579,7 @@
     const LEADS_PER_PAGE = LIST_PAGE_SIZE;
     let leadPage = 1;
     let leadViewMode = uiStateGet("LeadViewMode", "table") || "table";
+    let crmRenderAfterDataLoadNeeded = false;
     let tutorLeadPage = 1;
     let tutorLeadViewMode = uiStateGet("TutorLeadViewMode", "table") || "table";
     let teacherListPage = 1;
@@ -10780,6 +10781,19 @@
       </tr></thead><tbody>${rows}</tbody></table></div>`;
     }
 
+    function renderCrmLeadsLoadingState() {
+      $("leadCardViewBtn").classList.toggle("active", leadViewMode === "cards");
+      $("leadCardViewBtn").classList.toggle("ghost", leadViewMode !== "cards");
+      $("leadTableViewBtn").classList.toggle("active", leadViewMode === "table");
+      $("leadTableViewBtn").classList.toggle("ghost", leadViewMode !== "table");
+      $("leadList").classList.toggle("list", leadViewMode === "cards");
+      $("leadList").innerHTML = leadViewMode === "table"
+        ? `<div class="table-wrap"><table class="lead-table"><tbody><tr><td>Loading CRM leads...</td></tr></tbody></table></div>`
+        : `<div class="empty">Loading CRM leads...</div>`;
+      $("leadPagination").innerHTML = "";
+      renderLeadReminders();
+    }
+
     function crmSessionSelection(lead, kind, changedField = "", changedValue = "") {
       const config = crmSessionConfig(kind);
       const selection = {
@@ -10882,6 +10896,11 @@
     }
 
     function renderLeads() {
+      if (!initialDataLoadComplete && !(state.leads || []).length) {
+        crmRenderAfterDataLoadNeeded = true;
+        renderCrmLeadsLoadingState();
+        return;
+      }
       const allLeads = filteredLeads();
       const leads = scrollLimitedRows("crmLeads", allLeads);
       $("leadCardViewBtn").classList.toggle("active", leadViewMode === "cards");
@@ -12815,6 +12834,7 @@
     function scrollLimitedRows(key, rows) {
       const total = rows.length;
       if (!Object.prototype.hasOwnProperty.call(scrollRenderLimits, key)) resetScrollRenderLimit(key, total);
+      else if (total > 0 && scrollRenderLimits[key] <= 0) resetScrollRenderLimit(key, total);
       const limit = Math.min(total, scrollRenderLimits[key]);
       return rows.slice(0, limit);
     }
@@ -12931,6 +12951,19 @@
     }
 
     let crmVisibleRenderFrame = 0;
+    function ensureCrmLeadsRendered({ preserveScroll = true, resetLimit = false } = {}) {
+      if (!initialDataLoadComplete && !(state.leads || []).length) {
+        crmRenderAfterDataLoadNeeded = true;
+        renderCrmLeadsLoadingState();
+        return;
+      }
+      const total = filteredLeads().length;
+      if (resetLimit || !Object.prototype.hasOwnProperty.call(scrollRenderLimits, "crmLeads") || (total > 0 && scrollRenderLimits.crmLeads <= 0)) {
+        resetScrollRenderLimit("crmLeads", total);
+      }
+      scheduleCrmVisibleRender({ preserveScroll });
+    }
+
     function renderCrmAfterVisible({ preserveScroll = true } = {}) {
       const section = $("crm");
       if (!section || section.classList.contains("hide")) return;
@@ -12959,7 +12992,13 @@
     }
 
     function handleTabActivated(tabId) {
-      if (tabId === "crm") scheduleCrmVisibleRender({ preserveScroll: true });
+      if (tabId === "crm") ensureCrmLeadsRendered({ preserveScroll: true });
+    }
+
+    function refreshActiveCrmAfterDataLoad() {
+      if (activeTabId() !== "crm" && !crmRenderAfterDataLoadNeeded) return;
+      crmRenderAfterDataLoadNeeded = false;
+      ensureCrmLeadsRendered({ preserveScroll: true });
     }
 
     function restoreSessionActiveTab() {
@@ -13736,6 +13775,7 @@
       suppressAutoPush = true;
       save(false);
       suppressAutoPush = false;
+      if (activeTabId() === "crm") ensureCrmLeadsRendered({ preserveScroll: false, resetLimit: true });
       setStatus(skippedMonthly ? `Pulled current CRM leads. Skipped ${skippedMonthly} archived monthly-tab records.` : "Pulled CRM leads from Google Sheet.");
     }
 
@@ -14640,6 +14680,7 @@
           initialDataLoadComplete = true;
           processExpiredReservations();
           renderAll();
+          refreshActiveCrmAfterDataLoad();
           startAutoNeonRefresh();
           return;
         }
@@ -14661,6 +14702,7 @@
         initialDataLoadComplete = true;
         processExpiredReservations();
         renderAll();
+        refreshActiveCrmAfterDataLoad();
         startAutoNeonRefresh();
         return;
       }
@@ -14671,6 +14713,7 @@
         initialDataLoadComplete = true;
         processExpiredReservations();
         renderAll();
+        refreshActiveCrmAfterDataLoad();
         return;
       }
       startAutoLoadCountdown(Math.ceil(SYNC_READ_TIMEOUT_MS / 1000), "Google Sheet data");
@@ -14684,6 +14727,7 @@
       initialDataLoadComplete = true;
       processExpiredReservations();
       renderAll();
+      refreshActiveCrmAfterDataLoad();
     }
 
     function modalIsOpen() {
