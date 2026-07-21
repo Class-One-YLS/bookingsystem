@@ -2418,6 +2418,7 @@
     const REMEMBERED_EMAIL_KEY = "classone_remember_email";
     const LEGACY_REMEMBERED_EMAIL_KEY = "classone_remembered_email";
     let teacherLeaveSaveInProgress = false;
+    let outcomeSaveInProgress = false;
     let editingTeacherLeaveId = "";
     const DB_NAME = "ClassOneBookingDB";
     const DB_STORE = "state";
@@ -2645,6 +2646,10 @@
     let lastNeonPatchMode = "";
     let teacherViewNotifyTimer = null;
     let renderAllCallCount = 0;
+    let renderWeeklyTimetableCallCount = 0;
+    let collectSlotsForDateCallCount = 0;
+    let bookingRecordsForResolutionCallCount = 0;
+    let outcomeSaveCallCount = 0;
     let saveRequestCount = 0;
     const syncPerf = {
       last: {},
@@ -5427,11 +5432,33 @@
       return booking;
     }
 
-    function occurrenceOutcomeForSlot(slot, dateStr) {
+    function occurrenceOutcomeMapForBookings(bookings = bookingRecordsForResolution()) {
+      const byOccurrence = new Map();
+      (bookings || []).forEach(booking => {
+        const key = occurrenceKeyForBooking(booking);
+        if (!key) return;
+        const current = byOccurrence.get(key);
+        if (shouldUseBooking(booking, current)) byOccurrence.set(key, booking);
+      });
+      return byOccurrence;
+    }
+
+    function bookingCellMapForBookings(bookings = bookingRecordsForResolution()) {
+      const byCell = new Map();
+      (bookings || []).forEach(booking => {
+        if (!booking?.teacherId || !dateOnly(booking.date) || !(normalizeTimeValue(booking.time) || booking.time)) return;
+        const key = teacherDateTimeKey(booking.teacherId, booking.date, booking.time);
+        const current = byCell.get(key);
+        if (shouldUseBooking(booking, current)) byCell.set(key, booking);
+      });
+      return byCell;
+    }
+
+    function occurrenceOutcomeForSlot(slot, dateStr, occurrenceOutcomes = null) {
       const key = occurrenceKeyForSlot(slot, dateStr);
       if (!key) return null;
-      const matches = bookingRecordsForResolution().filter(booking => occurrenceKeyForBooking(booking) === key);
-      return matches.reduce((selected, booking) => shouldUseBooking(booking, selected) ? booking : selected, null);
+      const map = occurrenceOutcomes || occurrenceOutcomeMapForBookings();
+      return map.get(key) || null;
     }
 
     function occurrenceOutcomeSuppressesSlot(outcome, slot, dateStr) {
@@ -5519,11 +5546,16 @@
       return (slots || []).reduce((latest, slot) => !latest || regularSlotRecency(slot, latest) >= 0 ? slot : latest, null);
     }
 
-    function collectSlotsForDate(date) {
+    function collectSlotsForDate(date, options = {}) {
+      collectSlotsForDateCallCount += 1;
       const dateStr = localISO(date);
       const day = DAYS[(date.getDay() + 6) % 7];
       const slots = [];
-      timetableTeachers().forEach(t => {
+      const teacherIds = options.teacherIds || null;
+      const occurrenceOutcomes = options.occurrenceOutcomes || occurrenceOutcomeMapForBookings();
+      timetableTeachers()
+        .filter(t => !teacherIds || teacherIds.has(t.id))
+        .forEach(t => {
         const latestOverrides = latestOverrideSlotsForDate(t, dateStr, day);
         const regularByTime = new Map();
         const keptRegularKeys = new Set();
@@ -5531,7 +5563,7 @@
           .filter(s => s.day === day)
           .map(s => ({ ...s, time: normalizeTimeValue(s.time) || s.time }))
           .filter(s => (!dateOnly(s.startDate) || dateOnly(s.startDate) <= dateStr) && (!dateOnly(s.endDate) || dateOnly(s.endDate) >= dateStr))
-          .filter(s => !occurrenceOutcomeSuppressesSlot(occurrenceOutcomeForSlot(s, dateStr), s, dateStr))
+          .filter(s => !occurrenceOutcomeSuppressesSlot(occurrenceOutcomeForSlot(s, dateStr, occurrenceOutcomes), s, dateStr))
           .filter(s => !overrideSupersedesRegularSlot(latestOverrides.get(teacherDateTimeKey(t.id, dateStr, s.time)), s))
           .forEach(s => {
             keptRegularKeys.add(teacherDateTimeKey(t.id, dateStr, s.time));
@@ -6240,6 +6272,7 @@
     }
 
     function bookingRecordsForResolution() {
+      bookingRecordsForResolutionCallCount += 1;
       return state.bookings.filter(booking => !isSupersededBookingRecord(booking) || occurrenceOutcomeParticipatesInResolution(booking));
     }
 
@@ -6470,18 +6503,33 @@
       const teacher = teacherById(teacherId);
       if (!teacher || !from || !to) return { teacherId, from, to, generatedAt: new Date().toISOString(), stateVersion: Number(state.settings?.neonVersion || 0), cells: [] };
       const cells = [];
+      const startDate = dateOnly(from);
+      const endDate = dateOnly(to);
+      const resolutionBookings = bookingRecordsForResolution()
+        .filter(booking => booking.teacherId === teacherId)
+        .filter(booking => {
+          const date = dateOnly(booking.date);
+          return (!startDate || date >= startDate) && (!endDate || date <= endDate);
+        });
+      const occurrenceOutcomes = occurrenceOutcomeMapForBookings(resolutionBookings);
+      const bookingByCell = bookingCellMapForBookings(resolutionBookings);
+      const bookingTimesByDate = new Map();
+      resolutionBookings.forEach(booking => {
+        const date = dateOnly(booking.date);
+        const time = normalizeTimeValue(booking.time) || booking.time;
+        if (!date || !time) return;
+        if (!bookingTimesByDate.has(date)) bookingTimesByDate.set(date, new Set());
+        bookingTimesByDate.get(date).add(time);
+      });
       datesBetween(parseISODate(from), parseISODate(to)).forEach(date => {
         const dateISO = localISO(date);
-        const slots = collectSlotsForDate(date).filter(slot => slot.teacherId === teacherId);
+        const slots = collectSlotsForDate(date, { teacherIds: new Set([teacherId]), occurrenceOutcomes }).filter(slot => slot.teacherId === teacherId);
         const slotByTime = new Map(slots.map(slot => [slot.time, slot]));
-        const bookingTimes = new Set(bookingRecordsForResolution()
-          .filter(booking => booking.teacherId === teacherId && dateOnly(booking.date) === dateISO)
-          .map(booking => normalizeTimeValue(booking.time) || booking.time)
-          .filter(Boolean));
+        const bookingTimes = bookingTimesByDate.get(dateISO) || new Set();
         const times = new Set([...slotByTime.keys(), ...bookingTimes]);
         times.forEach(time => {
           const slot = slotByTime.get(time);
-          const booking = canonicalBookingForSlot(teacherId, dateISO, time);
+          const booking = bookingByCell.get(teacherDateTimeKey(teacherId, dateISO, time)) || null;
           const traceStages = [];
           if (weeklyTraceTargetMatches(teacherId, dateISO, time)) {
             const day = dayFromISO(dateISO);
@@ -6489,7 +6537,7 @@
               .filter(s => s.day === day && (normalizeTimeValue(s.time) || s.time) === (normalizeTimeValue(time) || time));
             const occurrence = recurring.filter(s => (!dateOnly(s.startDate) || dateOnly(s.startDate) <= dateISO) && (!dateOnly(s.endDate) || dateOnly(s.endDate) >= dateISO));
             const overrides = (teacher.overrideSlots || []).filter(s => availabilitySlotApplies(s, dateISO, day) && (normalizeTimeValue(s.time) || s.time) === (normalizeTimeValue(time) || time));
-            const bookings = bookingRecordsForResolution().filter(b => b.teacherId === teacherId && dateOnly(b.date) === dateISO && (normalizeTimeValue(b.time) || b.time) === (normalizeTimeValue(time) || time));
+            const bookings = resolutionBookings.filter(b => dateOnly(b.date) === dateISO && (normalizeTimeValue(b.time) || b.time) === (normalizeTimeValue(time) || time));
             const leave = teacherLeaveForSlot(teacherId, dateISO, time);
             traceStages.push(weeklyTraceRecord("Stage 1 Load recurring schedule", recurring));
             traceStages.push(weeklyTraceRecord("Stage 2 Generate recurring occurrence", occurrence));
@@ -6584,7 +6632,7 @@
       ) || null;
     }
 
-    function directRecurringSlotForCell(teacher, dateISO, time) {
+    function directRecurringSlotForCell(teacher, dateISO, time, occurrenceOutcomes = null) {
       if (!teacher) return null;
       const day = dayFromISO(dateISO);
       const targetTime = normalizeTimeValue(time) || time;
@@ -6595,7 +6643,7 @@
         .map(slot => ({ ...slot, time: normalizeTimeValue(slot.time) || slot.time }))
         .filter(slot => slot.time === targetTime)
         .filter(slot => (!dateOnly(slot.startDate) || dateOnly(slot.startDate) <= dateISO) && (!dateOnly(slot.endDate) || dateOnly(slot.endDate) >= dateISO))
-        .filter(slot => !occurrenceOutcomeSuppressesSlot(occurrenceOutcomeForSlot(slot, dateISO), slot, dateISO));
+        .filter(slot => !occurrenceOutcomeSuppressesSlot(occurrenceOutcomeForSlot(slot, dateISO, occurrenceOutcomes), slot, dateISO));
       const regular = latestRegularSlot(recurring);
       if (overrideSupersedesRegularSlot(override, regular)) return override ? { ...override, teacherId: teacher.id, date: dateISO, day, source: "override" } : null;
       return regular ? { ...regular, teacherId: teacher.id, date: dateISO, day, source: regular.source || "regular" } : null;
@@ -6662,19 +6710,20 @@
       const teachers = (teacherFilter && teacherFilter !== "all")
         ? [teacherById(teacherFilter)].filter(Boolean)
         : timetableTeachers();
-      teachers.forEach(teacher => {
-        activeSlotRecords(teacher.regularSlots).forEach(slot => {
-          if (directRecurringSlotForCell(teacher, dateISO, slot.time)) times.add(normalizeTimeValue(slot.time) || slot.time);
-        });
-      });
-      bookingRecordsForResolution()
+      const dateBookings = bookingRecordsForResolution()
         .filter(booking => isDisplayableBookingRecord(booking))
         .filter(booking => !teacherFilter || teacherFilter === "all" || booking.teacherId === teacherFilter)
-        .filter(booking => dateOnly(booking.date) === dateISO)
-        .forEach(booking => {
-          const time = normalizeTimeValue(booking.time) || booking.time;
-          if (time) times.add(time);
+        .filter(booking => dateOnly(booking.date) === dateISO);
+      const occurrenceOutcomes = occurrenceOutcomeMapForBookings(dateBookings);
+      teachers.forEach(teacher => {
+        activeSlotRecords(teacher.regularSlots).forEach(slot => {
+          if (directRecurringSlotForCell(teacher, dateISO, slot.time, occurrenceOutcomes)) times.add(normalizeTimeValue(slot.time) || slot.time);
         });
+      });
+      dateBookings.forEach(booking => {
+        const time = normalizeTimeValue(booking.time) || booking.time;
+        if (time) times.add(time);
+      });
       return [...times].filter(Boolean);
     }
 
@@ -6889,10 +6938,33 @@
       return result;
     }
 
+    function classOnePerformanceCounters() {
+      return {
+        renderAll: renderAllCallCount,
+        renderWeeklyTimetable: renderWeeklyTimetableCallCount,
+        collectSlotsForDate: collectSlotsForDateCallCount,
+        bookingRecordsForResolution: bookingRecordsForResolutionCallCount,
+        outcomeSave: outcomeSaveCallCount,
+        saveRequests: saveRequestCount
+      };
+    }
+
+    function resetClassOnePerformanceCounters() {
+      renderAllCallCount = 0;
+      renderWeeklyTimetableCallCount = 0;
+      collectSlotsForDateCallCount = 0;
+      bookingRecordsForResolutionCallCount = 0;
+      outcomeSaveCallCount = 0;
+      saveRequestCount = 0;
+      return classOnePerformanceCounters();
+    }
+
     window.classOneDebug = {
       ...(window.classOneDebug || {}),
       auditTimetableSourceRecords,
-      cleanupRecurringClassSources
+      cleanupRecurringClassSources,
+      performanceCounters: classOnePerformanceCounters,
+      resetPerformanceCounters: resetClassOnePerformanceCounters
     };
 
     function canonicalCellAvailabilityResult(cell, options = {}) {
@@ -7091,6 +7163,7 @@
     }
 
     function renderSchedule() {
+      renderWeeklyTimetableCallCount += 1;
       const dates = weekDates();
       finalizePassedClassesForRange(dates[0], dates[dates.length - 1]);
       const times = new Set();
@@ -7120,7 +7193,7 @@
           const cellDate = localISO(d);
           const cellDay = DAYS[(d.getDay() + 6) % 7];
           const baseCells = (resolvedByDate.get(cellDate) || []).filter(cell => cell.time === t);
-          const fallbackCells = weeklyFallbackCellsForSlot(cellDate, t, teacherFilter, baseCells);
+          const fallbackCells = SYNC_DEBUG ? weeklyFallbackCellsForSlot(cellDate, t, teacherFilter, baseCells) : [];
           fallbackCells.forEach(cell => {
             const key = cell.cellKey || teacherDateTimeKey(cell.teacherId, cell.date, cell.time);
             if (key) weeklyResolvedCellsByKey.set(key, cell);
@@ -14792,60 +14865,81 @@
     }
 
     async function saveOutcome() {
-      const booking = outcomeBookingFromForm({ materializeFixed: true });
-      if (!booking) return;
-      const nextStatus = $("outcomeStatus").value;
-      if (nextStatus === "public_holiday" && !$("outcomeReplacementNeeded").value) return alert("For public holiday, choose whether replacement is needed.");
-      const remark = $("outcomeRemark").value.trim();
-      let replacementNeeded = $("outcomeReplacementNeeded").value;
-      const outcomeOptions = { createStudentNotShowReplacement: false, withdrawExistingReplacement: false };
-      const existingActiveReplacement = (state.replacements || []).some(item => item.bookingId === booking.id && !item.archived && item.status !== "Cancellation Withdrawn");
-      if (nextStatus === "student_not_show") {
-        outcomeOptions.createStudentNotShowReplacement = confirm("Does this Student Not Show class need a replacement class?");
-        replacementNeeded = outcomeOptions.createStudentNotShowReplacement ? "yes" : "no";
-        outcomeOptions.withdrawExistingReplacement = !outcomeOptions.createStudentNotShowReplacement && existingActiveReplacement;
-      } else if (!replacementReasonForStatus(nextStatus) && existingActiveReplacement) {
-        outcomeOptions.withdrawExistingReplacement = confirm("This class already has a replacement record. Do you want to remove/archive the replacement record?");
+      if (outcomeSaveInProgress) {
+        setStatus("Class outcome save is already in progress.", "warn");
+        return;
       }
-      const recurringSlot = recurringSlotForBooking(booking);
-      const scope = recurringSlot && replacementReasonForStatus(nextStatus) ? $("outcomeScope").value : "one_date";
-      let feedbackBooking = booking;
-      if (scope === "permanent") {
-        try { endRecurringClass(booking, recurringSlot, dateOnly($("outcomeScopeStart").value || booking.date), remark); }
-        catch (err) { return alert(err.message); }
-      } else if (scope === "temporary") {
-        const startDate = dateOnly($("outcomeScopeStart").value);
-        const endDate = dateOnly($("outcomeScopeEnd").value);
-        if (!startDate || !endDate) return alert("Choose cancellation start and end dates.");
-        if (endDate < startDate) return alert("Cancellation end date cannot be before start date.");
-        const dates = weeklyDatesInRange(startDate, endDate, recurringSlot.day);
-        const affected = [];
-        try { dates.forEach(date => affected.push(recurringBookingForDate(booking, recurringSlot, date))); }
-        catch (err) { return alert(`Cannot cancel this period. ${err.message}`); }
-        affected.forEach(item => applyOutcomeToBooking(item, nextStatus, remark, replacementNeeded, outcomeOptions));
-      } else {
-        let affectedBooking = booking;
-        if (recurringSlot && outcomeInteractionSource === "teacher_overview") {
-          const selectedDate = dateOnly($("outcomeScopeStart").value);
-          if (!selectedDate) return alert("Choose the class date.");
-          if (dayFromISO(selectedDate) !== recurringSlot.day) return alert(`Choose a ${recurringSlot.day} date for this fixed regular class.`);
-          try { affectedBooking = recurringBookingForDate(booking, recurringSlot, selectedDate); }
-          catch (err) { return alert(`Cannot update this class. ${err.message}`); }
-        }
-        if (nextStatus === "booked") {
-          const occupied = activeBookings().find(item => item.id !== affectedBooking.id && item.teacherId === affectedBooking.teacherId && item.date === affectedBooking.date && item.time === affectedBooking.time);
-          if (occupied) return alert(`Cannot restore this class because the slot is now booked for ${occupied.studentName || "another student"}.`);
-        }
-        applyOutcomeToBooking(affectedBooking, nextStatus, remark, replacementNeeded, outcomeOptions);
-        feedbackBooking = affectedBooking;
+      outcomeSaveInProgress = true;
+      outcomeSaveCallCount += 1;
+      const saveButton = $("saveOutcomeBtn");
+      const originalButtonText = saveButton?.textContent || "Save Outcome";
+      if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.textContent = "Saving...";
       }
-      upsertFeedbackFromOutcome(feedbackBooking);
-      $("bookingOutcomeModal").classList.add("hide");
-      clearOutcomeModalDraft();
-      save(false);
-      renderSchedule();
-      renderReplacements();
-      await autoPushIfConfigured(scope === "permanent" ? "Regular class ended." : `Class marked as ${bookingStatusLabel(nextStatus)}.`);
+      try {
+        const booking = outcomeBookingFromForm({ materializeFixed: true });
+        if (!booking) return;
+        const nextStatus = $("outcomeStatus").value;
+        if (nextStatus === "public_holiday" && !$("outcomeReplacementNeeded").value) return alert("For public holiday, choose whether replacement is needed.");
+        const remark = $("outcomeRemark").value.trim();
+        let replacementNeeded = $("outcomeReplacementNeeded").value;
+        const outcomeOptions = { createStudentNotShowReplacement: false, withdrawExistingReplacement: false };
+        const existingActiveReplacement = (state.replacements || []).some(item => item.bookingId === booking.id && !item.archived && item.status !== "Cancellation Withdrawn");
+        if (nextStatus === "student_not_show") {
+          outcomeOptions.createStudentNotShowReplacement = confirm("Does this Student Not Show class need a replacement class?");
+          replacementNeeded = outcomeOptions.createStudentNotShowReplacement ? "yes" : "no";
+          outcomeOptions.withdrawExistingReplacement = !outcomeOptions.createStudentNotShowReplacement && existingActiveReplacement;
+        } else if (!replacementReasonForStatus(nextStatus) && existingActiveReplacement) {
+          outcomeOptions.withdrawExistingReplacement = confirm("This class already has a replacement record. Do you want to remove/archive the replacement record?");
+        }
+        const recurringSlot = recurringSlotForBooking(booking);
+        const scope = recurringSlot && replacementReasonForStatus(nextStatus) ? $("outcomeScope").value : "one_date";
+        let feedbackBooking = booking;
+        if (scope === "permanent") {
+          try { endRecurringClass(booking, recurringSlot, dateOnly($("outcomeScopeStart").value || booking.date), remark); }
+          catch (err) { return alert(err.message); }
+        } else if (scope === "temporary") {
+          const startDate = dateOnly($("outcomeScopeStart").value);
+          const endDate = dateOnly($("outcomeScopeEnd").value);
+          if (!startDate || !endDate) return alert("Choose cancellation start and end dates.");
+          if (endDate < startDate) return alert("Cancellation end date cannot be before start date.");
+          const dates = weeklyDatesInRange(startDate, endDate, recurringSlot.day);
+          const affected = [];
+          try { dates.forEach(date => affected.push(recurringBookingForDate(booking, recurringSlot, date))); }
+          catch (err) { return alert(`Cannot cancel this period. ${err.message}`); }
+          affected.forEach(item => applyOutcomeToBooking(item, nextStatus, remark, replacementNeeded, outcomeOptions));
+        } else {
+          let affectedBooking = booking;
+          if (recurringSlot && outcomeInteractionSource === "teacher_overview") {
+            const selectedDate = dateOnly($("outcomeScopeStart").value);
+            if (!selectedDate) return alert("Choose the class date.");
+            if (dayFromISO(selectedDate) !== recurringSlot.day) return alert(`Choose a ${recurringSlot.day} date for this fixed regular class.`);
+            try { affectedBooking = recurringBookingForDate(booking, recurringSlot, selectedDate); }
+            catch (err) { return alert(`Cannot update this class. ${err.message}`); }
+          }
+          if (nextStatus === "booked") {
+            const occupied = activeBookings().find(item => item.id !== affectedBooking.id && item.teacherId === affectedBooking.teacherId && item.date === affectedBooking.date && item.time === affectedBooking.time);
+            if (occupied) return alert(`Cannot restore this class because the slot is now booked for ${occupied.studentName || "another student"}.`);
+          }
+          applyOutcomeToBooking(affectedBooking, nextStatus, remark, replacementNeeded, outcomeOptions);
+          feedbackBooking = affectedBooking;
+        }
+        upsertFeedbackFromOutcome(feedbackBooking);
+        $("bookingOutcomeModal").classList.add("hide");
+        clearOutcomeModalDraft();
+        save(false, { render: false, label: "class outcome" });
+        renderSchedule();
+        renderReplacements();
+        if (SYNC_DEBUG) console.info("[ClassOne outcome perf counters]", classOnePerformanceCounters());
+        await autoPushIfConfigured(scope === "permanent" ? "Regular class ended." : `Class marked as ${bookingStatusLabel(nextStatus)}.`);
+      } finally {
+        outcomeSaveInProgress = false;
+        if (saveButton) {
+          saveButton.disabled = false;
+          saveButton.textContent = originalButtonText;
+        }
+      }
     }
 
     function updateDeleteRecurringEndField() {
