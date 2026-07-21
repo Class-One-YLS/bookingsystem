@@ -5330,6 +5330,22 @@
       return `${teacherId || ""}|${dateOnly(date)}|${normalizeTimeValue(time) || time || ""}`;
     }
 
+    function recurringAvailabilityKey(teacherId, day, time) {
+      return `${teacherId || ""}|${day || ""}|${normalizeTimeValue(time) || time || ""}`;
+    }
+
+    function recurringSlotMatchesCell(slot, day, time) {
+      return Boolean(slot) && slot.day === day && (normalizeTimeValue(slot.time) || slot.time) === (normalizeTimeValue(time) || time);
+    }
+
+    function normalizeAvailabilityStatus(slot) {
+      if (!slot) return "off";
+      const status = String(slot.status || slot.availability || "").toLowerCase();
+      if (slot.locked || slot.reserved || slot.studentName || slot.studentId) return "booked";
+      if (slot.unavailable === true || status === "off" || status === "unavailable" || status === "closed") return "off";
+      return "open";
+    }
+
     function isDeletedSlotRecord(slot) {
       const status = String(slot?.status || "").toLowerCase();
       return !slot ||
@@ -6376,9 +6392,11 @@
     }
 
     function calendarCellFromSlot(slot, teacher) {
-      const leaveUnavailable = Boolean(slot.unavailable && (slot.status === "teacher_leave" || slot.teacherLeaveId));
+      const availabilityStatus = normalizeAvailabilityStatus(slot);
+      const isOffSlot = availabilityStatus === "off";
+      const leaveUnavailable = Boolean(isOffSlot && (slot.status === "teacher_leave" || slot.teacherLeaveId));
       const locked = Boolean(slot.locked || slot.reserved || leaveUnavailable);
-      const unavailableStatus = slot.unavailable ? (slot.status || "off") : "";
+      const unavailableStatus = isOffSlot ? (slot.status || "off") : "";
       return {
         cellKey: `${slot.teacherId || teacher?.id || ""}|${dateOnly(slot.date)}|${normalizeTimeValue(slot.time) || slot.time}`,
         teacherId: slot.teacherId || teacher?.id || "",
@@ -6386,7 +6404,7 @@
         date: dateOnly(slot.date),
         day: slot.day || dayFromISO(slot.date),
         time: normalizeTimeValue(slot.time) || slot.time,
-        kind: slot.unavailable ? "off" : (slot.reserved ? "reserved" : (slot.locked ? "fixed" : "open")),
+        kind: isOffSlot ? "off" : (slot.reserved ? "reserved" : (slot.locked ? "fixed" : "open")),
         id: slot.id || "",
         bookingId: "",
         recurringScheduleId: slot.recurringScheduleId || slot.id || "",
@@ -6394,14 +6412,14 @@
         studentId: slot.studentId || "",
         studentName: slot.reserved ? (slot.reservationName || slot.studentName || "") : (slot.studentName || ""),
         subject: slot.subject || "",
-        type: slot.unavailable ? (unavailableStatus === "teacher_leave" ? "teacher leave" : "off") : (slot.reserved ? "reserve" : (slot.locked ? "regular class" : "open slot")),
-        status: slot.unavailable ? unavailableStatus : (slot.locked || slot.reserved ? "booked" : "available"),
+        type: isOffSlot ? (unavailableStatus === "teacher_leave" ? "teacher leave" : "off") : (slot.reserved ? "reserve" : (slot.locked ? "regular class" : "open slot")),
+        status: isOffSlot ? unavailableStatus : (slot.locked || slot.reserved ? "booked" : "available"),
         teacherLeaveId: slot.teacherLeaveId || "",
         minutes: 25,
         remark: slot.remark || "",
         locked,
-        unavailable: Boolean(slot.unavailable),
-        available: !locked && !slot.unavailable,
+        unavailable: isOffSlot,
+        available: !locked && !isOffSlot,
         source: slot.source || "",
         sourceRecordId: slot.id || "",
         estimatedPay: locked ? Number(teacher?.rate || 0) : 0,
@@ -6558,7 +6576,7 @@
             traceStages.push(weeklyTraceRecord("Stage 8 Candidate slot before render", slot));
           }
           let finalCell = null;
-          if (slot?.unavailable && (!booking || bookingAmendmentTime(slot) >= bookingAmendmentTime(booking))) {
+          if (normalizeAvailabilityStatus(slot) === "off" && (!booking || bookingAmendmentTime(slot) >= bookingAmendmentTime(booking))) {
             finalCell = calendarCellFromSlot(slot, teacher);
             cells.push(finalCell);
             if (traceStages.length) {
@@ -6578,7 +6596,7 @@
                 }
                 return;
               }
-              if (slot && (!slot.locked || slot.unavailable) && !slot.reserved) {
+              if (slot && (!slot.locked || normalizeAvailabilityStatus(slot) === "off") && !slot.reserved) {
                 finalCell = calendarCellFromSlot(slot, teacher);
                 cells.push(finalCell);
               }
@@ -6679,7 +6697,7 @@
         }
         if (existing) return;
         const slot = directRecurringSlotForCell(teacher, dateISO, targetTime);
-        if (slot && (slot.locked || slot.reserved || slot.unavailable || slot.studentName)) {
+        if (slot && (slot.locked || slot.reserved || normalizeAvailabilityStatus(slot) === "off" || slot.studentName)) {
           fallbackCells.push(calendarCellFromSlot(slot, teacher));
         }
       });
@@ -6769,7 +6787,7 @@
             time: slotTime,
             subject: slot.subject || "",
             type: slot.type || "regular class",
-            status: slot.status || (slot.unavailable ? "off" : slot.locked ? "booked" : "available"),
+            status: slot.status || (normalizeAvailabilityStatus(slot) === "off" ? "off" : slot.locked ? "booked" : "available"),
             active: slot.active !== false,
             deleted: Boolean(slot.deleted),
             archived: Boolean(slot.archived),
@@ -6798,7 +6816,7 @@
             time: slotTime,
             subject: slot.subject || "",
             type: slot.type || "",
-            status: slot.status || (slot.unavailable ? "off" : slot.locked ? "booked" : "available"),
+            status: slot.status || (normalizeAvailabilityStatus(slot) === "off" ? "off" : slot.locked ? "booked" : "available"),
             active: slot.active !== false,
             deleted: Boolean(slot.deleted),
             archived: Boolean(slot.archived),
@@ -7222,14 +7240,14 @@
             .map(cell => ({ cell, slot: cell.slot || { id: cell.slotId, teacherId: cell.teacherId, date: cell.date, day: cell.day, time: cell.time, subject: cell.subject, locked: cell.kind === "fixed", reserved: cell.kind === "reserved", studentName: cell.studentName, source: cell.source, cellKey: cell.cellKey }, booking: cell.booking || (cell.kind === "booking" ? cell : null) }));
           let filtered = items.filter(x => {
             const isBooked = Boolean(x.booking || x.slot.locked || x.slot.reserved);
-            const isOff = x.cell.kind === "off" || x.cell.status === "off" || x.slot.unavailable;
+            const isOff = x.cell.kind === "off" || x.cell.status === "off" || normalizeAvailabilityStatus(x.slot) === "off";
             const matchesStatus = statusFilter === "all" || (statusFilter === "open" && !isBooked && !isOff) || (statusFilter === "booked" && isBooked);
             const matchesType = typeFilter === "all" || scheduleItemType(x.slot, x.booking) === typeFilter;
             return matchesStatus && matchesType;
           });
           filtered.forEach(x => {
             summary.visibleTeachers.add(x.cell.teacherId);
-            if (x.cell.kind === "off" || x.cell.status === "off" || x.slot.unavailable) return;
+            if (x.cell.kind === "off" || x.cell.status === "off" || normalizeAvailabilityStatus(x.slot) === "off") return;
             if (x.booking) summary.booked += 1;
             else if (x.slot.locked) summary.fixed += 1;
             else summary.open += 1;
@@ -7270,7 +7288,7 @@
     function teacherOverviewActiveSlot(teacher, day, time, date = todayISO()) {
       const dateStr = dateOnly(date);
       const timeStr = normalizeTimeValue(time) || time;
-      const matches = [...(teacher?.regularSlots || [])].filter(slot =>
+      const matches = activeSlotRecords(teacher?.regularSlots || []).filter(slot =>
         slot.day === day && (normalizeTimeValue(slot.time) || slot.time) === timeStr &&
         (!dateOnly(slot.startDate) || dateOnly(slot.startDate) <= dateStr) &&
         (!dateOnly(slot.endDate) || dateOnly(slot.endDate) >= dateStr)
@@ -7283,7 +7301,7 @@
       const timeStr = normalizeTimeValue(time) || time;
       const active = teacherOverviewActiveSlot(teacher, day, time, date);
       if (active?.locked) return { slot: active, upcoming: false };
-      const upcoming = (teacher?.regularSlots || [])
+      const upcoming = activeSlotRecords(teacher?.regularSlots || [])
         .filter(slot => slot.locked && slot.day === day && (normalizeTimeValue(slot.time) || slot.time) === timeStr && dateOnly(slot.startDate) && dateOnly(slot.startDate) > dateStr)
         .sort((a, b) => String(dateOnly(a.startDate)).localeCompare(String(dateOnly(b.startDate))) || regularSlotRecency(b, a))[0];
       return upcoming ? { slot: upcoming, upcoming: true } : { slot: active, upcoming: false };
@@ -7292,7 +7310,7 @@
     function openSlotEndBeforeNextRule(teacher, day, time, startDate = todayISO()) {
       const startDateStr = dateOnly(startDate);
       const timeStr = normalizeTimeValue(time) || time;
-      const nextStart = (teacher?.regularSlots || [])
+      const nextStart = activeSlotRecords(teacher?.regularSlots || [])
         .filter(slot => slot.day === day && (normalizeTimeValue(slot.time) || slot.time) === timeStr && dateOnly(slot.startDate) && dateOnly(slot.startDate) > startDateStr)
         .map(slot => dateOnly(slot.startDate))
         .sort()[0];
@@ -7418,7 +7436,7 @@
           return;
         }
         if (action === "open") {
-          if (slot && !slot.unavailable) {
+          if (slot && normalizeAvailabilityStatus(slot) === "open") {
             unchanged += 1;
             return;
           }
@@ -7428,11 +7446,15 @@
           changed += 1;
           return;
         }
-        if (!slot || slot.unavailable) {
+        if (!slot || normalizeAvailabilityStatus(slot) === "off") {
           unchanged += 1;
           return;
         }
-        teacher.regularSlots = endSlotFromToday(teacher.regularSlots, slot);
+        setTeacherRecurringCellOff(teacher, day, time, {
+          subject: slot.subject || (teacher.subjects || [])[0] || "",
+          source: "teacher-overview-bulk-off",
+          reason: "Open slot set to OFF from Teacher Overview bulk edit."
+        });
         changed += 1;
       });
       teacher.updatedAt = new Date().toISOString();
@@ -7740,7 +7762,7 @@
         const title = display.upcoming ? `Upcoming regular class from ${formatDateFromAny(slot.startDate)}` : "Booked regular class";
         return `<td class="teacher-cell-booked${display.upcoming ? " upcoming" : ""}"><button class="teacher-cell-button" data-fixed-slot="${fixedData}" title="${escapeHtml(title)}">${escapeHtml(slot.studentName || "Fixed regular class")} ${slot.subject ? `(${escapeHtml(slot.subject)})` : ""}</button></td>`;
       }
-      if (slot && !slot.unavailable) {
+      if (slot && normalizeAvailabilityStatus(slot) === "open") {
         const data = escapeHtml(JSON.stringify({ teacherId: teacher.id, day, time: slot.time, subject: slot.subject || (teacher.subjects || [])[0] || "", slotId: slot.id || "", source: slot.source || "", interactionSource: "teacher_overview" }));
         const adminRemark = String(slot.overviewRemark || "").trim();
         const title = teacherSlotEditMode ? "Click to set this open slot to OFF" : (adminRemark ? `Open slot admin remark: ${adminRemark}` : "Click to book a regular class or add an admin remark");
@@ -7765,6 +7787,7 @@
         if (existing.locked) return alert("This slot already has a booked regular class.");
         existing.locked = false;
         existing.unavailable = false;
+        if (String(existing.status || "").toLowerCase() === "off") existing.status = "available";
         existing.updatedAt = new Date().toISOString();
       } else {
         teacher.regularSlots.push({
@@ -7795,19 +7818,26 @@
 
     function setTeacherOverviewSlotOffFromEditMode(data) {
       const teacher = teacherById(data.teacherId);
-      const slot = teacher?.regularSlots?.find(item => item.id === data.slotId && !item.locked);
-      if (!teacher || !slot) return alert("This open slot is no longer available. Refresh the Teacher Overview and try again.");
+      const slot = teacher?.regularSlots?.find(item => item.id === data.slotId && !item.locked) || teacherOverviewActiveSlot(teacher, data.day, data.time);
+      if (!teacher || !slot || slot.locked) return alert("This open slot is no longer available. Refresh the Teacher Overview and try again.");
       if (!confirm(`Set ${teacher.name}'s ${data.day} ${timeLabel(data.time)} slot to OFF?`)) return;
       const undoBefore = snapshotCollections({ teachers: [teacher.id] });
-      teacher.regularSlots = endSlotFromToday(teacher.regularSlots, slot);
-      teacher.updatedAt = new Date().toISOString();
+      const offSlot = setTeacherRecurringCellOff(teacher, data.day, data.time, {
+        subject: slot.subject || data.subject || (teacher.subjects || [])[0] || "",
+        source: "teacher-overview-edit-off",
+        reason: "Open slot set to OFF from Teacher Overview Edit Slots mode."
+      });
+      const confirmed = teacherOverviewActiveSlot(teacher, data.day, data.time);
+      if (normalizeAvailabilityStatus(confirmed || offSlot) !== "off") {
+        return alert("The slot could not be changed to OFF. Please refresh and try again.");
+      }
       const undoAfter = snapshotCollections({ teachers: [teacher.id] });
       logAction("Teacher Slot Set To OFF", teacher.name, `${data.day} ${timeLabel(data.time)} open`, "OFF", "Changed in Teacher Overview Edit Slots mode.", {
         undo: makeUndoSnapshot(undoBefore, undoAfter)
       });
       save(false);
       setTeacherSlotEditMode(false);
-      setStatus(`${teacher.name}: ${data.day} ${timeLabel(data.time)} is now OFF.`);
+      setStatus(`${teacher.name}: ${data.day} ${timeLabel(data.time)} OFF saved locally · Syncing.`);
     }
 
     function setFixedRegularMode(mode) {
@@ -8103,7 +8133,7 @@
       reservation.releasedAt = new Date().toISOString();
       reservation.updatedAt = reservation.releasedAt;
       const restored = (teacher.regularSlots || []).find(slot =>
-        !slot.locked && !slot.unavailable && slot.day === reservation.day && slot.time === reservation.time && slot.startDate && slot.startDate > today
+        !slot.locked && normalizeAvailabilityStatus(slot) === "open" && slot.day === reservation.day && slot.time === reservation.time && slot.startDate && slot.startDate > today
       );
       if (restored) {
         restored.startDate = today;
@@ -8257,20 +8287,20 @@
       const data = JSON.parse($("fixedRegularSlotData").value || "null");
       const teacher = data ? teacherById(data.teacherId) : null;
       if (!data || !teacher) return alert("Open slot data is missing.");
-      const openSlot = (teacher.regularSlots || []).find(slot => slot.id === data.slotId && !slot.locked);
-      if (!openSlot) return alert("This slot is no longer open. Refresh the Teacher Overview and try again.");
+      const openSlot = (teacher.regularSlots || []).find(slot => slot.id === data.slotId && !slot.locked) || teacherOverviewActiveSlot(teacher, data.day, data.time);
+      if (!openSlot || openSlot.locked) return alert("This slot is no longer open. Refresh the Teacher Overview and try again.");
       if (!confirm(`Set ${teacher.name}'s ${data.day} ${timeLabel(data.time)} slot to OFF?`)) return;
 
       const undoBefore = snapshotCollections({ teachers: [teacher.id] });
-      const today = todayISO();
-      const historicalEnd = dateOffsetISO(today, -1);
-      if (dateOnly(openSlot.startDate) && dateOnly(openSlot.startDate) >= today) {
-        markSlotRemoved(openSlot, new Date().toISOString(), "Open slot set to OFF before its start date.");
-      } else {
-        openSlot.endDate = historicalEnd;
-        openSlot.updatedAt = new Date().toISOString();
+      const offSlot = setTeacherRecurringCellOff(teacher, data.day, data.time, {
+        subject: openSlot.subject || data.subject || (teacher.subjects || [])[0] || "",
+        source: "teacher-overview-off",
+        reason: "Open slot set to OFF from Teacher Overview."
+      });
+      const confirmed = teacherOverviewActiveSlot(teacher, data.day, data.time);
+      if (normalizeAvailabilityStatus(confirmed || offSlot) !== "off") {
+        return alert("The slot could not be changed to OFF. Please refresh and try again.");
       }
-      teacher.updatedAt = new Date().toISOString();
       const undoAfter = snapshotCollections({ teachers: [teacher.id] });
       logAction("Teacher Regular Slot Set To OFF", teacher.name, `${data.day} ${timeLabel(data.time)} open`, "OFF from today", "Changed from Teacher Overview.", {
         undo: makeUndoSnapshot(undoBefore, undoAfter)
@@ -8278,7 +8308,7 @@
       $("fixedRegularBookingModal").classList.add("hide");
       save(false);
       renderTeacherOverview();
-      setStatus(`${teacher.name}: ${data.day} ${timeLabel(data.time)} is now OFF.`);
+      setStatus(`${teacher.name}: ${data.day} ${timeLabel(data.time)} OFF saved locally · Syncing.`);
     }
 
     function openCancelFixedRegularModal(data) {
@@ -8305,6 +8335,71 @@
       slot.endDate = historicalEnd;
       slot.updatedAt = new Date().toISOString();
       return collection;
+    }
+
+    function setTeacherRecurringCellOff(teacher, day, time, options = {}) {
+      if (!teacher) return null;
+      teacher.regularSlots ||= [];
+      const today = todayISO();
+      const now = new Date().toISOString();
+      const timeStr = normalizeTimeValue(time) || time;
+      const key = recurringAvailabilityKey(teacher.id, day, timeStr);
+      const matching = activeSlotRecords(teacher.regularSlots).filter(slot => recurringAvailabilityKey(teacher.id, slot.day, slot.time) === key);
+      let offSlot = matching.find(slot => normalizeAvailabilityStatus(slot) === "off" && !slot.locked && !slot.reserved);
+      matching.forEach(slot => {
+        if (slot.locked || slot.reserved) return;
+        if (offSlot && slot.id === offSlot.id) return;
+        if (normalizeAvailabilityStatus(slot) === "off") {
+          markSlotRemoved(slot, now, "Duplicate recurring OFF slot archived.");
+          return;
+        }
+        endSlotFromToday(teacher.regularSlots, slot);
+      });
+      if (offSlot) {
+        offSlot.day = day;
+        offSlot.time = timeStr;
+        offSlot.subject = options.subject || offSlot.subject || (teacher.subjects || [])[0] || "";
+        offSlot.startDate = today;
+        offSlot.endDate = openSlotEndBeforeNextRule(teacher, day, timeStr, today);
+        offSlot.locked = false;
+        offSlot.reserved = false;
+        offSlot.unavailable = true;
+        offSlot.status = "off";
+        offSlot.active = true;
+        offSlot.deleted = false;
+        offSlot.archived = false;
+        offSlot.removedAt = "";
+        offSlot.deletedAt = "";
+        offSlot.source = options.source || offSlot.source || "teacher-overview-off";
+        offSlot.updatedAt = now;
+        offSlot.updatedBy = currentUserEmail();
+        offSlot.deviceId = currentDeviceId();
+      } else {
+        offSlot = {
+          id: uid("slot"),
+          day,
+          time: timeStr,
+          subject: options.subject || (teacher.subjects || [])[0] || "",
+          startDate: today,
+          endDate: openSlotEndBeforeNextRule(teacher, day, timeStr, today),
+          locked: false,
+          reserved: false,
+          unavailable: true,
+          status: "off",
+          source: options.source || "teacher-overview-off",
+          createdAt: now,
+          updatedAt: now,
+          createdBy: currentUserEmail(),
+          updatedBy: currentUserEmail(),
+          deviceId: currentDeviceId(),
+          note: options.reason || ""
+        };
+        teacher.regularSlots.push(offSlot);
+      }
+      teacher.updatedAt = now;
+      teacher.updatedBy = currentUserEmail();
+      teacher.deviceId = currentDeviceId();
+      return offSlot;
     }
 
     function confirmCancelFixedRegular() {
@@ -8341,7 +8436,7 @@
 
       teacher.regularSlots = endSlotFromToday(teacher.regularSlots, recurringSlot);
       const alreadyOpen = activeSlotRecords(teacher.regularSlots).some(slot =>
-        !slot.locked && !slot.unavailable && slot.day === recurringSlot.day && (normalizeTimeValue(slot.time) || slot.time) === (normalizeTimeValue(recurringSlot.time) || recurringSlot.time) &&
+        !slot.locked && normalizeAvailabilityStatus(slot) === "open" && slot.day === recurringSlot.day && (normalizeTimeValue(slot.time) || slot.time) === (normalizeTimeValue(recurringSlot.time) || recurringSlot.time) &&
         regularSlotRangesOverlap(slot, { startDate: today, endDate: originalEndDate })
       );
       if (!alreadyOpen) {
@@ -8794,7 +8889,7 @@
       }
       if (target.interactionSource === "teacher_overview_booked_change") {
         const targetOpenSlot = [...(targetTeacher.regularSlots || [])].reverse().find(slot =>
-          !slot.locked && !slot.unavailable && slot.day === target.day && slot.time === target.time &&
+          !slot.locked && normalizeAvailabilityStatus(slot) === "open" && slot.day === target.day && slot.time === target.time &&
           regularSlotRangesOverlap(slot, { startDate, endDate: changeType === "temporary" ? endDate : "" })
         );
         if (targetOpenSlot) splitOpenSlotForFixedBooking(targetTeacher, targetOpenSlot, startDate, changeType === "temporary" ? endDate : "");
@@ -9143,7 +9238,7 @@
       const subject = slot.subject || (teacher.subjects || [])[0] || "";
       const cellKey = teacherDateTimeKey(slot.teacherId, slot.date, slot.time);
       const cellAttr = cellKey ? ` data-cell-key="${escapeHtml(cellKey)}"` : "";
-      if (slot.unavailable) {
+      if (normalizeAvailabilityStatus(slot) === "off") {
         if (slot.status === "teacher_leave" || slot.teacherLeaveId || slot.source === "teacher_leave") {
           const leaveData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, teacherLeaveId: slot.teacherLeaveId || "", date: slot.date, time: slot.time }));
           return `<button class="slot unavailable status-teacher-leave"${cellAttr} data-view-teacher-leave="${leaveData}">${escapeHtml(teacher.name)}<small>Teacher Leave${slot.remark ? ` | ${escapeHtml(slot.remark)}` : ""}</small></button>`;
