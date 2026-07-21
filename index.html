@@ -99,6 +99,10 @@
       padding: 10px 11px;
       min-height: 40px;
     }
+    input:disabled, select:disabled, textarea:disabled { background: #f4f8f6; color: #7a8797; cursor: not-allowed; }
+    .inline-check { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); font-size: 12px; font-weight: 800; text-transform: none; margin: 0 0 8px; }
+    .inline-check input { width: auto; min-height: 0; }
+    .field-error { margin-top: 8px; color: #b42318; font-size: 12px; font-weight: 800; }
     textarea { min-height: 88px; resize: vertical; }
     .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     .row.spread { justify-content: space-between; }
@@ -1880,7 +1884,12 @@
       <div class="subtle" id="bookingInfo"></div>
       <div class="grid two" style="margin-top:14px;">
         <div><label>Saved Student</label><select id="bookingStudent"></select></div>
-        <div><label>Child Name</label><input id="bookingStudentName" placeholder="Type child name"></div>
+        <div>
+          <label class="inline-check"><input id="bookingUnregisteredStudent" type="checkbox"> Unregistered student</label>
+          <label>Child Name</label>
+          <input id="bookingStudentName" placeholder="Select a saved student first" disabled>
+          <div id="bookingStudentValidation" class="field-error hide"></div>
+        </div>
         <div><label>Subject</label><select id="bookingSubject"></select></div>
         <div><label>Booking Type</label><select id="bookingType"></select></div>
         <div><label>Booking Period</label><select id="bookingApplyMode"><option value="one_date">Particular Date Only</option><option value="temporary">Temporary Weekly Period</option><option value="permanent">Ongoing From Start Date</option></select></div>
@@ -5074,7 +5083,7 @@
       fillSelect($("replacementFilterStatus"), REPLACEMENT_STATUSES, "All Status");
       fillSelect($("replacementFilterReason"), REPLACEMENT_REASONS, "All Reasons");
       fillSelect($("bookingType"), BOOKING_TYPES);
-      fillSelect($("bookingStudent"), studentOptions, "Choose or type name");
+      fillSelect($("bookingStudent"), studentOptions, "Choose saved student");
       fillSelect($("assessmentStudent"), studentOptions, "Choose student");
       fillSelect($("trialStudent"), studentOptions, "Choose student");
       fillSelect($("creditStudent"), studentOptions, "Choose student");
@@ -8426,6 +8435,72 @@
       ) || null;
     }
 
+    function setBookingStudentValidation(message = "") {
+      const box = $("bookingStudentValidation");
+      if (!box) return;
+      box.textContent = message;
+      box.classList.toggle("hide", !message);
+    }
+
+    function syncBookingStudentNameFromSelection() {
+      const select = $("bookingStudent");
+      const input = $("bookingStudentName");
+      if (!select || !input || $("bookingUnregisteredStudent")?.checked) return;
+      const student = studentById(select.value);
+      input.value = student ? cleanStudentName(student.name || "") : "";
+      input.placeholder = student ? "" : "Select a saved student first";
+      setBookingStudentValidation("");
+    }
+
+    function setBookingUnregisteredStudentMode(checked, options = {}) {
+      const checkbox = $("bookingUnregisteredStudent");
+      const select = $("bookingStudent");
+      const input = $("bookingStudentName");
+      if (!checkbox || !select || !input) return;
+      checkbox.checked = Boolean(checked);
+      if (checked) {
+        select.value = "all";
+        select.disabled = true;
+        select.required = false;
+        input.disabled = false;
+        input.required = true;
+        input.placeholder = "Type child name";
+        input.value = cleanStudentName(options.childName || input.value || "");
+      } else {
+        select.disabled = false;
+        select.required = true;
+        if (options.studentId && [...select.options].some(option => option.value === options.studentId)) select.value = options.studentId;
+        input.disabled = true;
+        input.required = false;
+        input.placeholder = "Select a saved student first";
+        syncBookingStudentNameFromSelection();
+      }
+      setBookingStudentValidation("");
+    }
+
+    function bookingStudentChoice() {
+      const unregistered = Boolean($("bookingUnregisteredStudent")?.checked);
+      if (unregistered) {
+        const studentName = cleanStudentName($("bookingStudentName").value);
+        if (!studentName) {
+          setBookingStudentValidation("Child name is required for an unregistered student booking.");
+          $("bookingStudentName").focus();
+          return null;
+        }
+        return { student: null, studentName, isUnregisteredStudent: true };
+      }
+      const student = studentById($("bookingStudent").value);
+      if (!student) {
+        setBookingStudentValidation("Choose a saved student, or tick Unregistered student.");
+        $("bookingStudent").focus();
+        return null;
+      }
+      const studentName = cleanStudentName(student.name || "");
+      $("bookingStudentName").value = studentName;
+      setBookingStudentValidation("");
+      return { student, studentName, isUnregisteredStudent: false };
+    }
+
     function openBookingModalForSlot(data) {
       $("bookingSlot").value = JSON.stringify(data);
       const teacher = teacherById(data.teacherId);
@@ -8436,6 +8511,7 @@
       fillSelect($("bookingType"), (futureReservation ? FUTURE_REGULAR_TEMPORARY_TYPES : BOOKING_TYPES).map(type => ({ value: type, label: type.replace(/\b\w/g, char => char.toUpperCase()) })));
       if ([...$("bookingSubject").options].some(o => o.value === data.subject)) $("bookingSubject").value = data.subject;
       $("bookingStudent").value = "all";
+      setBookingUnregisteredStudentMode(false);
       $("bookingStudentName").value = "";
       $("bookingType").value = "trial class";
       $("bookingApplyMode").value = "one_date";
@@ -8445,6 +8521,11 @@
       updateBookingPeriodFields();
       applyPendingReplacementBookingDefaults();
       applyPendingCrmBookingDefaults();
+      if (data.studentId || data.studentName) {
+        const student = studentById(data.studentId) || (state.students || []).find(item => studentNameKey(item.name) === studentNameKey(data.studentName));
+        if (student) setBookingUnregisteredStudentMode(false, { studentId: student.id });
+        else if (data.studentName) setBookingUnregisteredStudentMode(true, { childName: data.studentName });
+      }
       $("bookingModal").classList.remove("hide");
     }
 
@@ -8457,8 +8538,8 @@
       const lead = (state.leads || []).find(item => item.id === pendingCrmLeadId);
       if (!lead) return;
       const student = matchingStudentByName(lead.childName);
-      if (student && [...$("bookingStudent").options].some(option => option.value === student.id)) $("bookingStudent").value = student.id;
-      $("bookingStudentName").value = cleanStudentName(lead.childName || "");
+      if (student && [...$("bookingStudent").options].some(option => option.value === student.id)) setBookingUnregisteredStudentMode(false, { studentId: student.id });
+      else setBookingUnregisteredStudentMode(true, { childName: lead.childName || "" });
       $("bookingType").value = pendingCrmBookingKind === "assessment" ? "assessment" : "trial class";
       const subject = normalizeSubject((lead.subjects || [])[0] || "");
       if (subject && [...$("bookingSubject").options].some(option => option.value === subject)) $("bookingSubject").value = subject;
@@ -8473,9 +8554,9 @@
         const replacementId = context?.replacementId || pendingReplacementId;
         const replacement = (state.replacements || []).find(item => item.id === replacementId);
         if (replacement) {
-          $("bookingStudentName").value = replacement.studentName || "";
           const student = (state.students || []).find(item => studentNameKey(item.name) === studentNameKey(replacement.studentName));
-          if (student && [...$("bookingStudent").options].some(option => option.value === student.id)) $("bookingStudent").value = student.id;
+          if (student && [...$("bookingStudent").options].some(option => option.value === student.id)) setBookingUnregisteredStudentMode(false, { studentId: student.id });
+          else setBookingUnregisteredStudentMode(true, { childName: replacement.studentName || "" });
           $("bookingType").value = "replacement class";
           if ([...$("bookingSubject").options].some(option => option.value === replacement.subject)) $("bookingSubject").value = replacement.subject;
         }
@@ -8489,8 +8570,8 @@
         return;
       }
       const student = studentById(credit.studentId) || (state.students || []).find(item => studentNameKey(item.name) === studentNameKey(credit.studentName));
-      if (student && [...$("bookingStudent").options].some(option => option.value === student.id)) $("bookingStudent").value = student.id;
-      $("bookingStudentName").value = student ? student.name : credit.studentName || "";
+      if (student && [...$("bookingStudent").options].some(option => option.value === student.id)) setBookingUnregisteredStudentMode(false, { studentId: student.id });
+      else setBookingUnregisteredStudentMode(true, { childName: credit.studentName || "" });
       $("bookingType").value = "replacement class";
       const subject = student?.subject || "";
       if (subject && [...$("bookingSubject").options].some(option => option.value === subject)) $("bookingSubject").value = subject;
@@ -16653,8 +16734,9 @@
     };
     $("confirmBookingBtn").onclick = async () => {
       const slot = JSON.parse($("bookingSlot").value);
-      const student = studentById($("bookingStudent").value);
-      const studentName = cleanStudentName($("bookingStudentName").value) || (student ? cleanStudentName(student.name) : "");
+      const studentChoice = bookingStudentChoice();
+      if (!studentChoice) return;
+      const { student, studentName, isUnregisteredStudent } = studentChoice;
       const type = $("bookingType").value;
       const subject = $("bookingSubject").value;
       const remark = $("bookingRemark").value.trim();
@@ -16703,8 +16785,9 @@
         const teacher = teacherById(slot.teacherId);
         const undoBefore = snapshotCollections({ teachers: [teacher?.id], students: student ? [student.id] : [] });
         const recurringSlot = {
-          id: uid("slot"), teacherId: slot.teacherId, day: period.day, time: slot.time, subject, studentName,
+          id: uid("slot"), teacherId: slot.teacherId, day: period.day, time: slot.time, subject, studentId: student ? student.id : null, studentName,
           locked: true, source: "ongoing_booking", startDate: period.startDate, remark,
+          isUnregisteredStudent,
           createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
         };
         teacher.overrideSlots ||= [];
@@ -16722,8 +16805,9 @@
           const now = new Date().toISOString();
           const passed = slotHasPassed(date, slot.time);
           const booking = {
-            id: uid("booking"), ...slot, date, day: dayFromISO(date), studentId: student ? student.id : "", studentName,
+            id: uid("booking"), ...slot, date, day: dayFromISO(date), studentId: student ? student.id : null, studentName,
             subject, type, status: passed ? "completed" : "booked", archived: passed, minutes: 25, remark,
+            isUnregisteredStudent,
             ...(passed ? { completedAt: slotDateTime(date, slot.time).toISOString() } : {}),
             reusedCancelledBookingId: slot.reuseCancelledBookingId || "",
             recurrenceGroupId,
@@ -17189,6 +17273,12 @@
     });
     $("outcomeStatus").addEventListener("change", updateOutcomeReplacementField);
     $("outcomeScope").addEventListener("change", updateOutcomeReplacementField);
+    $("bookingUnregisteredStudent").addEventListener("change", event => {
+      setBookingUnregisteredStudentMode(event.target.checked, { childName: "" });
+      if (event.target.checked) $("bookingStudentName").focus();
+    });
+    $("bookingStudent").addEventListener("change", syncBookingStudentNameFromSelection);
+    $("bookingStudentName").addEventListener("input", () => setBookingStudentValidation(""));
     $("bookingApplyMode").addEventListener("change", updateBookingPeriodFields);
     $("editTimeSlotMode").addEventListener("change", updateEditTimeSlotEndField);
     $("confirmEditTimeSlotBtn").onclick = () => confirmEditTimeSlot().catch(err => {
