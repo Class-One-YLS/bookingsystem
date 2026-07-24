@@ -14929,9 +14929,16 @@
       return candidates.reduce((selected, booking) => shouldUseBooking(booking, selected) ? booking : selected, null);
     }
 
+    function bookingByExactRecordId(recordId) {
+      if (!recordId) return null;
+      return (state.bookings || []).find(item => item.id === recordId) || null;
+    }
+
     function outcomeBookingFromForm({ materializeFixed = false } = {}) {
-      const bookingId = $("outcomeBookingId")?.value || "";
-      let booking = state.bookings.find(item => item.id === bookingId);
+      const clickedRecordId = outcomeModalDraft?.clickedRecordId || "";
+      const bookingId = $("outcomeBookingId")?.value || clickedRecordId || "";
+      let booking = bookingByExactRecordId(bookingId);
+      if (!booking && clickedRecordId) return null;
       if (!booking && materializeFixed && outcomeModalDraft?.fixedSlotData) {
         booking = findFixedSlotOutcomeBooking(outcomeModalDraft.fixedSlotData);
         if (!booking) {
@@ -14955,12 +14962,15 @@
       outcomeInteractionSource = interactionSource;
       outcomeModalDraft = {
         booking: draft,
+        clickedRecordId: options.recordId || draft.id || "",
+        recordRole: options.recordRole || bookingRecordRole(draft),
+        moveTransactionId: options.moveTransactionId || draft.moveTransactionId || "",
         interactionSource,
         fixedSlotData: options.fixedSlotData ? cloneJson(options.fixedSlotData) : null,
         cellKey: options.cellKey || teacherDateTimeKey(draft.teacherId, draft.date, draft.time),
         openedAt: new Date().toISOString()
       };
-      $("outcomeBookingId").value = draft.id;
+      $("outcomeBookingId").value = outcomeModalDraft.clickedRecordId || draft.id;
       const draftStatus = normalizeClassStatus(draft) || draft.status || "booked";
       $("outcomeStatus").value = draftStatus === "completed" ? "booked" : draftStatus;
       $("outcomeRemark").value = draft.remark || "";
@@ -15868,10 +15878,27 @@
       if (bookingBtn) {
         const clickStartedAt = performance.now();
         const cell = bookingBtn.dataset.cellKey ? weeklyResolvedCellsByKey.get(bookingBtn.dataset.cellKey) : null;
-        const booking = cell?.booking || weeklyBookingsById.get(bookingBtn.dataset.bookingId) || state.bookings.find(b => b.id === bookingBtn.dataset.bookingId);
+        const clickedRecordId = bookingBtn.dataset.recordId || bookingBtn.dataset.bookingId || bookingBtn.dataset.dragBookingId || "";
+        let booking = bookingByExactRecordId(clickedRecordId) || weeklyBookingsById.get(clickedRecordId);
+        if (!booking && cell?.bookingId === clickedRecordId) booking = cell.booking;
+        if (!booking && !clickedRecordId) booking = cell?.booking || null;
         if (booking) {
-          openOutcomeModal(booking, bookingBtn.dataset.bookingContext || "weekly_timetable", { cellKey: bookingBtn.dataset.cellKey || cell?.cellKey || "" });
-          if (SYNC_DEBUG) console.info("[weekly booked-slot click timing]", { cellKey: bookingBtn.dataset.cellKey || "", bookingId: bookingBtn.dataset.bookingId, clickToModalMs: Math.round((performance.now() - clickStartedAt) * 10) / 10 });
+          openOutcomeModal(booking, bookingBtn.dataset.bookingContext || "weekly_timetable", {
+            cellKey: bookingBtn.dataset.cellKey || cell?.cellKey || "",
+            recordId: clickedRecordId || booking.id || "",
+            recordRole: bookingBtn.dataset.recordRole || bookingRecordRole(booking),
+            moveTransactionId: bookingBtn.dataset.moveTransactionId || booking.moveTransactionId || ""
+          });
+          if (SYNC_DEBUG) console.info("[weekly booked-slot click timing]", {
+            cellKey: bookingBtn.dataset.cellKey || "",
+            clickedRecordId,
+            openedBookingId: booking.id || "",
+            recordRole: bookingBtn.dataset.recordRole || bookingRecordRole(booking),
+            cellBookingId: cell?.bookingId || "",
+            clickToModalMs: Math.round((performance.now() - clickStartedAt) * 10) / 10
+          });
+        } else if (clickedRecordId) {
+          setStatus("This class record could not be found. Please refresh latest data before editing.", "error");
         }
       }
       const fixedSlotBtn = e.target.closest("[data-fixed-slot]");
