@@ -4450,6 +4450,7 @@
         deleted: false,
         source: "moved_booking",
         recordRole: "move_destination",
+        exactDateBooking: true,
         sourceSlotId: "",
         recurringScheduleId: "",
         recurringSourceSlotId: "",
@@ -5423,7 +5424,15 @@
     }
 
     function isMovedDestinationBooking(record) {
-      return Boolean(record && (record.source === "moved_booking" || record.movedFromOccurrenceId || record.recordRole === "move_destination") && !isMoveSourceOutcomeBooking(record));
+      const source = String(record?.source || "").toLowerCase();
+      return Boolean(record && (
+        record.source === "moved_booking" ||
+        record.movedFromOccurrenceId ||
+        record.recordRole === "move_destination" ||
+        source.includes("moved") ||
+        source.includes("rescheduled") ||
+        source.includes("change_slot")
+      ) && !isMoveSourceOutcomeBooking(record));
     }
 
     function bookingRecordRole(record) {
@@ -6418,7 +6427,8 @@
         locked: true,
         available: false,
         source: booking.source || "booking",
-	        sourceRecordId: booking.id || "",
+        sourceRecordId: booking.id || "",
+        exactDateBooking: booking.exactDateBooking === true || isMovedDestinationBooking(booking) || Boolean(booking.date),
         estimatedPay: applyPolicyRules(booking, { teacher }).teacherPay,
         createdAt: booking.createdAt || "",
         updatedAt: booking.updatedAt || booking.statusChangedAt || booking.slotRevisionAt || "",
@@ -6478,11 +6488,27 @@
       return 20;
     }
 
+    function isResolvedBookingCell(cell) {
+      return Boolean(cell && (cell.kind === "booking" || cell.bookingId || cell.booking));
+    }
+
+    function isGeneratedAvailabilityCell(cell) {
+      return Boolean(cell && !isResolvedBookingCell(cell) && (cell.kind === "open" || cell.kind === "fixed" || cell.kind === "reserved" || cell.available || cell.locked || cell.studentName));
+    }
+
+    function isResolvedOffCell(cell) {
+      return Boolean(cell && (cell.kind === "off" || cell.status === "off" || cell.unavailable || cell.status === "teacher_leave"));
+    }
+
     function shouldUseCalendarCell(candidate, existing) {
       if (!existing) return true;
+      if (isResolvedBookingCell(candidate) && isGeneratedAvailabilityCell(existing)) return true;
+      if (isGeneratedAvailabilityCell(candidate) && isResolvedBookingCell(existing)) return false;
       const candidateTime = bookingAmendmentTime(candidate.booking || candidate.slot || candidate);
       const existingTime = bookingAmendmentTime(existing.booking || existing.slot || existing);
       if (candidateTime && existingTime && candidateTime !== existingTime) {
+        if (isResolvedOffCell(candidate) && isResolvedBookingCell(existing)) return candidateTime > existingTime;
+        if (isResolvedBookingCell(candidate) && isResolvedOffCell(existing)) return candidateTime > existingTime;
         const candidateIsOpen = candidate.kind === "open" || candidate.status === "available" || candidate.available;
         const existingIsOccupied = existing.kind === "fixed" || existing.kind === "booking" || existing.kind === "reserved" || existing.locked || existing.studentName;
         if (candidateIsOpen && existingIsOccupied) return false;
@@ -6881,6 +6907,17 @@
           subject: booking.subject || "",
           type: booking.type || "",
           status: booking.status || "",
+          recordRole: bookingRecordRole(booking),
+          source: booking.source || "",
+          sourceSlotId: booking.sourceSlotId || "",
+          recurringSourceSlotId: recurringSourceSlotId(booking),
+          recurringScheduleId: booking.recurringScheduleId || "",
+          movedFromRecurringClassId: booking.movedFromRecurringClassId || "",
+          originalOccurrenceId: booking.movedFromOccurrenceId || "",
+          moveTransactionId: booking.moveTransactionId || "",
+          movedFromDate: booking.movedFromDate || booking.changedSlot?.date || "",
+          movedFromTime: booking.movedFromTime || booking.changedSlot?.time || "",
+          exactDateBooking: Boolean(booking.exactDateBooking || isMovedDestinationBooking(booking) || booking.date),
           normalizedStatus: normalizeClassStatus(booking) || booking.status || "",
           outcome: booking.outcome || booking.classOutcome || booking.finalStatus || "",
           active: booking.active !== false,
@@ -6900,8 +6937,10 @@
         resolvedCell: resolved ? {
           cellKey: teacherDateTimeKey(resolved.teacherId, resolved.date, resolved.time),
           kind: resolved.kind,
-          bookingId: resolved.bookingId || "",
-          recurringScheduleId: resolved.recurringScheduleId || "",
+	          bookingId: resolved.bookingId || "",
+	          recordId: resolved.recordId || resolved.bookingId || resolved.slotId || "",
+	          recordRole: resolved.recordRole || "",
+	          recurringScheduleId: resolved.recurringScheduleId || "",
           slotId: resolved.slotId || "",
           source: resolved.source || "",
           studentId: resolved.studentId || "",
@@ -7040,9 +7079,10 @@
         const excluded = cell.bookingId && (cell.bookingId === options.excludeBookingId || (options.excludeBookingIds || []).includes(cell.bookingId));
         if (excluded) return null;
         if (options.reuseCancelledBookingId && cell.bookingId === options.reuseCancelledBookingId && isCancelledStatus(cell.status)) return { kind: "open", reusedCancellation: cell.booking };
+        const label = resolvedCellOccupancyLabel(cell);
         return {
           kind: "conflict",
-          reason: `This slot already contains ${cell.studentName || "a class"}${cell.type === "regular class" ? "'s recurring regular class" : ` (${cell.type || "class"})`}.`,
+          reason: `This slot already contains ${label}.`,
           cell,
           booking: cell.booking
         };
@@ -7057,6 +7097,22 @@
         };
       }
       return null;
+    }
+
+    function resolvedCellOccupancyLabel(cell) {
+      const student = cell?.studentName || "a class";
+      const type = cell?.type || "class";
+      const role = cell?.recordRole || bookingRecordRole(cell?.booking || cell);
+      if (role === "move_destination") {
+        return `${student}'s ${type === "regular class" ? "moved regular class" : `Change Slot ${type}`}`;
+      }
+      if (role === "move_source") {
+        return `${student}'s cancelled source class`;
+      }
+      if (cell?.kind === "booking" && cell?.exactDateBooking) {
+        return `${student}'s ${type}`;
+      }
+      return type === "regular class" ? `${student}'s recurring regular class` : `${student}'s ${type}`;
     }
 
     function weeklyDatesInRange(startDate, endDate, day) {
@@ -9295,9 +9351,9 @@
         const reserveClass = booking.type === "reserve" ? " reserve" : "";
         const typeClass = ` type-${String(booking.type || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
         const originalText = booking.changedSlot ? ` | ${changedSlotLabel(booking)}` : "";
-        const displayStatus = booking.status === "completed" ? "Completed" : (booking.changedSlot ? "Changed Slot" : bookingStatusLabel(booking.status));
-        const badgeClass = booking.status === "completed" ? "completed-badge" : `status-badge ${statusClass(booking.status)}`;
         const recordRole = bookingRecordRole(booking);
+        const displayStatus = booking.status === "completed" ? "Completed" : (recordRole === "move_destination" || booking.changedSlot ? "Changed Slot" : bookingStatusLabel(booking.status));
+        const badgeClass = booking.status === "completed" ? "completed-badge" : `status-badge ${statusClass(booking.status)}`;
         return `<button class="slot booked${reserveClass}${typeClass} ${statusClass(booking.status)}" draggable="true" title="Drag to an open slot to move this class" data-drag-booking-id="${booking.id}" data-booking-id="${booking.id}" data-record-id="${escapeHtml(booking.id || "")}" data-record-role="${escapeHtml(recordRole)}" data-move-transaction-id="${escapeHtml(booking.moveTransactionId || "")}"${cellAttr}>
           <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
           <span class="${badgeClass}">${escapeHtml(displayStatus)}</span>
