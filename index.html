@@ -2688,6 +2688,7 @@
     let outcomeModalDraft = null;
     let weeklyResolvedCellsByKey = new Map();
     let weeklyBookingsById = new Map();
+    let weeklyBookingsByOccurrenceId = new Map();
     let currentDragPayloadKind = "";
     let teacherSlotEditMode = false;
     let teacherSlotEditTeacherId = "";
@@ -5460,6 +5461,41 @@
       return occurrenceKeyFromParts(slot?.id || slot?.recurringScheduleId, dateStr);
     }
 
+    function occurrenceIdFromKey(key) {
+      return key ? `occurrence:${key}` : "";
+    }
+
+    function occurrenceIdForBooking(booking) {
+      if (!booking) return "";
+      if (isMovedDestinationBooking(booking)) return booking.id ? `booking:${booking.id}` : "";
+      const key = occurrenceKeyForBooking(booking);
+      if (key) return occurrenceIdFromKey(key);
+      return booking.id ? `booking:${booking.id}` : "";
+    }
+
+    function occurrenceIdForSlot(slot, dateStr = "") {
+      if (!slot) return "";
+      const date = dateOnly(dateStr || slot.date || slot.startDate);
+      const key = occurrenceKeyForSlot(slot, date);
+      if (slot.locked && key) return occurrenceIdFromKey(key);
+      const time = normalizeTimeValue(slot.time) || slot.time || "";
+      if (slot.id) return `slot:${slot.id}|${date}|${time}`;
+      return teacherDateTimeKey(slot.teacherId, date, time);
+    }
+
+    function bookingByOccurrenceId(occurrenceId) {
+      const id = String(occurrenceId || "");
+      if (!id) return null;
+      if (id.startsWith("booking:")) return bookingByExactRecordId(id.slice("booking:".length));
+      if (id.startsWith("occurrence:")) {
+        const key = id.slice("occurrence:".length);
+        return bookingRecordsForResolution()
+          .filter(booking => occurrenceKeyForBooking(booking) === key)
+          .reduce((selected, booking) => shouldUseBooking(booking, selected) ? booking : selected, null);
+      }
+      return null;
+    }
+
     function occurrenceResolutionStatus(booking) {
       if (!booking) return "";
       const status = normalizeClassStatus(booking) || booking.status || "";
@@ -6412,6 +6448,8 @@
         id: booking.id || "",
         bookingId: booking.id || "",
         recordId: booking.id || "",
+        occurrenceId: occurrenceIdForBooking(booking),
+        occurrenceKey: occurrenceKeyForBooking(booking),
         recordRole: bookingRecordRole(booking),
         moveTransactionId: booking.moveTransactionId || "",
         recurringScheduleId: booking.recurringScheduleId || booking.sourceSlotId || "",
@@ -6454,6 +6492,9 @@
         kind: isOffSlot ? "off" : (slot.reserved ? "reserved" : (slot.locked ? "fixed" : "open")),
         id: slot.id || "",
         bookingId: "",
+        recordId: slot.id || "",
+        occurrenceId: occurrenceIdForSlot(slot, dateOnly(slot.date)),
+        occurrenceKey: occurrenceKeyForSlot(slot, dateOnly(slot.date)),
         recurringScheduleId: slot.recurringScheduleId || slot.id || "",
         slotId: slot.id || "",
         studentId: slot.studentId || "",
@@ -7291,10 +7332,12 @@
       const resolvedByDate = new Map(dates.map(date => [localISO(date), resolvedCellsForDate(date)]));
       weeklyResolvedCellsByKey = new Map();
       weeklyBookingsById = new Map();
+      weeklyBookingsByOccurrenceId = new Map();
       [...resolvedByDate.values()].flat().forEach(cell => {
         const key = cell.cellKey || teacherDateTimeKey(cell.teacherId, cell.date, cell.time);
         if (key) weeklyResolvedCellsByKey.set(key, cell);
         if (cell.bookingId && cell.booking) weeklyBookingsById.set(cell.bookingId, cell.booking);
+        if (cell.occurrenceId && cell.booking) weeklyBookingsByOccurrenceId.set(cell.occurrenceId, cell.booking);
       });
       [...resolvedByDate.values()].flat().forEach(cell => times.add(cell.time));
       dates.forEach(date => weeklyRawTimeCandidatesForDate(localISO(date), teacherFilterForTimes).forEach(time => times.add(time)));
@@ -7318,6 +7361,7 @@
             const key = cell.cellKey || teacherDateTimeKey(cell.teacherId, cell.date, cell.time);
             if (key) weeklyResolvedCellsByKey.set(key, cell);
             if (cell.bookingId && cell.booking) weeklyBookingsById.set(cell.bookingId, cell.booking);
+            if (cell.occurrenceId && cell.booking) weeklyBookingsByOccurrenceId.set(cell.occurrenceId, cell.booking);
           });
           const fallbackKeys = new Set(fallbackCells.map(cell => cell.cellKey || teacherDateTimeKey(cell.teacherId, cell.date, cell.time)));
           const renderCells = fallbackCells.length
@@ -7330,7 +7374,7 @@
             .filter(cell => teacherFilter === "all" || cell.teacherId === teacherFilter)
             .filter(cell => subjectFilter === "all" || cell.subject === subjectFilter || (teacherById(cell.teacherId)?.subjects || []).includes(subjectFilter))
             .filter(cell => slotMatchesTimeRange({ time: cell.time }, timeFrom, timeTo))
-            .map(cell => ({ cell, slot: cell.slot || { id: cell.slotId, teacherId: cell.teacherId, date: cell.date, day: cell.day, time: cell.time, subject: cell.subject, locked: cell.kind === "fixed", reserved: cell.kind === "reserved", studentName: cell.studentName, source: cell.source, cellKey: cell.cellKey }, booking: cell.booking || (cell.kind === "booking" ? cell : null) }));
+            .map(cell => ({ cell, slot: cell.slot || { id: cell.slotId, teacherId: cell.teacherId, date: cell.date, day: cell.day, time: cell.time, subject: cell.subject, locked: cell.kind === "fixed", reserved: cell.kind === "reserved", studentName: cell.studentName, source: cell.source, cellKey: cell.cellKey, occurrenceId: cell.occurrenceId, occurrenceKey: cell.occurrenceKey }, booking: cell.booking || (cell.kind === "booking" ? cell : null) }));
           let filtered = items.filter(x => {
             const isBooked = Boolean(x.booking || x.slot.locked || x.slot.reserved);
             const isOff = x.cell.kind === "off" || x.cell.status === "off" || normalizeAvailabilityStatus(x.slot) === "off";
@@ -9331,17 +9375,19 @@
       const subject = slot.subject || (teacher.subjects || [])[0] || "";
       const cellKey = teacherDateTimeKey(slot.teacherId, slot.date, slot.time);
       const cellAttr = cellKey ? ` data-cell-key="${escapeHtml(cellKey)}"` : "";
+      const occurrenceId = booking ? occurrenceIdForBooking(booking) : (slot.occurrenceId || occurrenceIdForSlot(slot, slot.date));
+      const occurrenceAttr = occurrenceId ? ` data-occurrence-id="${escapeHtml(occurrenceId)}"` : "";
       if (normalizeAvailabilityStatus(slot) === "off") {
         if (slot.status === "teacher_leave" || slot.teacherLeaveId || slot.source === "teacher_leave") {
           const leaveData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, teacherLeaveId: slot.teacherLeaveId || "", date: slot.date, time: slot.time }));
-          return `<button class="slot unavailable status-teacher-leave"${cellAttr} data-view-teacher-leave="${leaveData}">${escapeHtml(teacher.name)}<small>Teacher Leave${slot.remark ? ` | ${escapeHtml(slot.remark)}` : ""}</small></button>`;
+          return `<button class="slot unavailable status-teacher-leave"${cellAttr}${occurrenceAttr} data-view-teacher-leave="${leaveData}">${escapeHtml(teacher.name)}<small>Teacher Leave${slot.remark ? ` | ${escapeHtml(slot.remark)}` : ""}</small></button>`;
         }
         const offData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, slotId: slot.id || "", slotWasOff: true, interactionSource: "weekly_timetable" }));
-        return `<button class="slot unavailable"${cellAttr} data-open-off-slot="${offData}">${escapeHtml(teacher.name)}<small>OFF${slot.remark ? ` | ${escapeHtml(slot.remark)}` : ""}</small></button>`;
+        return `<button class="slot unavailable"${cellAttr}${occurrenceAttr} data-open-off-slot="${offData}">${escapeHtml(teacher.name)}<small>OFF${slot.remark ? ` | ${escapeHtml(slot.remark)}` : ""}</small></button>`;
       }
       if (booking) {
         if (booking.source === "teacher_leave_record") {
-          return `<button class="slot booked ${statusClass(booking.status)}"${cellAttr} disabled>
+          return `<button class="slot booked ${statusClass(booking.status)}"${cellAttr}${occurrenceAttr} disabled>
             <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
             <span class="status-badge ${statusClass(booking.status)}">${escapeHtml(bookingStatusLabel(booking.status))}</span>
             <span class="slot-student">Teacher Leave</span>
@@ -9354,7 +9400,7 @@
         const recordRole = bookingRecordRole(booking);
         const displayStatus = booking.status === "completed" ? "Completed" : (recordRole === "move_destination" || booking.changedSlot ? "Changed Slot" : bookingStatusLabel(booking.status));
         const badgeClass = booking.status === "completed" ? "completed-badge" : `status-badge ${statusClass(booking.status)}`;
-        return `<button class="slot booked${reserveClass}${typeClass} ${statusClass(booking.status)}" draggable="true" title="Drag to an open slot to move this class" data-drag-booking-id="${booking.id}" data-booking-id="${booking.id}" data-record-id="${escapeHtml(booking.id || "")}" data-record-role="${escapeHtml(recordRole)}" data-move-transaction-id="${escapeHtml(booking.moveTransactionId || "")}"${cellAttr}>
+        return `<button class="slot booked${reserveClass}${typeClass} ${statusClass(booking.status)}" draggable="true" title="Drag to an open slot to move this class" data-drag-booking-id="${booking.id}" data-booking-id="${booking.id}" data-record-id="${escapeHtml(booking.id || "")}" data-occurrence-id="${escapeHtml(occurrenceId)}" data-record-role="${escapeHtml(recordRole)}" data-move-transaction-id="${escapeHtml(booking.moveTransactionId || "")}"${cellAttr}>
           <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
           <span class="${badgeClass}">${escapeHtml(displayStatus)}</span>
           <span class="slot-student">${escapeHtml(booking.studentName || "Class")}</span>
@@ -9362,16 +9408,16 @@
         </button>`;
       }
       if (slot.locked) {
-        const fixedData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, studentId: slot.studentId || "", studentName: slot.studentName || "Fixed regular class", slotId: slot.id, reserved: Boolean(slot.reserved) }));
-        if (slot.reserved) return `<button class="slot reserve" title="Reserved slot"${cellAttr} data-fixed-slot="${fixedData}">${escapeHtml(teacher.name)}<small>${escapeHtml(reservationLabel(slot))} | ${escapeHtml(subject)}</small></button>`;
-        return `<button class="slot fixed" draggable="true" title="Drag to an open slot to move this fixed regular class" data-drag-fixed-slot="${fixedData}" data-fixed-slot="${fixedData}"${cellAttr}>
+        const fixedData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, studentId: slot.studentId || "", studentName: slot.studentName || "Fixed regular class", slotId: slot.id, occurrenceId, occurrenceKey: occurrenceKeyForSlot(slot, slot.date), reserved: Boolean(slot.reserved) }));
+        if (slot.reserved) return `<button class="slot reserve" title="Reserved slot"${cellAttr}${occurrenceAttr} data-fixed-slot="${fixedData}">${escapeHtml(teacher.name)}<small>${escapeHtml(reservationLabel(slot))} | ${escapeHtml(subject)}</small></button>`;
+        return `<button class="slot fixed" draggable="true" title="Drag to an open slot to move this fixed regular class" data-drag-fixed-slot="${fixedData}" data-fixed-slot="${fixedData}"${cellAttr}${occurrenceAttr}>
           <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
           <span class="slot-student">${escapeHtml(slot.studentName || "occupied")}</span>
           <span class="slot-details">regular class | ${escapeHtml(subject || "-")}</span>
         </button>`;
       }
       const futureReservation = futureRegularReservationForDate(slot.teacherId, slot.date, slot.time);
-      return `<button class="slot"${cellAttr} data-slot="${escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, slotId: slot.id || "", source: slot.source || "" }))}">${escapeHtml(teacher.name)}<small>${futureReservation ? `Temporary classes only until ${escapeHtml(formatDateFromAny(futureReservation.startDate))} | reserved for ${escapeHtml(futureReservation.studentName || "student")}` : `Available | ${escapeHtml(subject)} | 30 min slot, 25 min class`}</small></button>`;
+      return `<button class="slot"${cellAttr}${occurrenceAttr} data-slot="${escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, slotId: slot.id || "", occurrenceId, source: slot.source || "" }))}">${escapeHtml(teacher.name)}<small>${futureReservation ? `Temporary classes only until ${escapeHtml(formatDateFromAny(futureReservation.startDate))} | reserved for ${escapeHtml(futureReservation.studentName || "student")}` : `Available | ${escapeHtml(subject)} | 30 min slot, 25 min class`}</small></button>`;
     }
 
     function renderTeachers() {
@@ -12067,7 +12113,9 @@
         slotRevisionAt: now,
         ...(status === "completed" ? { completedAt: now } : {}),
         source: "fixed_regular_manual",
-        sourceSlotId: data.slotId || ""
+        sourceSlotId: data.slotId || "",
+        occurrenceId: data.occurrenceId || occurrenceIdFromKey(occurrenceKeyFromParts(data.slotId || "", data.date)),
+        occurrenceKey: data.occurrenceKey || occurrenceKeyFromParts(data.slotId || "", data.date)
       };
       if (booking.sourceSlotId) normaliseOccurrenceOutcome(booking, status);
       return booking;
@@ -14936,8 +14984,10 @@
 
     function outcomeBookingFromForm({ materializeFixed = false } = {}) {
       const clickedRecordId = outcomeModalDraft?.clickedRecordId || "";
+      const clickedOccurrenceId = outcomeModalDraft?.occurrenceId || "";
       const bookingId = $("outcomeBookingId")?.value || clickedRecordId || "";
       let booking = bookingByExactRecordId(bookingId);
+      if (!booking && clickedOccurrenceId) booking = bookingByOccurrenceId(clickedOccurrenceId);
       if (!booking && clickedRecordId) return null;
       if (!booking && materializeFixed && outcomeModalDraft?.fixedSlotData) {
         booking = findFixedSlotOutcomeBooking(outcomeModalDraft.fixedSlotData);
@@ -14962,7 +15012,9 @@
       outcomeInteractionSource = interactionSource;
       outcomeModalDraft = {
         booking: draft,
-        clickedRecordId: options.recordId || draft.id || "",
+        clickedRecordId: options.recordId || (options.fixedSlotData ? "" : draft.id || ""),
+        occurrenceId: options.occurrenceId || occurrenceIdForBooking(draft),
+        occurrenceKey: options.occurrenceKey || occurrenceKeyForBooking(draft),
         recordRole: options.recordRole || bookingRecordRole(draft),
         moveTransactionId: options.moveTransactionId || draft.moveTransactionId || "",
         interactionSource,
@@ -15879,19 +15931,27 @@
         const clickStartedAt = performance.now();
         const cell = bookingBtn.dataset.cellKey ? weeklyResolvedCellsByKey.get(bookingBtn.dataset.cellKey) : null;
         const clickedRecordId = bookingBtn.dataset.recordId || bookingBtn.dataset.bookingId || bookingBtn.dataset.dragBookingId || "";
-        let booking = bookingByExactRecordId(clickedRecordId) || weeklyBookingsById.get(clickedRecordId);
+        const clickedOccurrenceId = bookingBtn.dataset.occurrenceId || "";
+        let booking = bookingByExactRecordId(clickedRecordId)
+          || weeklyBookingsByOccurrenceId.get(clickedOccurrenceId)
+          || bookingByOccurrenceId(clickedOccurrenceId)
+          || weeklyBookingsById.get(clickedRecordId);
         if (!booking && cell?.bookingId === clickedRecordId) booking = cell.booking;
-        if (!booking && !clickedRecordId) booking = cell?.booking || null;
+        if (!booking && clickedOccurrenceId && cell?.occurrenceId === clickedOccurrenceId) booking = cell.booking;
+        if (!booking && !clickedRecordId && !clickedOccurrenceId) booking = cell?.booking || null;
         if (booking) {
           openOutcomeModal(booking, bookingBtn.dataset.bookingContext || "weekly_timetable", {
             cellKey: bookingBtn.dataset.cellKey || cell?.cellKey || "",
             recordId: clickedRecordId || booking.id || "",
+            occurrenceId: clickedOccurrenceId || occurrenceIdForBooking(booking),
+            occurrenceKey: booking.occurrenceKey || occurrenceKeyForBooking(booking),
             recordRole: bookingBtn.dataset.recordRole || bookingRecordRole(booking),
             moveTransactionId: bookingBtn.dataset.moveTransactionId || booking.moveTransactionId || ""
           });
           if (SYNC_DEBUG) console.info("[weekly booked-slot click timing]", {
             cellKey: bookingBtn.dataset.cellKey || "",
             clickedRecordId,
+            clickedOccurrenceId,
             openedBookingId: booking.id || "",
             recordRole: bookingBtn.dataset.recordRole || bookingRecordRole(booking),
             cellBookingId: cell?.bookingId || "",
@@ -15912,9 +15972,18 @@
           openCancelFixedRegularModal(data);
         } else {
           const cell = fixedSlotBtn.dataset.cellKey ? weeklyResolvedCellsByKey.get(fixedSlotBtn.dataset.cellKey) : null;
-          const existingBooking = cell?.booking || scheduleBookings().find(b => b.teacherId === data.teacherId && dateOnly(b.date) === dateOnly(data.date) && (normalizeTimeValue(b.time) || b.time) === (normalizeTimeValue(data.time) || data.time));
+          const clickedOccurrenceId = fixedSlotBtn.dataset.occurrenceId || data.occurrenceId || "";
+          const existingBooking = (clickedOccurrenceId ? (weeklyBookingsByOccurrenceId.get(clickedOccurrenceId) || bookingByOccurrenceId(clickedOccurrenceId)) : null)
+            || (cell?.occurrenceId === clickedOccurrenceId ? cell?.booking : null)
+            || (cell?.booking && !clickedOccurrenceId ? cell.booking : null);
           const draftBooking = existingBooking || fixedSlotToBooking(data);
-          openOutcomeModal(draftBooking, data.interactionSource || "weekly_timetable", { fixedSlotData: existingBooking ? null : data, cellKey: fixedSlotBtn.dataset.cellKey || cell?.cellKey || "" });
+          openOutcomeModal(draftBooking, data.interactionSource || "weekly_timetable", {
+            fixedSlotData: existingBooking ? null : data,
+            cellKey: fixedSlotBtn.dataset.cellKey || cell?.cellKey || "",
+            recordId: existingBooking?.id || "",
+            occurrenceId: clickedOccurrenceId || data.occurrenceId || occurrenceIdForSlot(data, data.date),
+            occurrenceKey: data.occurrenceKey || occurrenceKeyForSlot(data, data.date)
+          });
         }
       }
       const close = e.target.closest("[data-close]");
