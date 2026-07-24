@@ -4449,6 +4449,15 @@
         archived: passed,
         deleted: false,
         source: "moved_booking",
+        recordRole: "move_destination",
+        sourceSlotId: "",
+        recurringScheduleId: "",
+        recurringSourceSlotId: "",
+        occurrenceDate: "",
+        occurrenceKey: "",
+        suppressRecurringOccurrence: false,
+        resolutionActive: false,
+        resolutionStatus: "",
         movedFromOccurrenceId: sourceBooking.id || "",
         movedFromRecurringClassId: sourceBooking.sourceSlotId || sourceBooking.recurringScheduleId || "",
         movedFromDate: original.date,
@@ -4474,10 +4483,17 @@
       const previousRemark = sourceBooking.remark || "";
       stampBookingStatus(sourceBooking, "cancelled", now);
       sourceBooking.outcomeSource = "drag_move";
+      sourceBooking.recordRole = "move_source";
       sourceBooking.moveTransactionId = transactionId;
       sourceBooking.movedToBookingId = destinationBooking.id;
       sourceBooking.movedToDate = destinationBooking.date;
       sourceBooking.movedToTime = destinationBooking.time;
+      sourceBooking.recurringSourceSlotId = recurringSourceSlotId(sourceBooking) || sourceBooking.sourceSlotId || sourceBooking.recurringScheduleId || "";
+      sourceBooking.occurrenceDate = dateOnly(sourceBooking.date);
+      sourceBooking.occurrenceKey = occurrenceKeyForBooking(sourceBooking);
+      sourceBooking.suppressRecurringOccurrence = true;
+      sourceBooking.resolutionActive = true;
+      sourceBooking.resolutionStatus = "cancelled";
       sourceBooking.replacementCreditCreated = false;
       sourceBooking.archived = false;
       sourceBooking.active = true;
@@ -5402,7 +5418,22 @@
       return byCell;
     }
 
+    function isMoveSourceOutcomeBooking(record) {
+      return Boolean(record && (record.movedToBookingId || record.outcomeSource === "drag_move" || record.recordRole === "move_source"));
+    }
+
+    function isMovedDestinationBooking(record) {
+      return Boolean(record && (record.source === "moved_booking" || record.movedFromOccurrenceId || record.recordRole === "move_destination") && !isMoveSourceOutcomeBooking(record));
+    }
+
+    function bookingRecordRole(record) {
+      if (isMoveSourceOutcomeBooking(record)) return "move_source";
+      if (isMovedDestinationBooking(record)) return "move_destination";
+      return record?.recordRole || record?.source || "booking";
+    }
+
     function recurringSourceSlotId(record) {
+      if (isMovedDestinationBooking(record)) return "";
       return record?.recurringSourceSlotId || record?.sourceSlotId || record?.recurringScheduleId || record?.movedFromRecurringClassId || "";
     }
 
@@ -5434,14 +5465,16 @@
 
     function occurrenceOutcomeParticipatesInResolution(booking) {
       if (!booking || !occurrenceKeyForBooking(booking)) return false;
+      if (isMovedDestinationBooking(booking)) return false;
       if (booking.resolutionActive === true || booking.suppressRecurringOccurrence === true) return true;
       const status = occurrenceResolutionStatus(booking);
       return ["cancelled", "student_not_show", "teacher_leave", "public_holiday", "completed"].includes(status)
-        || Boolean(booking.changedSlot || booking.moveTransactionId || booking.movedToBookingId || booking.movedFromOccurrenceId);
+        || Boolean(booking.movedToBookingId || isMoveSourceOutcomeBooking(booking));
     }
 
     function normaliseOccurrenceOutcome(booking, status = "") {
       if (!booking) return booking;
+      if (isMovedDestinationBooking(booking)) return booking;
       const sourceSlotId = recurringSourceSlotId(booking);
       const dateStr = dateOnly(booking.date);
       if (!sourceSlotId || !dateStr) return booking;
@@ -6369,6 +6402,9 @@
         kind: "booking",
         id: booking.id || "",
         bookingId: booking.id || "",
+        recordId: booking.id || "",
+        recordRole: bookingRecordRole(booking),
+        moveTransactionId: booking.moveTransactionId || "",
         recurringScheduleId: booking.recurringScheduleId || booking.sourceSlotId || "",
         slotId: slot?.id || booking.sourceSlotId || "",
         studentId: booking.studentId || "",
@@ -6382,7 +6418,7 @@
         locked: true,
         available: false,
         source: booking.source || "booking",
-        sourceRecordId: booking.id || "",
+	        sourceRecordId: booking.id || "",
         estimatedPay: applyPolicyRules(booking, { teacher }).teacherPay,
         createdAt: booking.createdAt || "",
         updatedAt: booking.updatedAt || booking.statusChangedAt || booking.slotRevisionAt || "",
@@ -9261,7 +9297,8 @@
         const originalText = booking.changedSlot ? ` | ${changedSlotLabel(booking)}` : "";
         const displayStatus = booking.status === "completed" ? "Completed" : (booking.changedSlot ? "Changed Slot" : bookingStatusLabel(booking.status));
         const badgeClass = booking.status === "completed" ? "completed-badge" : `status-badge ${statusClass(booking.status)}`;
-        return `<button class="slot booked${reserveClass}${typeClass} ${statusClass(booking.status)}" draggable="true" title="Drag to an open slot to move this class" data-drag-booking-id="${booking.id}" data-booking-id="${booking.id}"${cellAttr}>
+        const recordRole = bookingRecordRole(booking);
+        return `<button class="slot booked${reserveClass}${typeClass} ${statusClass(booking.status)}" draggable="true" title="Drag to an open slot to move this class" data-drag-booking-id="${booking.id}" data-booking-id="${booking.id}" data-record-id="${escapeHtml(booking.id || "")}" data-record-role="${escapeHtml(recordRole)}" data-move-transaction-id="${escapeHtml(booking.moveTransactionId || "")}"${cellAttr}>
           <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
           <span class="${badgeClass}">${escapeHtml(displayStatus)}</span>
           <span class="slot-student">${escapeHtml(booking.studentName || "Class")}</span>
@@ -11981,6 +12018,7 @@
     }
 
     function recurringSlotForBooking(booking) {
+      if (isMovedDestinationBooking(booking)) return null;
       const teacher = teacherById(booking?.teacherId);
       if (!teacher || !booking) return null;
       const lists = [activeSlotRecords(teacher.regularSlots), activeSlotRecords(teacher.overrideSlots)];
