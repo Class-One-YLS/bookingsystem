@@ -6436,6 +6436,10 @@
       return Boolean(booking) && (!isDeletedBookingRecord(booking) || occurrenceResolutionStatus(booking) !== "deleted");
     }
 
+    function slotIsActiveOccurrence(slot) {
+      return Boolean(slot && normalizeAvailabilityStatus(slot) !== "off" && (slot.locked || slot.reserved || slot.studentName || slot.studentId));
+    }
+
     function calendarCellFromBooking(booking, teacher, slot = null) {
       const status = occurrenceResolutionStatus(booking) || normalizeClassStatus(booking) || booking.status || "booked";
       return {
@@ -6682,6 +6686,15 @@
           }
           let finalCell = null;
           if (normalizeAvailabilityStatus(slot) === "off" && (!booking || bookingAmendmentTime(slot) >= bookingAmendmentTime(booking))) {
+            finalCell = calendarCellFromSlot(slot, teacher);
+            cells.push(finalCell);
+            if (traceStages.length) {
+              traceStages.push(weeklyTraceRecord("Stage 9 Render Weekly Timetable", finalCell));
+              logWeeklyResolutionTrace({ teacher, dateISO, time, stages: traceStages });
+            }
+            return;
+          }
+          if (booking && isHistoricalInactiveBooking(booking) && slotIsActiveOccurrence(slot)) {
             finalCell = calendarCellFromSlot(slot, teacher);
             cells.push(finalCell);
             if (traceStages.length) {
@@ -10386,10 +10399,21 @@
       return 1;
     }
 
+    function isHistoricalInactiveBooking(booking) {
+      const status = normalizeClassStatus(booking) || String(booking?.status || "").toLowerCase();
+      return isCancelledStatus(status) || status === "off" || status === "available";
+    }
+
     function shouldUseBooking(candidate, existing) {
       if (isSupersededBookingRecord(candidate) && !occurrenceOutcomeParticipatesInResolution(candidate)) return false;
       if (!existing) return true;
       if (isSupersededBookingRecord(existing) && !occurrenceOutcomeParticipatesInResolution(existing)) return true;
+      const sameRecord = Boolean(candidate?.id && existing?.id && candidate.id === existing.id);
+      if (!sameRecord) {
+        const candidateInactive = isHistoricalInactiveBooking(candidate);
+        const existingInactive = isHistoricalInactiveBooking(existing);
+        if (candidateInactive !== existingInactive) return !candidateInactive;
+      }
       const candidateTime = bookingAmendmentTime(candidate);
       const existingTime = bookingAmendmentTime(existing);
       if (candidateTime !== existingTime) return candidateTime > existingTime;
