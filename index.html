@@ -1969,6 +1969,7 @@
     <div class="modal-card">
       <div class="row spread"><h2>Move Class</h2><button class="btn ghost small" data-close>Close</button></div>
       <input id="moveBookingId" type="hidden">
+      <input id="moveOccurrenceId" type="hidden">
       <input id="moveSlot" type="hidden">
       <div class="grid two" style="margin-top:14px;">
         <div class="card">
@@ -6748,15 +6749,19 @@
       };
     }
 
+    function resolveOccurrences(_state, options = {}) {
+      return resolveTeacherCalendar(_state, options);
+    }
+
     function resolvedCellsForDate(date) {
       const dateISO = localISO(date);
-      return timetableTeachers().flatMap(teacher => resolveTeacherCalendar(state, { teacherId: teacher.id, from: dateISO, to: dateISO }).cells);
+      return timetableTeachers().flatMap(teacher => resolveOccurrences(state, { teacherId: teacher.id, from: dateISO, to: dateISO }).cells);
     }
 
     function canonicalResolvedCellForSlot(teacherId, date, time) {
       const dateISO = dateOnly(date);
       const targetTime = normalizeTimeValue(time) || time;
-      return resolveTeacherCalendar(state, { teacherId, from: dateISO, to: dateISO }).cells.find(cell =>
+      return resolveOccurrences(state, { teacherId, from: dateISO, to: dateISO }).cells.find(cell =>
         cell.teacherId === teacherId &&
         dateOnly(cell.date) === dateISO &&
         (normalizeTimeValue(cell.time) || cell.time) === targetTime
@@ -9400,7 +9405,7 @@
         const recordRole = bookingRecordRole(booking);
         const displayStatus = booking.status === "completed" ? "Completed" : (recordRole === "move_destination" || booking.changedSlot ? "Changed Slot" : bookingStatusLabel(booking.status));
         const badgeClass = booking.status === "completed" ? "completed-badge" : `status-badge ${statusClass(booking.status)}`;
-        return `<button class="slot booked${reserveClass}${typeClass} ${statusClass(booking.status)}" draggable="true" title="Drag to an open slot to move this class" data-drag-booking-id="${booking.id}" data-booking-id="${booking.id}" data-record-id="${escapeHtml(booking.id || "")}" data-occurrence-id="${escapeHtml(occurrenceId)}" data-record-role="${escapeHtml(recordRole)}" data-move-transaction-id="${escapeHtml(booking.moveTransactionId || "")}"${cellAttr}>
+        return `<button class="slot booked${reserveClass}${typeClass} ${statusClass(booking.status)}" draggable="true" title="Drag to an open slot to move this class" data-drag-booking-id="${booking.id}" data-drag-occurrence-id="${escapeHtml(occurrenceId)}" data-booking-id="${booking.id}" data-record-id="${escapeHtml(booking.id || "")}" data-occurrence-id="${escapeHtml(occurrenceId)}" data-record-role="${escapeHtml(recordRole)}" data-move-transaction-id="${escapeHtml(booking.moveTransactionId || "")}"${cellAttr}>
           <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
           <span class="${badgeClass}">${escapeHtml(displayStatus)}</span>
           <span class="slot-student">${escapeHtml(booking.studentName || "Class")}</span>
@@ -12139,19 +12144,24 @@
       pendingMoveDraftBookingId = "";
     }
 
-    function openMoveBookingModal(bookingId, slot) {
-      const booking = state.bookings.find(item => item.id === bookingId);
+    function openMoveOccurrenceModal(occurrenceId, slot, fallbackBookingId = "") {
+      const booking = bookingByOccurrenceId(occurrenceId) || bookingByExactRecordId(fallbackBookingId);
       const message = moveValidationMessage(booking, slot);
       if (message) return alert(message);
       const before = bookingLogSummary(booking);
       const oldTeacher = teacherById(booking.teacherId);
       $("moveBookingId").value = booking.id;
+      $("moveOccurrenceId").value = occurrenceId || occurrenceIdForBooking(booking);
       $("moveSlot").value = JSON.stringify(slot);
       $("moveOriginalInfo").innerHTML = `${escapeHtml(booking.studentName || "Class")}<br>${escapeHtml(oldTeacher ? oldTeacher.name : "-")} | ${escapeHtml(formatClassDateTime(booking.date, booking.time))}<br>${escapeHtml(booking.type || "regular class")} | ${escapeHtml(booking.subject || "-")}`;
       $("moveNewInfo").innerHTML = `${escapeHtml(booking.studentName || "Class")}<br>${escapeHtml(bookingMoveSummary(booking, slot))}`;
       $("moveRemark").value = "";
       $("moveBookingModal").classList.remove("hide");
       return before;
+    }
+
+    function openMoveBookingModal(bookingId, slot) {
+      return openMoveOccurrenceModal(bookingId ? `booking:${bookingId}` : "", slot, bookingId);
     }
 
     function openMoveFixedSlotModal(fixedSlot, slot) {
@@ -12164,7 +12174,7 @@
         state.bookings.push(booking);
         pendingMoveDraftBookingId = booking.id;
       }
-      openMoveBookingModal(booking.id, slot);
+      openMoveOccurrenceModal(occurrenceIdForBooking(booking), slot, booking.id);
     }
 
     function virtualSlotFromCell(cell, fixedSlot) {
@@ -12188,7 +12198,8 @@
       moveBookingSaveInProgress = true;
       if (button) button.disabled = true;
       try {
-        const booking = state.bookings.find(item => item.id === $("moveBookingId").value);
+        const occurrenceId = $("moveOccurrenceId")?.value || "";
+        const booking = bookingByOccurrenceId(occurrenceId) || bookingByExactRecordId($("moveBookingId").value);
         const slot = JSON.parse($("moveSlot").value || "null");
         const remark = $("moveRemark").value.trim();
         moveBookedOccurrence(booking, slot, remark, { sourceWasDraft: pendingMoveDraftBookingId === booking?.id });
@@ -12210,7 +12221,8 @@
     function openEditTimeSlotForBooking(booking) {
       if (!booking) return alert("Booking not found.");
       const recurring = recurringSlotForBooking(booking);
-      $("editTimeSlotData").value = JSON.stringify({ kind: "booking", bookingId: booking.id });
+      const occurrenceId = outcomeModalDraft?.occurrenceId || occurrenceIdForBooking(booking);
+      $("editTimeSlotData").value = JSON.stringify({ kind: "booking", occurrenceId, bookingId: booking.id });
       $("editTimeSlotInfo").textContent = outcomeInteractionSource === "teacher_overview"
         ? `${booking.studentName || "Class"} | ${teacherById(booking.teacherId)?.name || "-"} | ${booking.day || recurring?.day || dayFromISO(booking.date)} ${timeLabel(booking.time)} | choose the effective date below`
         : `${booking.studentName || "Class"} | ${teacherById(booking.teacherId)?.name || "-"} | ${formatClassDateTime(booking.date, booking.time)}${recurring ? " | recurring regular class" : " | one-time class"}`;
@@ -12258,7 +12270,7 @@
       if (dates.some(date => slotHasPassed(date, targetTime))) return alert("Cannot move to a time that has already passed.");
 
       if (data.kind === "booking") {
-        const booking = state.bookings.find(item => item.id === data.bookingId);
+        const booking = bookingByOccurrenceId(data.occurrenceId) || bookingByExactRecordId(data.bookingId);
         if (!booking) return alert("Booking not found.");
         const recurring = recurringSlotForBooking(booking);
         if (mode !== "one_date" && !recurring) return alert("Temporary or ongoing changes are only available for recurring regular classes.");
@@ -16457,11 +16469,11 @@
       const fixedSlotBtn = e.target.closest("[data-drag-fixed-slot]");
       if (!bookingBtn && !fixedSlotBtn) return;
       const payload = bookingBtn
-        ? { kind: "booking", bookingId: bookingBtn.dataset.dragBookingId }
+        ? { kind: "booking", occurrenceId: bookingBtn.dataset.dragOccurrenceId || bookingBtn.dataset.occurrenceId || "", bookingId: bookingBtn.dataset.dragBookingId || "" }
         : { kind: "fixed", fixedSlot: JSON.parse(fixedSlotBtn.dataset.dragFixedSlot) };
       currentDragPayloadKind = payload.kind;
       e.dataTransfer.setData("application/json", JSON.stringify(payload));
-      e.dataTransfer.setData("text/plain", bookingBtn ? bookingBtn.dataset.dragBookingId : fixedSlotBtn.dataset.dragFixedSlot);
+      e.dataTransfer.setData("text/plain", bookingBtn ? (payload.occurrenceId || payload.bookingId) : fixedSlotBtn.dataset.dragFixedSlot);
       e.dataTransfer.effectAllowed = "move";
       (bookingBtn || fixedSlotBtn).classList.add("dragging");
       setStatus(payload.kind === "fixed" ? "Drag the fixed regular class to an open slot, then confirm the move." : "Drag the class to an open slot, then confirm the move.");
@@ -16496,10 +16508,13 @@
         const slot = slotBtn ? JSON.parse(slotBtn.dataset.slot) : virtualSlotFromCell(cell, payload.fixedSlot);
         if (!slot) return;
         if (payload.kind === "fixed") return openMoveFixedSlotModal(payload.fixedSlot, slot);
-        if (payload.kind === "booking" && slotBtn) return openMoveBookingModal(payload.bookingId, slot);
+        if (payload.kind === "booking" && slotBtn) return openMoveOccurrenceModal(payload.occurrenceId || (payload.bookingId ? `booking:${payload.bookingId}` : ""), slot, payload.bookingId || "");
       }
-      const bookingId = e.dataTransfer.getData("text/plain");
-      if (bookingId && slotBtn) openMoveBookingModal(bookingId, JSON.parse(slotBtn.dataset.slot));
+      const draggedId = e.dataTransfer.getData("text/plain");
+      if (draggedId && slotBtn) {
+        const occurrenceId = draggedId.startsWith("booking:") || draggedId.startsWith("occurrence:") || draggedId.startsWith("slot:") ? draggedId : `booking:${draggedId}`;
+        openMoveOccurrenceModal(occurrenceId, JSON.parse(slotBtn.dataset.slot), draggedId);
+      }
     });
 
     document.addEventListener("change", (e) => {
