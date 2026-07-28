@@ -6694,7 +6694,7 @@
             }
             return;
           }
-          if (booking && isHistoricalInactiveBooking(booking) && slotIsActiveOccurrence(slot)) {
+          if (booking && inactiveBookingCanYieldToActiveSlot(booking) && slotIsActiveOccurrence(slot)) {
             finalCell = calendarCellFromSlot(slot, teacher);
             cells.push(finalCell);
             if (traceStages.length) {
@@ -10402,6 +10402,10 @@
     function isHistoricalInactiveBooking(booking) {
       const status = normalizeClassStatus(booking) || String(booking?.status || "").toLowerCase();
       return isCancelledStatus(status) || status === "off" || status === "available";
+    }
+
+    function inactiveBookingCanYieldToActiveSlot(booking) {
+      return Boolean(booking && isHistoricalInactiveBooking(booking) && isSupersededBookingRecord(booking));
     }
 
     function shouldUseBooking(candidate, existing) {
