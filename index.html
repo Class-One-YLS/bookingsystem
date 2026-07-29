@@ -13407,6 +13407,7 @@
     }
 
     let crmVisibleRenderFrame = 0;
+    let crmLastVisibleRenderSignature = "";
     function ensureCrmLeadsRendered({ preserveScroll = true, resetLimit = false } = {}) {
       if (!initialDataLoadComplete && !(state.leads || []).length) {
         crmRenderAfterDataLoadNeeded = true;
@@ -13427,6 +13428,7 @@
       const scrollTop = preserveScroll ? (node?.scrollTop || 0) : 0;
       const scrollLeft = preserveScroll ? (node?.scrollLeft || 0) : 0;
       renderLeads();
+      crmLastVisibleRenderSignature = crmVisibleRenderSignature();
       if (preserveScroll) {
         const nextNode = scrollPanelFor("leadList");
         if (nextNode) {
@@ -13436,14 +13438,33 @@
       }
     }
 
+    function crmVisibleRenderSignature() {
+      const filters = [
+        $("leadMonthFilter")?.value || "",
+        $("leadSalesFilter")?.value || "",
+        $("leadFilterStatus")?.value || "",
+        $("leadFilterUrgency")?.value || "",
+        $("leadSearch")?.value || "",
+        leadSortState.key || "",
+        leadSortState.direction || "",
+        crmLeadVisibleColumnKeys().join(","),
+        [...expandedCrmLeadMonths].sort().join(",")
+      ];
+      return [
+        Number(state.settings?.neonVersion || 0),
+        Number(state.settings?.localRevision || 0),
+        (state.leads || []).length,
+        filters.join("|")
+      ].join("::");
+    }
+
     function scheduleCrmVisibleRender({ preserveScroll = true } = {}) {
-      if (crmVisibleRenderFrame) cancelAnimationFrame(crmVisibleRenderFrame);
+      if (crmVisibleRenderFrame) return;
+      const signature = crmVisibleRenderSignature();
+      if ($("leadList")?.innerHTML && signature === crmLastVisibleRenderSignature) return;
       crmVisibleRenderFrame = requestAnimationFrame(() => {
+        crmVisibleRenderFrame = 0;
         renderCrmAfterVisible({ preserveScroll });
-        crmVisibleRenderFrame = requestAnimationFrame(() => {
-          crmVisibleRenderFrame = 0;
-          renderCrmAfterVisible({ preserveScroll });
-        });
       });
     }
 
