@@ -695,28 +695,45 @@
     #activityList, #publicHolidayCalendar, #teacherLeaveSummary { max-height: 620px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
     #activityList table { min-width: 1180px; }
     #publicHolidayCalendar, #teacherLeaveSummary { padding: 10px; }
-    .lead-table { min-width: 1880px; }
+    .lead-table { min-width: 1320px; }
     .lead-table th { position: sticky; top: 0; z-index: 2; background: #fff; }
     .lead-table select, .lead-table input { min-height: 32px; padding: 6px 8px; font-size: 12px; }
     .lead-table textarea { min-height: 64px; min-width: 190px; padding: 6px 8px; font-size: 12px; }
     .lead-table td { vertical-align: top; }
     .lead-table th:nth-child(3), .lead-table td:nth-child(3) { min-width: 260px; }
     .lead-table td:nth-child(3) input { min-width: 230px; }
+    .lead-table [data-crm-col="child"] { min-width: 190px; }
+    .lead-table [data-crm-col="parent"] { min-width: 190px; }
+    .lead-table [data-crm-col="phone"] { min-width: 180px; }
+    .lead-table [data-crm-col="nextFollowUp"] { min-width: 170px; }
     .crm-lead-scroll { max-height: 660px; overflow: auto; overscroll-behavior: contain; padding-right: 4px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
     .crm-lead-scroll > .table-wrap { max-height: none; overflow: visible; border: 0; border-radius: 0; }
     .crm-lead-month { border-bottom: 1px solid var(--line); background: #fff; }
-    .crm-month-header { position: sticky; top: 0; z-index: 8; width: 100%; min-height: 50px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; background: #f4fbf7; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); text-align: left; }
-    .crm-month-header strong { font-size: 16px; }
+    .crm-month-header { position: sticky; top: 0; z-index: 8; width: 100%; min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 12px; background: #f4fbf7; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); text-align: left; }
+    .crm-month-header strong { font-size: 14px; }
     .crm-month-header span { font-size: 12px; color: var(--muted); font-weight: 800; }
-    .crm-month-header .chevron { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 999px; background: #eaf3ee; color: var(--ink); font-size: 16px; }
+    .crm-month-header .chevron { width: auto; min-width: 72px; height: 28px; display: grid; place-items: center; border-radius: 999px; background: #eaf3ee; color: var(--ink); font-size: 12px; padding: 0 10px; }
     .crm-date-group { padding: 10px 12px 16px; }
     .crm-date-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 8px; color: var(--muted); font-size: 12px; font-weight: 900; text-transform: uppercase; }
     .crm-grouped-leads .table-wrap { max-height: none; overflow-x: auto; overflow-y: visible; border-radius: 8px; }
     .crm-grouped-leads .lead-table { margin: 0; }
     .crm-grouped-leads .lead-table th { top: 50px; }
     .lead-table .crm-month-row td { position: sticky; top: 42px; z-index: 3; padding: 0; background: #f4fbf7; }
-    .lead-table .crm-date-row td { background: #fbfdfc; color: var(--muted); font-size: 11px; font-weight: 900; text-transform: uppercase; }
-    .lead-table .crm-date-row span { float: right; text-transform: none; font-weight: 800; }
+    .lead-table .crm-date-row td { background: #fbfdfc; color: var(--muted); font-size: 11px; font-weight: 900; padding: 6px 12px; }
+    .lead-table .crm-date-row span { float: none; text-transform: none; font-weight: 900; color: var(--ink); }
+    .crm-toolbar { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin-top: 14px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #fbfdfc; }
+    .crm-toolbar .field { min-width: 150px; flex: 1 1 150px; }
+    .crm-toolbar .field.search { min-width: min(280px, 100%); flex: 2 1 260px; }
+    .crm-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .crm-menu-wrap { position: relative; }
+    .crm-menu-panel { display: none; position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; width: min(420px, calc(100vw - 36px)); max-height: 520px; overflow: auto; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; box-shadow: 0 18px 40px rgba(23,33,43,.18); }
+    .crm-menu-wrap.open .crm-menu-panel { display: block; }
+    .crm-column-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+    .crm-column-grid label { display: flex; align-items: center; gap: 7px; margin: 0; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #fbfdfc; font-size: 12px; }
+    .crm-filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .crm-filter-grid .wide { grid-column: 1 / -1; }
+    .lead-sort-btn { display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: transparent; color: var(--ink); font: inherit; font-weight: 900; cursor: pointer; }
+    .lead-sort-indicator { color: var(--muted); font-size: 12px; }
     .settings-nav { width: 36px; height: 36px; min-height: 36px; padding: 0; margin: 0; display: grid; place-items: center; border-radius: 50%; color: #cbd5d1; background: rgba(255,255,255,.08); font-size: 19px; line-height: 1; text-align: center; opacity: 1; }
     .settings-nav:hover, .settings-nav.active { background: var(--mint); color: #fff; }
     .column-filter { position: relative; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
@@ -1078,28 +1095,43 @@
                 </div>
               </div>
             </div>
-            <div class="grid three">
-              <div><label>Month</label><select id="leadMonthFilter"></select></div>
-              <div><label>Sales</label><select id="leadSalesFilter"></select></div>
-              <div><label>Status</label><select id="leadFilterStatus"></select></div>
-              <div><label>Urgency</label><select id="leadFilterUrgency"></select></div>
-              <div><label>Search</label><input id="leadSearch" placeholder="Parent / child / phone"></div>
+            <div class="crm-toolbar">
+              <div class="field"><label>Month</label><select id="leadMonthFilter"></select></div>
+              <div class="field"><label>Salesperson</label><select id="leadSalesFilter"></select></div>
+              <div class="field"><label>Status</label><select id="leadFilterStatus"></select></div>
+              <div class="field search"><label>Search</label><input id="leadSearch" placeholder="Parent / child / phone"></div>
+              <div class="crm-toolbar-actions">
+                <div class="crm-menu-wrap" id="leadFiltersMenuWrap">
+                  <button type="button" class="btn ghost small" id="leadFiltersBtn">Filters</button>
+                  <div class="crm-menu-panel" id="leadFiltersPanel">
+                    <div class="row spread"><strong>CRM Filters</strong><button type="button" class="btn small ghost" id="clearLeadColumnFiltersBtn">Clear</button></div>
+                    <div class="crm-filter-grid" style="margin-top:10px;">
+                      <div><label>Urgency</label><select id="leadFilterUrgency"></select></div>
+                      <div><label>Child</label><input id="leadFilterChild" data-lead-column-filter placeholder="Child name"></div>
+                      <div><label>Parent / Phone</label><input id="leadFilterParent" data-lead-column-filter placeholder="Parent or phone"></div>
+                      <div><label>Subject</label><input id="leadFilterSubject" data-lead-column-filter placeholder="BC / BM / Phonics"></div>
+                      <div><label>Source</label><input id="leadFilterSource" data-lead-column-filter placeholder="Facebook Ads"></div>
+                      <div><label>Salesperson</label><input id="leadFilterSalesperson" data-lead-column-filter placeholder="Salesperson"></div>
+                      <div><label>Follow-up From</label><input id="leadFilterFollowFrom" data-lead-column-filter type="date"></div>
+                      <div><label>Follow-up To</label><input id="leadFilterFollowTo" data-lead-column-filter type="date"></div>
+                      <div><label>Assessment Date</label><input id="leadFilterAssessment" data-lead-column-filter type="date"></div>
+                      <div><label>Trial Date</label><input id="leadFilterTrial" data-lead-column-filter type="date"></div>
+                      <div><label>Package</label><input id="leadFilterPackage" data-lead-column-filter placeholder="Package"></div>
+                      <div><label>Notes</label><input id="leadFilterNotes" data-lead-column-filter placeholder="Keyword"></div>
+                      <div><label>Export From</label><input id="leadExportFromDate" type="date"></div>
+                      <div><label>Export To</label><input id="leadExportToDate" type="date"></div>
+                    </div>
+                    <div class="row" style="margin-top:10px;"><button class="btn ghost small" id="exportLeadListPdfBtn">Export PDF</button></div>
+                  </div>
+                </div>
+                <div class="crm-menu-wrap" id="leadColumnsMenuWrap">
+                  <button type="button" class="btn ghost small" id="leadColumnsBtn">Columns</button>
+                  <div class="crm-menu-panel" id="leadColumnsPanel"></div>
+                </div>
+                <button type="button" class="btn ghost small" id="exportLeadListCsvBtn">Export CSV</button>
+              </div>
             </div>
             <div class="sales-summary" id="leadMonthSummary"></div>
-            <div class="filter-panel">
-              <div class="row spread">
-                <div>
-                  <strong>Export CRM Lead List</strong>
-                  <div class="subtle">Choose when the leads were added. Current CRM filters are also applied.</div>
-                </div>
-                <button class="btn ghost" id="exportLeadListPdfBtn">Export PDF</button>
-              </div>
-              <div class="grid two" style="margin-top:12px; max-width:760px;">
-                <div><label>Leads Added From</label><input id="leadExportFromDate" type="date"></div>
-                <div><label>Leads Added To</label><input id="leadExportToDate" type="date"></div>
-              </div>
-            </div>
-            <div class="row" style="justify-content:flex-end; margin-top:10px;"><button class="btn small ghost" id="clearLeadColumnFiltersBtn">Clear Column Filters</button></div>
             <div class="reminder-panel" id="leadReminderBox"></div>
             <div id="leadList" class="list" style="margin-top:14px;"></div>
             <div class="row spread" id="leadPagination" style="margin-top:12px;"></div>
@@ -2600,6 +2632,28 @@
     let leadViewMode = uiStateGet("LeadViewMode", "table") || "table";
     let crmRenderAfterDataLoadNeeded = false;
     const expandedCrmLeadMonths = new Set([`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`]);
+    const CRM_LEAD_COLUMN_KEY = "CrmLeadVisibleColumns";
+    const CRM_LEAD_DEFAULT_COLUMNS = ["created", "child", "parent", "phone", "status", "salesperson", "nextFollowUp"];
+    const CRM_LEAD_COLUMNS = [
+      { key: "created", label: "Created Date" },
+      { key: "child", label: "Child", sortable: true },
+      { key: "parent", label: "Parent", sortable: true },
+      { key: "phone", label: "Phone" },
+      { key: "email", label: "Email" },
+      { key: "status", label: "Status" },
+      { key: "salesperson", label: "Assigned Salesperson" },
+      { key: "nextFollowUp", label: "Next Follow-up" },
+      { key: "source", label: "Source" },
+      { key: "remarks", label: "Remarks" },
+      { key: "subjects", label: "Subjects" },
+      { key: "urgency", label: "Urgency" },
+      { key: "assessment", label: "Assessment" },
+      { key: "trial", label: "Trial 1 / Trial 2" },
+      { key: "package", label: "Package" },
+      { key: "updated", label: "Latest Update" },
+      { key: "actions", label: "Actions" }
+    ];
+    let leadSortState = { key: "", direction: "" };
     let tutorLeadPage = 1;
     let tutorLeadViewMode = uiStateGet("TutorLeadViewMode", "table") || "table";
     let teacherListPage = 1;
@@ -10975,56 +11029,116 @@
       </div>`;
     }
 
+    function crmLeadSavedColumns() {
+      try {
+        const saved = JSON.parse(uiStateGet(CRM_LEAD_COLUMN_KEY, "[]") || "[]");
+        return Array.isArray(saved) ? saved.filter(key => CRM_LEAD_COLUMNS.some(column => column.key === key)) : [];
+      } catch (err) {
+        return [];
+      }
+    }
+
+    function crmLeadVisibleColumnKeys() {
+      const saved = crmLeadSavedColumns();
+      return saved.length ? saved : [...CRM_LEAD_DEFAULT_COLUMNS];
+    }
+
+    function setCrmLeadVisibleColumns(keys) {
+      const valid = [...new Set(keys)].filter(key => CRM_LEAD_COLUMNS.some(column => column.key === key));
+      uiStateSet(CRM_LEAD_COLUMN_KEY, JSON.stringify(valid.length ? valid : CRM_LEAD_DEFAULT_COLUMNS));
+      renderLeads();
+    }
+
+    function renderCrmLeadColumnControls() {
+      const box = $("leadColumnsPanel");
+      if (!box) return;
+      const visible = new Set(crmLeadVisibleColumnKeys());
+      box.innerHTML = `
+        <div class="row spread"><strong>Visible Columns</strong><span class="subtle">${visible.size}/${CRM_LEAD_COLUMNS.length}</span></div>
+        <div class="crm-column-grid">
+          ${CRM_LEAD_COLUMNS.map(column => `<label><input type="checkbox" data-crm-lead-column="${escapeHtml(column.key)}" ${visible.has(column.key) ? "checked" : ""}> ${escapeHtml(column.label)}</label>`).join("")}
+        </div>
+        <div class="row">
+          <button type="button" class="btn ghost small" id="leadColumnsSelectAllBtn">Select All</button>
+          <button type="button" class="btn ghost small" id="leadColumnsDefaultBtn">Reset to Default</button>
+        </div>`;
+      box.onchange = event => {
+        const checkbox = event.target.closest("[data-crm-lead-column]");
+        if (!checkbox) return;
+        const selected = [...box.querySelectorAll("[data-crm-lead-column]:checked")].map(input => input.dataset.crmLeadColumn);
+        setCrmLeadVisibleColumns(selected);
+      };
+      box.querySelector("#leadColumnsSelectAllBtn").onclick = () => setCrmLeadVisibleColumns(CRM_LEAD_COLUMNS.map(column => column.key));
+      box.querySelector("#leadColumnsDefaultBtn").onclick = () => setCrmLeadVisibleColumns(CRM_LEAD_DEFAULT_COLUMNS);
+    }
+
+    function leadSortIndicator(key) {
+      if (leadSortState.key !== key) return "↕";
+      return leadSortState.direction === "asc" ? "↑" : "↓";
+    }
+
+    function leadHeaderCell(column) {
+      if (column.sortable) {
+        return `<th data-crm-col="${escapeHtml(column.key)}"><button type="button" class="lead-sort-btn" data-lead-sort="${escapeHtml(column.key)}">${escapeHtml(column.label)} <span class="lead-sort-indicator">${leadSortIndicator(column.key)}</span></button></th>`;
+      }
+      return `<th data-crm-col="${escapeHtml(column.key)}">${escapeHtml(column.label)}</th>`;
+    }
+
     function leadTableHeaderHtml() {
-      const filterValue = id => escapeHtml($(id)?.value || "");
-      const filterBox = (key, label, body, active = false) => `<div class="column-filter ${openColumnFilterId === key ? "open" : ""}"><span>${escapeHtml(label)}</span><button type="button" class="column-filter-toggle ${active ? "active" : ""}" data-column-filter-toggle="${escapeHtml(key)}" title="Filter ${escapeHtml(label)}" aria-label="Filter ${escapeHtml(label)}">&#9662;</button><div class="column-filter-panel">${body}</div></div>`;
-      const textFilter = (id, label, placeholder) => filterBox(id, label, `<input id="${id}" data-lead-column-filter value="${filterValue(id)}" placeholder="${escapeHtml(placeholder)}">`, Boolean($(id)?.value));
-      return `<thead><tr>
-        <th>Created</th>
-        <th>${textFilter("leadFilterChild", "Child", "Child name")}</th>
-        <th>${textFilter("leadFilterParent", "Parent", "Parent / phone")}</th>
-        <th>${textFilter("leadFilterSubject", "Subjects", "Subject")}</th>
-        <th>${textFilter("leadFilterSource", "Source", "Source")}</th>
-        <th>${textFilter("leadFilterSalesperson", "Salesperson", "Salesperson")}</th>
-        <th>Status</th><th>Urgency</th>
-        <th>${filterBox("leadFollowUpFilters", "Next Follow-up", `<label>From</label><input id="leadFilterFollowFrom" data-lead-column-filter type="date" value="${filterValue("leadFilterFollowFrom")}"><label style="margin-top:8px;">To</label><input id="leadFilterFollowTo" data-lead-column-filter type="date" value="${filterValue("leadFilterFollowTo")}">`, Boolean($("leadFilterFollowFrom")?.value || $("leadFilterFollowTo")?.value))}</th>
-        <th>${filterBox("leadFilterAssessment", "Assessment Teacher / Slot", `<input id="leadFilterAssessment" data-lead-column-filter type="date" value="${filterValue("leadFilterAssessment")}">`, Boolean($("leadFilterAssessment")?.value))}</th>
-        <th>${filterBox("leadFilterTrial", "Trial 1 / Trial 2", `<input id="leadFilterTrial" data-lead-column-filter type="date" value="${filterValue("leadFilterTrial")}">`, Boolean($("leadFilterTrial")?.value))}</th>
-        <th>${textFilter("leadFilterPackage", "Package", "Package")}</th>
-        <th>Latest Update</th>
-        <th>${textFilter("leadFilterNotes", "Notes", "Keyword")}</th>
-        <th>Actions</th>
-      </tr></thead>`;
+      const visible = new Set(crmLeadVisibleColumnKeys());
+      const columns = CRM_LEAD_COLUMNS.filter(column => visible.has(column.key));
+      return `<thead><tr>${columns.map(leadHeaderCell).join("")}</tr></thead>`;
+    }
+
+    function leadRowCompare(a, b) {
+      if (!leadSortState.key) return leadAddedTime(b) - leadAddedTime(a) || leadLatestTime(b) - leadLatestTime(a);
+      const field = leadSortState.key === "child" ? "childName" : "parentName";
+      const compared = String(a[field] || "").localeCompare(String(b[field] || ""), undefined, { sensitivity: "base" });
+      const directional = leadSortState.direction === "desc" ? -compared : compared;
+      return directional || leadAddedTime(b) - leadAddedTime(a) || leadLatestTime(b) - leadLatestTime(a);
+    }
+
+    function leadSelectOptions(values, selected) {
+      return values.map(value => `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(value)}</option>`).join("");
+    }
+
+    function leadTableCellHtml(columnKey, lead) {
+      const statusOptions = leadSelectOptions(LEAD_STATUSES, lead.status || "New Contact");
+      const urgencyOptions = leadSelectOptions(URGENCIES, lead.urgency || "warm");
+      const id = escapeHtml(lead.id);
+      const cell = {
+        created: `<td data-crm-col="created"><input type="date" value="${escapeHtml(leadAddedDate(lead))}" data-lead-quick="${id}|createdAt"></td>`,
+        child: `<td data-crm-col="child"><input value="${escapeHtml(lead.childName || "")}" data-lead-quick="${id}|childName" placeholder="Child name"><input value="${escapeHtml(lead.childAge || "")}" data-lead-quick="${id}|childAge" placeholder="Age / year" style="margin-top:5px;"></td>`,
+        parent: `<td data-crm-col="parent"><input value="${escapeHtml(lead.parentName || "")}" data-lead-quick="${id}|parentName" placeholder="Parent name"></td>`,
+        phone: `<td data-crm-col="phone"><input value="${escapeHtml(lead.parentPhone || "")}" data-lead-quick="${id}|parentPhone" placeholder="Phone / WhatsApp"></td>`,
+        email: `<td data-crm-col="email"><span class="subtle">${escapeHtml(lead.parentEmail || lead.email || "-")}</span></td>`,
+        status: `<td data-crm-col="status"><select data-lead-quick="${id}|status">${statusOptions}</select></td>`,
+        salesperson: `<td data-crm-col="salesperson"><input value="${escapeHtml(lead.salesperson || "")}" data-lead-quick="${id}|salesperson" placeholder="Salesperson"></td>`,
+        nextFollowUp: `<td data-crm-col="nextFollowUp"><input type="date" value="${escapeHtml(lead.nextFollowUp || "")}" data-lead-quick="${id}|nextFollowUp">${lead.followUpAuto ? `<span class="subtle">Auto-generated</span>` : ""}</td>`,
+        source: `<td data-crm-col="source"><input value="${escapeHtml(lead.source || "")}" data-lead-quick="${id}|source" placeholder="Source"></td>`,
+        remarks: `<td data-crm-col="remarks" style="min-width:220px;"><textarea data-lead-quick="${id}|notes" placeholder="Notes">${escapeHtml(lead.notes || "")}</textarea></td>`,
+        subjects: `<td data-crm-col="subjects"><input value="${escapeHtml((lead.subjects || []).join(", "))}" data-lead-quick="${id}|subjects" placeholder="BC, BM"></td>`,
+        urgency: `<td data-crm-col="urgency"><select data-lead-quick="${id}|urgency">${urgencyOptions}</select></td>`,
+        assessment: `<td data-crm-col="assessment">${crmSessionEditorHtml(lead, "assessment", "Assessment")}</td>`,
+        trial: `<td data-crm-col="trial">${crmSessionEditorHtml(lead, "trial1", "Trial 1")}${crmSessionEditorHtml(lead, "trial2", "Trial 2")}</td>`,
+        package: `<td data-crm-col="package"><input value="${escapeHtml(lead.packageInterested || "")}" data-lead-quick="${id}|packageInterested" placeholder="Package"></td>`,
+        updated: `<td data-crm-col="updated">${escapeHtml(dateOnly(lead.updatedAt))}</td>`,
+        actions: `<td data-crm-col="actions"><div class="row"><button class="btn small ghost" data-edit-lead="${id}">Full Profile</button><button class="btn small ghost" data-archive-lead="${id}">Archive</button></div></td>`
+      };
+      return cell[columnKey] || "";
     }
 
     function leadTableRowHtml(lead, index = 0) {
-      const statusOptions = LEAD_STATUSES.map(status => `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`).join("");
-      const urgencyOptions = URGENCIES.map(urgency => `<option value="${escapeHtml(urgency)}">${escapeHtml(urgency)}</option>`).join("");
       lead.id ||= stableLeadId(lead, index);
-      return `
-        <tr>
-          <td><input type="date" value="${escapeHtml(leadAddedDate(lead))}" data-lead-quick="${escapeHtml(lead.id)}|createdAt"></td>
-          <td><input value="${escapeHtml(lead.childName || "")}" data-lead-quick="${escapeHtml(lead.id)}|childName" placeholder="Child name"><input value="${escapeHtml(lead.childAge || "")}" data-lead-quick="${escapeHtml(lead.id)}|childAge" placeholder="Age / year" style="margin-top:5px;"></td>
-          <td><input value="${escapeHtml(lead.parentName || "")}" data-lead-quick="${escapeHtml(lead.id)}|parentName" placeholder="Parent name"><input value="${escapeHtml(lead.parentPhone || "")}" data-lead-quick="${escapeHtml(lead.id)}|parentPhone" placeholder="Phone / WhatsApp" style="margin-top:5px;"></td>
-          <td><input value="${escapeHtml((lead.subjects || []).join(", "))}" data-lead-quick="${escapeHtml(lead.id)}|subjects" placeholder="BC, BM"></td>
-          <td><input value="${escapeHtml(lead.source || "")}" data-lead-quick="${escapeHtml(lead.id)}|source" placeholder="Source"></td>
-          <td><input value="${escapeHtml(lead.salesperson || "")}" data-lead-quick="${escapeHtml(lead.id)}|salesperson" placeholder="Salesperson"></td>
-          <td><select data-lead-quick="${escapeHtml(lead.id)}|status">${statusOptions}</select></td>
-          <td><select data-lead-quick="${escapeHtml(lead.id)}|urgency">${urgencyOptions}</select></td>
-          <td><input type="date" value="${escapeHtml(lead.nextFollowUp || "")}" data-lead-quick="${escapeHtml(lead.id)}|nextFollowUp">${lead.followUpAuto ? `<span class="subtle">Auto-generated</span>` : ""}</td>
-          <td>${crmSessionEditorHtml(lead, "assessment", "Assessment")}</td>
-          <td>${crmSessionEditorHtml(lead, "trial1", "Trial 1")}${crmSessionEditorHtml(lead, "trial2", "Trial 2")}</td>
-          <td><input value="${escapeHtml(lead.packageInterested || "")}" data-lead-quick="${escapeHtml(lead.id)}|packageInterested" placeholder="Package"></td>
-          <td>${escapeHtml(dateOnly(lead.updatedAt))}</td>
-          <td style="min-width:220px;"><textarea data-lead-quick="${escapeHtml(lead.id)}|notes" placeholder="Notes">${escapeHtml(lead.notes || "")}</textarea></td>
-          <td><div class="row"><button class="btn small ghost" data-edit-lead="${escapeHtml(lead.id)}">Full Profile</button><button class="btn small ghost" data-archive-lead="${escapeHtml(lead.id)}">Archive</button></div></td>
-        </tr>`;
+      const visible = crmLeadVisibleColumnKeys();
+      return `<tr>${visible.map(key => leadTableCellHtml(key, lead)).join("")}</tr>`;
     }
 
     function groupedLeadTableRows(leads) {
       const currentMonthKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
       const selectedMonth = $("leadMonthFilter")?.value || "all";
       const rowLimit = scrollRenderLimits.crmLeads || SCROLL_RENDER_BATCH;
+      const colspan = Math.max(1, crmLeadVisibleColumnKeys().length);
       let renderedRows = 0;
       const monthGroups = new Map();
       leads.forEach((lead, index) => {
@@ -11044,27 +11158,27 @@
           const body = expanded ? [...dateGroups.entries()]
             .sort(([a], [b]) => b.localeCompare(a))
             .map(([dateKey, rows]) => {
-              const sortedRows = rows.sort((a, b) => leadAddedTime(b) - leadAddedTime(a) || leadLatestTime(b) - leadLatestTime(a));
+              const sortedRows = rows.sort(leadRowCompare);
               const remaining = Math.max(0, rowLimit - renderedRows);
               const visibleRows = sortedRows.slice(0, remaining);
               renderedRows += visibleRows.length;
               if (!visibleRows.length) return "";
               return `
-                <tr class="crm-date-row"><td colspan="15">${escapeHtml(formatDateFromAny(dateKey))}<span>${rows.length} lead${rows.length === 1 ? "" : "s"}</span></td></tr>
+                <tr class="crm-date-row"><td colspan="${colspan}"><span>${escapeHtml(formatDateFromAny(dateKey))} · ${rows.length} lead${rows.length === 1 ? "" : "s"}</span></td></tr>
                 ${visibleRows.map((lead, index) => leadTableRowHtml(lead, index)).join("")}
               `;
             }).join("") : "";
           return `
             <tr class="crm-month-row">
-              <td colspan="15">
+              <td colspan="${colspan}">
                 <button type="button" class="crm-month-header" data-crm-month-toggle="${escapeHtml(monthKey)}">
-                  <span><strong>${escapeHtml(monthKeyLabel(monthKey))}</strong><br>${monthCount} lead${monthCount === 1 ? "" : "s"} loaded in this view</span>
-                  <span class="chevron">${expanded ? "⌃" : "⌄"}</span>
+                  <span><strong>${escapeHtml(monthKeyLabel(monthKey))} · ${monthCount} lead${monthCount === 1 ? "" : "s"}</strong></span>
+                  <span class="chevron">${expanded ? "Collapse" : "Expand"}</span>
                 </button>
               </td>
             </tr>
             ${body}`;
-        }).join("") || `<tr><td colspan="15">No matching leads.</td></tr>`;
+        }).join("") || `<tr><td colspan="${colspan}">No matching leads.</td></tr>`;
     }
 
     function renderLeadTable(leads) {
@@ -11104,6 +11218,7 @@
 
     function renderCrmLeadsLoadingState() {
       leadViewMode = "table";
+      renderCrmLeadColumnControls();
       $("leadCardViewBtn").classList.toggle("active", leadViewMode === "cards");
       $("leadCardViewBtn").classList.toggle("ghost", leadViewMode !== "cards");
       $("leadTableViewBtn").classList.toggle("active", leadViewMode === "table");
@@ -11226,6 +11341,7 @@
       }
       leadViewMode = "table";
       syncLeadGroupingFilters();
+      renderCrmLeadColumnControls();
       const allLeads = filteredLeads();
       scrollLimitedRows("crmLeads", allLeads);
       $("leadCardViewBtn").classList.toggle("active", leadViewMode === "cards");
@@ -13249,7 +13365,6 @@
 
     function setupCompactSearchFields() {
       [
-        ["leadSearch", "Search CRM leads"],
         ["tutorLeadSearch", "Search tutor leads"],
         ["teacherCardSearch", "Search teachers"],
         ["teacherDirectorySearch", "Search teacher directory"],
@@ -17614,6 +17729,26 @@
     ["leadMonthFilter", "leadSalesFilter", "leadFilterStatus", "leadFilterUrgency"].forEach(id => $(id).addEventListener("change", resetLeadPageAndRender));
     $("leadSearch").addEventListener("input", resetLeadPageAndRender);
     document.addEventListener("click", event => {
+      const crmMenuButton = event.target.closest("#leadFiltersBtn, #leadColumnsBtn");
+      if (crmMenuButton) {
+        const targetWrap = crmMenuButton.id === "leadFiltersBtn" ? $("leadFiltersMenuWrap") : $("leadColumnsMenuWrap");
+        document.querySelectorAll(".crm-menu-wrap.open").forEach(menu => {
+          if (menu !== targetWrap) menu.classList.remove("open");
+        });
+        targetWrap?.classList.toggle("open");
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      const leadSortButton = event.target.closest("[data-lead-sort]");
+      if (leadSortButton) {
+        const key = leadSortButton.dataset.leadSort;
+        if (leadSortState.key !== key) leadSortState = { key, direction: "asc" };
+        else if (leadSortState.direction === "asc") leadSortState.direction = "desc";
+        else leadSortState = { key: "", direction: "" };
+        resetLeadPageAndRender();
+        return;
+      }
       const crmMonthToggle = event.target.closest("[data-crm-month-toggle]");
       if (crmMonthToggle) {
         const monthKey = crmMonthToggle.dataset.crmMonthToggle;
@@ -17626,6 +17761,9 @@
         }
         renderLeads();
         return;
+      }
+      if (!event.target.closest(".crm-menu-wrap")) {
+        document.querySelectorAll(".crm-menu-wrap.open").forEach(menu => menu.classList.remove("open"));
       }
       const toggle = event.target.closest("[data-column-filter-toggle]");
       if (toggle) {
@@ -17851,6 +17989,14 @@
     $("exportTeachersPdfBtn").onclick = () => openPrintReport("Class One Teachers", ["No.", "Name", "Subjects", "Category", "Tier", "Rate", "Profit Share", "Regular Slots", "Date Slots", "Feedback Count", "Latest Feedback"], numbered(teacherExportRows()));
     $("exportTeacherDirectoryCsvBtn").onclick = () => downloadCsv("class-one-teacher-directory.csv", ["No.", "Teacher Name", "Subjects Covered", "Internal Remark", "Email", "Contact Number", "Zoom ID", "Zoom Link", "Teacher View Link"], numbered(teacherDirectoryExportRows()));
     $("exportTeacherDirectoryPdfBtn").onclick = () => openPrintReport("Class One Teacher Directory", ["No.", "Teacher Name", "Subjects Covered", "Internal Remark", "Email", "Contact Number", "Zoom ID", "Zoom Link", "Teacher View Link"], numbered(teacherDirectoryExportRows()), true);
+    $("exportLeadListCsvBtn").onclick = () => {
+      try {
+        downloadCsv("class-one-crm-lead-list.csv", ["No.", "Added", "Child", "Parent / Phone", "Subjects", "Source", "Salesperson", "Status", "Urgency", "Next Follow-up", "Assessment", "Trial 1 / 2", "Notes"], numbered(crmLeadListExportRows()));
+      } catch (error) {
+        setStatus(`CRM lead CSV export failed: ${error.message}`, "error");
+        alert(error.message);
+      }
+    };
     $("exportLeadListPdfBtn").onclick = () => {
       try {
         const rows = crmLeadListExportRows();
