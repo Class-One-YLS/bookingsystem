@@ -11321,7 +11321,8 @@
       if (kind === "trial1" && !lead.trialTeacher2ManuallySet && !lead.trialBookingId2) lead.trialTeacherId2 = selection.teacherId;
       if (kind === "trial2" && field === "teacher") lead.trialTeacher2ManuallySet = true;
       lead.updatedAt = new Date().toISOString();
-      save(false);
+      save(false, { render: false });
+      renderLeads();
       autoPushCrmIfConfigured();
       setStatus(selection.teacherId && selection.date && selection.time
         ? `${kind === "assessment" ? "Assessment" : kind === "trial1" ? "Trial 1" : "Trial 2"} booked and CRM status updated.`
@@ -16933,7 +16934,8 @@
         logAction("CRM Lead Table Updated", lead.childName || lead.parentName || lead.parentPhone || "Lead", before, leadLogSummary(lead), `Changed ${field}.`);
         if (field === "status") handleLeadStatusChange(lead, previousStatus);
         if (["assessmentDate", "trialDate", "trialDate2"].includes(field) && lead.followUpAuto !== false) applyCrmAutomaticFollowUp(lead, true);
-        save(false);
+        save(false, { render: false });
+        renderLeads();
         autoPushCrmIfConfigured();
         return;
       }
