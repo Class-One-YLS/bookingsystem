@@ -706,7 +706,10 @@
     .lead-table [data-crm-col="parent"] { min-width: 190px; }
     .lead-table [data-crm-col="phone"] { min-width: 180px; }
     .lead-table [data-crm-col="nextFollowUp"] { min-width: 170px; }
+    #crm.tab:not(.hide) { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+    #crm > .panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
     .crm-lead-scroll { max-height: 660px; overflow: auto; overscroll-behavior: contain; padding-right: 4px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+    #crm #leadList.crm-lead-scroll { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
     .crm-lead-scroll > .table-wrap { max-height: none; overflow: visible; border: 0; border-radius: 0; }
     .crm-lead-month { border-bottom: 1px solid var(--line); background: #fff; }
     .crm-month-header { position: sticky; top: 0; z-index: 8; width: 100%; min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 12px; background: #f4fbf7; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); text-align: left; }
