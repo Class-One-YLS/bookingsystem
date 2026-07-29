@@ -702,6 +702,21 @@
     .lead-table td { vertical-align: top; }
     .lead-table th:nth-child(3), .lead-table td:nth-child(3) { min-width: 260px; }
     .lead-table td:nth-child(3) input { min-width: 230px; }
+    .crm-lead-scroll { max-height: 660px; overflow: auto; overscroll-behavior: contain; padding-right: 4px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+    .crm-lead-scroll > .table-wrap { max-height: none; overflow: visible; border: 0; border-radius: 0; }
+    .crm-lead-month { border-bottom: 1px solid var(--line); background: #fff; }
+    .crm-month-header { position: sticky; top: 0; z-index: 8; width: 100%; min-height: 50px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; background: #f4fbf7; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); text-align: left; }
+    .crm-month-header strong { font-size: 16px; }
+    .crm-month-header span { font-size: 12px; color: var(--muted); font-weight: 800; }
+    .crm-month-header .chevron { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 999px; background: #eaf3ee; color: var(--ink); font-size: 16px; }
+    .crm-date-group { padding: 10px 12px 16px; }
+    .crm-date-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 8px; color: var(--muted); font-size: 12px; font-weight: 900; text-transform: uppercase; }
+    .crm-grouped-leads .table-wrap { max-height: none; overflow-x: auto; overflow-y: visible; border-radius: 8px; }
+    .crm-grouped-leads .lead-table { margin: 0; }
+    .crm-grouped-leads .lead-table th { top: 50px; }
+    .lead-table .crm-month-row td { position: sticky; top: 42px; z-index: 3; padding: 0; background: #f4fbf7; }
+    .lead-table .crm-date-row td { background: #fbfdfc; color: var(--muted); font-size: 11px; font-weight: 900; text-transform: uppercase; }
+    .lead-table .crm-date-row span { float: right; text-transform: none; font-weight: 800; }
     .settings-nav { width: 36px; height: 36px; min-height: 36px; padding: 0; margin: 0; display: grid; place-items: center; border-radius: 50%; color: #cbd5d1; background: rgba(255,255,255,.08); font-size: 19px; line-height: 1; text-align: center; opacity: 1; }
     .settings-nav:hover, .settings-nav.active { background: var(--mint); color: #fff; }
     .column-filter { position: relative; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
@@ -1064,10 +1079,13 @@
               </div>
             </div>
             <div class="grid three">
+              <div><label>Month</label><select id="leadMonthFilter"></select></div>
+              <div><label>Sales</label><select id="leadSalesFilter"></select></div>
               <div><label>Status</label><select id="leadFilterStatus"></select></div>
               <div><label>Urgency</label><select id="leadFilterUrgency"></select></div>
               <div><label>Search</label><input id="leadSearch" placeholder="Parent / child / phone"></div>
             </div>
+            <div class="sales-summary" id="leadMonthSummary"></div>
             <div class="filter-panel">
               <div class="row spread">
                 <div>
@@ -2581,6 +2599,7 @@
     let leadPage = 1;
     let leadViewMode = uiStateGet("LeadViewMode", "table") || "table";
     let crmRenderAfterDataLoadNeeded = false;
+    const expandedCrmLeadMonths = new Set([`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`]);
     let tutorLeadPage = 1;
     let tutorLeadViewMode = uiStateGet("TutorLeadViewMode", "table") || "table";
     let teacherListPage = 1;
@@ -5094,6 +5113,7 @@
       fillSelect($("leadUrgency"), URGENCIES);
       fillSelect($("leadFilterStatus"), LEAD_STATUSES, "All Status");
       fillSelect($("leadFilterUrgency"), URGENCIES, "All Urgency");
+      syncLeadGroupingFilters();
       fillSelect($("feedbackCategory"), TEACHER_FEEDBACK_CATEGORIES.map(value => ({ value, label: value.replace(/\b\w/g, char => char.toUpperCase()) })));
       fillSelect($("feedbackActionStatus"), TEACHER_FEEDBACK_STATUSES);
       fillSelect($("outcomeFeedbackCategory"), TEACHER_FEEDBACK_CATEGORIES.map(value => ({ value, label: value.replace(/\b\w/g, char => char.toUpperCase()) })));
@@ -10526,7 +10546,52 @@
       return Boolean(cutoff && created && created < cutoff);
     }
 
+    function leadAddedDate(lead) {
+      return dateOnly(lead?.createdAt || lead?.addedAt || lead?.updatedAt || todayISO());
+    }
+
+    function leadAddedMonthKey(lead) {
+      const date = leadAddedDate(lead);
+      return date ? date.slice(0, 7) : "";
+    }
+
+    function leadAddedTime(lead) {
+      return activityTime(lead?.createdAt || lead?.addedAt || lead?.updatedAt) || 0;
+    }
+
+    function monthKeyLabel(key) {
+      const [year, month] = String(key || "").split("-").map(Number);
+      if (!year || !month) return "No Added Month";
+      return new Date(year, month - 1, 1).toLocaleString("en", { month: "long", year: "numeric" });
+    }
+
+    function leadSalespersonKey(lead) {
+      return String(lead?.salesperson || "").trim();
+    }
+
+    function syncLeadGroupingFilters() {
+      const monthSelect = $("leadMonthFilter");
+      const salesSelect = $("leadSalesFilter");
+      if (!monthSelect || !salesSelect) return;
+      const selectedMonth = monthSelect.value || "all";
+      const selectedSales = salesSelect.value || "all";
+      const activeLeads = (state.leads || []).filter(lead => !lead.archived && !isOldImportedLead(lead));
+      const monthOptions = [...new Set(activeLeads.map(leadAddedMonthKey).filter(Boolean))]
+        .sort((a, b) => b.localeCompare(a))
+        .map(key => ({ value: key, label: monthKeyLabel(key) }));
+      const salesOptions = [...new Set(activeLeads.map(leadSalespersonKey).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b))
+        .map(name => ({ value: name, label: name }));
+      fillSelect(monthSelect, monthOptions, "All Months");
+      fillSelect(salesSelect, salesOptions, "All Sales");
+      monthSelect.value = selectedMonth === "all" || monthOptions.some(item => item.value === selectedMonth) ? selectedMonth : "all";
+      salesSelect.value = selectedSales === "all" || salesOptions.some(item => item.value === selectedSales) ? selectedSales : "all";
+      if (monthSelect.value !== "all") expandedCrmLeadMonths.add(monthSelect.value);
+    }
+
     function leadMatchesCurrentFilters(lead) {
+      const monthFilter = $("leadMonthFilter")?.value || "all";
+      const salesFilter = $("leadSalesFilter")?.value || "all";
       const status = $("leadFilterStatus").value;
       const urgency = $("leadFilterUrgency").value;
       const search = $("leadSearch").value.trim().toLowerCase();
@@ -10543,6 +10608,8 @@
       const assessment = $("leadFilterAssessment")?.value || "";
       const trial = $("leadFilterTrial")?.value || "";
       return (!lead.archived)
+        && (monthFilter === "all" || leadAddedMonthKey(lead) === monthFilter)
+        && (salesFilter === "all" || leadSalespersonKey(lead) === salesFilter)
         && (status === "all" || lead.status === status)
         && (urgency === "all" || lead.urgency === urgency)
         && (!search || [lead.parentName, lead.parentPhone, lead.childName, lead.source, lead.salesperson].some(v => String(v || "").toLowerCase().includes(search)))
@@ -10563,7 +10630,7 @@
       return state.leads
         .filter(lead => leadMatchesCurrentFilters(lead))
         .filter(lead => !isOldImportedLead(lead))
-        .sort((a, b) => leadLatestTime(b) - leadLatestTime(a));
+        .sort((a, b) => leadAddedTime(b) - leadAddedTime(a) || leadLatestTime(b) - leadLatestTime(a));
     }
 
     function filteredOldImportedLeads() {
@@ -10908,34 +10975,11 @@
       </div>`;
     }
 
-    function renderLeadTable(leads) {
-      const statusOptions = LEAD_STATUSES.map(status => `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`).join("");
-      const urgencyOptions = URGENCIES.map(urgency => `<option value="${escapeHtml(urgency)}">${escapeHtml(urgency)}</option>`).join("");
+    function leadTableHeaderHtml() {
       const filterValue = id => escapeHtml($(id)?.value || "");
       const filterBox = (key, label, body, active = false) => `<div class="column-filter ${openColumnFilterId === key ? "open" : ""}"><span>${escapeHtml(label)}</span><button type="button" class="column-filter-toggle ${active ? "active" : ""}" data-column-filter-toggle="${escapeHtml(key)}" title="Filter ${escapeHtml(label)}" aria-label="Filter ${escapeHtml(label)}">&#9662;</button><div class="column-filter-panel">${body}</div></div>`;
       const textFilter = (id, label, placeholder) => filterBox(id, label, `<input id="${id}" data-lead-column-filter value="${filterValue(id)}" placeholder="${escapeHtml(placeholder)}">`, Boolean($(id)?.value));
-      const rows = leads.map((lead, index) => {
-        lead.id ||= stableLeadId(lead, index);
-        return `
-        <tr>
-          <td><input type="date" value="${escapeHtml(dateOnly(lead.createdAt))}" data-lead-quick="${lead.id}|createdAt"></td>
-          <td><input value="${escapeHtml(lead.childName || "")}" data-lead-quick="${lead.id}|childName" placeholder="Child name"><input value="${escapeHtml(lead.childAge || "")}" data-lead-quick="${lead.id}|childAge" placeholder="Age / year" style="margin-top:5px;"></td>
-          <td><input value="${escapeHtml(lead.parentName || "")}" data-lead-quick="${lead.id}|parentName" placeholder="Parent name"><input value="${escapeHtml(lead.parentPhone || "")}" data-lead-quick="${lead.id}|parentPhone" placeholder="Phone / WhatsApp" style="margin-top:5px;"></td>
-          <td><input value="${escapeHtml((lead.subjects || []).join(", "))}" data-lead-quick="${lead.id}|subjects" placeholder="BC, BM"></td>
-          <td><input value="${escapeHtml(lead.source || "")}" data-lead-quick="${lead.id}|source" placeholder="Source"></td>
-          <td><input value="${escapeHtml(lead.salesperson || "")}" data-lead-quick="${lead.id}|salesperson" placeholder="Salesperson"></td>
-          <td><select data-lead-quick="${lead.id}|status">${statusOptions}</select></td>
-          <td><select data-lead-quick="${lead.id}|urgency">${urgencyOptions}</select></td>
-          <td><input type="date" value="${escapeHtml(lead.nextFollowUp || "")}" data-lead-quick="${lead.id}|nextFollowUp">${lead.followUpAuto ? `<span class="subtle">Auto-generated</span>` : ""}</td>
-          <td>${crmSessionEditorHtml(lead, "assessment", "Assessment")}</td>
-          <td>${crmSessionEditorHtml(lead, "trial1", "Trial 1")}${crmSessionEditorHtml(lead, "trial2", "Trial 2")}</td>
-          <td><input value="${escapeHtml(lead.packageInterested || "")}" data-lead-quick="${lead.id}|packageInterested" placeholder="Package"></td>
-          <td>${escapeHtml(dateOnly(lead.updatedAt))}</td>
-          <td style="min-width:220px;"><textarea data-lead-quick="${lead.id}|notes" placeholder="Notes">${escapeHtml(lead.notes || "")}</textarea></td>
-          <td><div class="row"><button class="btn small ghost" data-edit-lead="${lead.id}">Full Profile</button><button class="btn small ghost" data-archive-lead="${lead.id}">Archive</button></div></td>
-        </tr>`;
-      }).join("") || `<tr><td colspan="15">No matching leads.</td></tr>`;
-      return `<div class="table-wrap"><table class="lead-table"><thead><tr>
+      return `<thead><tr>
         <th>Created</th>
         <th>${textFilter("leadFilterChild", "Child", "Child name")}</th>
         <th>${textFilter("leadFilterParent", "Parent", "Parent / phone")}</th>
@@ -10950,10 +10994,116 @@
         <th>Latest Update</th>
         <th>${textFilter("leadFilterNotes", "Notes", "Keyword")}</th>
         <th>Actions</th>
-      </tr></thead><tbody>${rows}</tbody></table></div>`;
+      </tr></thead>`;
+    }
+
+    function leadTableRowHtml(lead, index = 0) {
+      const statusOptions = LEAD_STATUSES.map(status => `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`).join("");
+      const urgencyOptions = URGENCIES.map(urgency => `<option value="${escapeHtml(urgency)}">${escapeHtml(urgency)}</option>`).join("");
+      lead.id ||= stableLeadId(lead, index);
+      return `
+        <tr>
+          <td><input type="date" value="${escapeHtml(leadAddedDate(lead))}" data-lead-quick="${escapeHtml(lead.id)}|createdAt"></td>
+          <td><input value="${escapeHtml(lead.childName || "")}" data-lead-quick="${escapeHtml(lead.id)}|childName" placeholder="Child name"><input value="${escapeHtml(lead.childAge || "")}" data-lead-quick="${escapeHtml(lead.id)}|childAge" placeholder="Age / year" style="margin-top:5px;"></td>
+          <td><input value="${escapeHtml(lead.parentName || "")}" data-lead-quick="${escapeHtml(lead.id)}|parentName" placeholder="Parent name"><input value="${escapeHtml(lead.parentPhone || "")}" data-lead-quick="${escapeHtml(lead.id)}|parentPhone" placeholder="Phone / WhatsApp" style="margin-top:5px;"></td>
+          <td><input value="${escapeHtml((lead.subjects || []).join(", "))}" data-lead-quick="${escapeHtml(lead.id)}|subjects" placeholder="BC, BM"></td>
+          <td><input value="${escapeHtml(lead.source || "")}" data-lead-quick="${escapeHtml(lead.id)}|source" placeholder="Source"></td>
+          <td><input value="${escapeHtml(lead.salesperson || "")}" data-lead-quick="${escapeHtml(lead.id)}|salesperson" placeholder="Salesperson"></td>
+          <td><select data-lead-quick="${escapeHtml(lead.id)}|status">${statusOptions}</select></td>
+          <td><select data-lead-quick="${escapeHtml(lead.id)}|urgency">${urgencyOptions}</select></td>
+          <td><input type="date" value="${escapeHtml(lead.nextFollowUp || "")}" data-lead-quick="${escapeHtml(lead.id)}|nextFollowUp">${lead.followUpAuto ? `<span class="subtle">Auto-generated</span>` : ""}</td>
+          <td>${crmSessionEditorHtml(lead, "assessment", "Assessment")}</td>
+          <td>${crmSessionEditorHtml(lead, "trial1", "Trial 1")}${crmSessionEditorHtml(lead, "trial2", "Trial 2")}</td>
+          <td><input value="${escapeHtml(lead.packageInterested || "")}" data-lead-quick="${escapeHtml(lead.id)}|packageInterested" placeholder="Package"></td>
+          <td>${escapeHtml(dateOnly(lead.updatedAt))}</td>
+          <td style="min-width:220px;"><textarea data-lead-quick="${escapeHtml(lead.id)}|notes" placeholder="Notes">${escapeHtml(lead.notes || "")}</textarea></td>
+          <td><div class="row"><button class="btn small ghost" data-edit-lead="${escapeHtml(lead.id)}">Full Profile</button><button class="btn small ghost" data-archive-lead="${escapeHtml(lead.id)}">Archive</button></div></td>
+        </tr>`;
+    }
+
+    function groupedLeadTableRows(leads) {
+      const currentMonthKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+      const selectedMonth = $("leadMonthFilter")?.value || "all";
+      const rowLimit = scrollRenderLimits.crmLeads || SCROLL_RENDER_BATCH;
+      let renderedRows = 0;
+      const monthGroups = new Map();
+      leads.forEach((lead, index) => {
+        lead.id ||= stableLeadId(lead, index);
+        const monthKey = leadAddedMonthKey(lead) || "unknown";
+        const dateKey = leadAddedDate(lead) || "unknown";
+        if (!monthGroups.has(monthKey)) monthGroups.set(monthKey, new Map());
+        const dateGroups = monthGroups.get(monthKey);
+        if (!dateGroups.has(dateKey)) dateGroups.set(dateKey, []);
+        dateGroups.get(dateKey).push(lead);
+      });
+      return [...monthGroups.entries()]
+        .sort(([a], [b]) => b.localeCompare(a))
+        .map(([monthKey, dateGroups]) => {
+          const monthCount = [...dateGroups.values()].reduce((sum, rows) => sum + rows.length, 0);
+          const expanded = selectedMonth !== "all" || expandedCrmLeadMonths.has(monthKey) || (monthKey === currentMonthKey && !expandedCrmLeadMonths.has(`closed:${monthKey}`));
+          const body = expanded ? [...dateGroups.entries()]
+            .sort(([a], [b]) => b.localeCompare(a))
+            .map(([dateKey, rows]) => {
+              const sortedRows = rows.sort((a, b) => leadAddedTime(b) - leadAddedTime(a) || leadLatestTime(b) - leadLatestTime(a));
+              const remaining = Math.max(0, rowLimit - renderedRows);
+              const visibleRows = sortedRows.slice(0, remaining);
+              renderedRows += visibleRows.length;
+              if (!visibleRows.length) return "";
+              return `
+                <tr class="crm-date-row"><td colspan="15">${escapeHtml(formatDateFromAny(dateKey))}<span>${rows.length} lead${rows.length === 1 ? "" : "s"}</span></td></tr>
+                ${visibleRows.map((lead, index) => leadTableRowHtml(lead, index)).join("")}
+              `;
+            }).join("") : "";
+          return `
+            <tr class="crm-month-row">
+              <td colspan="15">
+                <button type="button" class="crm-month-header" data-crm-month-toggle="${escapeHtml(monthKey)}">
+                  <span><strong>${escapeHtml(monthKeyLabel(monthKey))}</strong><br>${monthCount} lead${monthCount === 1 ? "" : "s"} loaded in this view</span>
+                  <span class="chevron">${expanded ? "⌃" : "⌄"}</span>
+                </button>
+              </td>
+            </tr>
+            ${body}`;
+        }).join("") || `<tr><td colspan="15">No matching leads.</td></tr>`;
+    }
+
+    function renderLeadTable(leads) {
+      return `<div class="table-wrap"><table class="lead-table">${leadTableHeaderHtml()}<tbody>${groupedLeadTableRows(leads)}</tbody></table></div>`;
+    }
+
+    function crmSummaryTargetMonth() {
+      const selected = $("leadMonthFilter")?.value || "all";
+      if (selected !== "all") return selected;
+      return `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+    }
+
+    function renderLeadMonthSummary() {
+      const box = $("leadMonthSummary");
+      if (!box) return;
+      const monthKey = crmSummaryTargetMonth();
+      const salesFilter = $("leadSalesFilter")?.value || "all";
+      const leads = (state.leads || [])
+        .filter(lead => !lead.archived)
+        .filter(lead => !isOldImportedLead(lead))
+        .filter(lead => leadAddedMonthKey(lead) === monthKey)
+        .filter(lead => salesFilter === "all" || leadSalespersonKey(lead) === salesFilter);
+      const status = lead => lead.status || "New Contact";
+      const contacted = leads.filter(lead => status(lead) !== "New Contact").length;
+      const trialBooked = leads.filter(lead => status(lead) === "Trial Class" || lead.trialDate || lead.trialDate2 || lead.trialBookingId || lead.trialBookingId2).length;
+      const enrolled = leads.filter(lead => status(lead) === "Enrolled").length;
+      const pending = leads.filter(lead => !["Enrolled", "Lost", "Not Interested"].includes(status(lead))).length;
+      const card = (label, value) => `<div class="metric"><span class="subtle">${escapeHtml(label)}</span><strong>${value}</strong><span class="subtle">${escapeHtml(monthKeyLabel(monthKey))}${salesFilter !== "all" ? ` | ${escapeHtml(salesFilter)}` : ""}</span></div>`;
+      box.innerHTML = [
+        card("Total Leads", leads.length),
+        card("Contacted", contacted),
+        card("Trial Booked", trialBooked),
+        card("Enrolled", enrolled),
+        card("Pending", pending)
+      ].join("");
     }
 
     function renderCrmLeadsLoadingState() {
+      leadViewMode = "table";
       $("leadCardViewBtn").classList.toggle("active", leadViewMode === "cards");
       $("leadCardViewBtn").classList.toggle("ghost", leadViewMode !== "cards");
       $("leadTableViewBtn").classList.toggle("active", leadViewMode === "table");
@@ -10963,6 +11113,7 @@
         ? `<div class="table-wrap"><table class="lead-table"><tbody><tr><td>Loading CRM leads...</td></tr></tbody></table></div>`
         : `<div class="empty">Loading CRM leads...</div>`;
       $("leadPagination").innerHTML = "";
+      renderLeadMonthSummary();
       renderLeadReminders();
     }
 
@@ -11073,25 +11224,32 @@
         renderCrmLeadsLoadingState();
         return;
       }
+      leadViewMode = "table";
+      syncLeadGroupingFilters();
       const allLeads = filteredLeads();
-      const leads = scrollLimitedRows("crmLeads", allLeads);
+      scrollLimitedRows("crmLeads", allLeads);
       $("leadCardViewBtn").classList.toggle("active", leadViewMode === "cards");
       $("leadCardViewBtn").classList.toggle("ghost", leadViewMode !== "cards");
       $("leadTableViewBtn").classList.toggle("active", leadViewMode === "table");
       $("leadTableViewBtn").classList.toggle("ghost", leadViewMode !== "table");
       $("leadList").classList.toggle("list", leadViewMode === "cards");
-      $("leadList").innerHTML = leadViewMode === "table" ? renderLeadTable(leads) : renderLeadCards(leads);
+      $("leadList").classList.toggle("crm-lead-scroll", leadViewMode === "table");
+      $("leadList").classList.toggle("crm-grouped-leads", leadViewMode === "table");
+      $("leadList").classList.toggle("scroll-panel", leadViewMode === "table");
+      $("leadList").innerHTML = leadViewMode === "table" ? renderLeadTable(allLeads) : renderLeadCards(scrollLimitedRows("crmLeads", allLeads));
       $("leadPagination").innerHTML = "";
       bindScrollExpansion("leadList", "crmLeads", allLeads.length, renderLeads);
       if (leadViewMode === "table") {
         const quickFields = [...document.querySelectorAll("[data-lead-quick]")];
-        leads.forEach(lead => {
-          const status = quickFields.find(field => field.dataset.leadQuick === `${lead.id}|status`);
-          const urgency = quickFields.find(field => field.dataset.leadQuick === `${lead.id}|urgency`);
-          if (status) status.value = lead.status || "New Contact";
-          if (urgency) urgency.value = lead.urgency || "warm";
+        quickFields.forEach(field => {
+          const [leadId, property] = String(field.dataset.leadQuick || "").split("|");
+          const lead = state.leads.find(item => String(item.id || "") === leadId);
+          if (!lead) return;
+          if (property === "status") field.value = lead.status || "New Contact";
+          if (property === "urgency") field.value = lead.urgency || "warm";
         });
       }
+      renderLeadMonthSummary();
       renderLeadReminders();
     }
 
@@ -17453,9 +17611,22 @@
       renderLeads();
       scrollToListStart("leadList");
     };
-    ["leadFilterStatus", "leadFilterUrgency"].forEach(id => $(id).addEventListener("change", resetLeadPageAndRender));
+    ["leadMonthFilter", "leadSalesFilter", "leadFilterStatus", "leadFilterUrgency"].forEach(id => $(id).addEventListener("change", resetLeadPageAndRender));
     $("leadSearch").addEventListener("input", resetLeadPageAndRender);
     document.addEventListener("click", event => {
+      const crmMonthToggle = event.target.closest("[data-crm-month-toggle]");
+      if (crmMonthToggle) {
+        const monthKey = crmMonthToggle.dataset.crmMonthToggle;
+        if (expandedCrmLeadMonths.has(monthKey)) {
+          expandedCrmLeadMonths.delete(monthKey);
+          expandedCrmLeadMonths.add(`closed:${monthKey}`);
+        } else {
+          expandedCrmLeadMonths.add(monthKey);
+          expandedCrmLeadMonths.delete(`closed:${monthKey}`);
+        }
+        renderLeads();
+        return;
+      }
       const toggle = event.target.closest("[data-column-filter-toggle]");
       if (toggle) {
         event.preventDefault();
