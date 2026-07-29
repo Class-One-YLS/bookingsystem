@@ -695,7 +695,7 @@
     #activityList, #publicHolidayCalendar, #teacherLeaveSummary { max-height: 620px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
     #activityList table { min-width: 1180px; }
     #publicHolidayCalendar, #teacherLeaveSummary { padding: 10px; }
-    .lead-table { min-width: 1320px; }
+    .lead-table { min-width: 2280px; }
     .lead-table th { position: sticky; top: 0; z-index: 2; background: #fff; }
     .lead-table select, .lead-table input { min-height: 32px; padding: 6px 8px; font-size: 12px; }
     .lead-table textarea { min-height: 64px; min-width: 190px; padding: 6px 8px; font-size: 12px; }
@@ -703,13 +703,21 @@
     .lead-table th:nth-child(3), .lead-table td:nth-child(3) { min-width: 260px; }
     .lead-table td:nth-child(3) input { min-width: 230px; }
     .lead-table [data-crm-col="child"] { min-width: 190px; }
-    .lead-table [data-crm-col="parent"] { min-width: 190px; }
+    .lead-table [data-crm-col="parent"] { min-width: 220px; }
     .lead-table [data-crm-col="phone"] { min-width: 180px; }
+    .lead-table [data-crm-col="subjects"] { min-width: 170px; }
+    .lead-table [data-crm-col="source"] { min-width: 150px; }
+    .lead-table [data-crm-col="salesperson"] { min-width: 160px; }
+    .lead-table [data-crm-col="status"] { min-width: 150px; }
+    .lead-table [data-crm-col="urgency"] { min-width: 130px; }
     .lead-table [data-crm-col="nextFollowUp"] { min-width: 170px; }
-    #crm.tab:not(.hide) { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-    #crm > .panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    .lead-table [data-crm-col="assessment"] { min-width: 280px; }
+    .lead-table [data-crm-col="trial"] { min-width: 340px; }
+    .lead-table [data-crm-col="package"] { min-width: 180px; }
+    #crm.tab:not(.hide) { display: block; min-height: 0; overflow: auto; }
+    #crm > .panel { min-height: 0; }
     .crm-lead-scroll { max-height: 660px; overflow: auto; overscroll-behavior: contain; padding-right: 4px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
-    #crm #leadList.crm-lead-scroll { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
+    #crm #leadList.crm-lead-scroll { min-height: 0; overflow-y: auto; }
     .crm-lead-scroll > .table-wrap { max-height: none; overflow: visible; border: 0; border-radius: 0; }
     .crm-lead-month { border-bottom: 1px solid var(--line); background: #fff; }
     .crm-month-header { position: sticky; top: 0; z-index: 8; width: 100%; min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 12px; background: #f4fbf7; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); text-align: left; }
@@ -2635,24 +2643,24 @@
     let leadViewMode = uiStateGet("LeadViewMode", "table") || "table";
     let crmRenderAfterDataLoadNeeded = false;
     const expandedCrmLeadMonths = new Set([`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`]);
-    const CRM_LEAD_COLUMN_KEY = "CrmLeadVisibleColumns";
-    const CRM_LEAD_DEFAULT_COLUMNS = ["created", "child", "parent", "phone", "status", "salesperson", "nextFollowUp"];
+    const CRM_LEAD_COLUMN_KEY = "CrmLeadVisibleColumns.RestoredOperationalV1";
+    const CRM_LEAD_DEFAULT_COLUMNS = ["created", "child", "parent", "subjects", "source", "salesperson", "status", "urgency", "nextFollowUp", "assessment", "trial", "package"];
     const CRM_LEAD_COLUMNS = [
-      { key: "created", label: "Created Date" },
+      { key: "created", label: "Created" },
       { key: "child", label: "Child", sortable: true },
       { key: "parent", label: "Parent", sortable: true },
-      { key: "phone", label: "Phone" },
-      { key: "email", label: "Email" },
-      { key: "status", label: "Status" },
-      { key: "salesperson", label: "Assigned Salesperson" },
-      { key: "nextFollowUp", label: "Next Follow-up" },
-      { key: "source", label: "Source" },
-      { key: "remarks", label: "Remarks" },
       { key: "subjects", label: "Subjects" },
+      { key: "source", label: "Source" },
+      { key: "salesperson", label: "Salesperson" },
+      { key: "status", label: "Status" },
       { key: "urgency", label: "Urgency" },
-      { key: "assessment", label: "Assessment" },
+      { key: "nextFollowUp", label: "Next Follow-up" },
+      { key: "assessment", label: "Assessment Teacher / Slot" },
       { key: "trial", label: "Trial 1 / Trial 2" },
       { key: "package", label: "Package" },
+      { key: "phone", label: "Phone" },
+      { key: "email", label: "Email" },
+      { key: "remarks", label: "Remarks" },
       { key: "updated", label: "Latest Update" },
       { key: "actions", label: "Actions" }
     ];
@@ -11112,7 +11120,7 @@
       const cell = {
         created: `<td data-crm-col="created"><input type="date" value="${escapeHtml(leadAddedDate(lead))}" data-lead-quick="${id}|createdAt"></td>`,
         child: `<td data-crm-col="child"><input value="${escapeHtml(lead.childName || "")}" data-lead-quick="${id}|childName" placeholder="Child name"><input value="${escapeHtml(lead.childAge || "")}" data-lead-quick="${id}|childAge" placeholder="Age / year" style="margin-top:5px;"></td>`,
-        parent: `<td data-crm-col="parent"><input value="${escapeHtml(lead.parentName || "")}" data-lead-quick="${id}|parentName" placeholder="Parent name"></td>`,
+        parent: `<td data-crm-col="parent"><input value="${escapeHtml(lead.parentName || "")}" data-lead-quick="${id}|parentName" placeholder="Parent name"><input value="${escapeHtml(lead.parentPhone || "")}" data-lead-quick="${id}|parentPhone" placeholder="Phone / WhatsApp" style="margin-top:5px;"></td>`,
         phone: `<td data-crm-col="phone"><input value="${escapeHtml(lead.parentPhone || "")}" data-lead-quick="${id}|parentPhone" placeholder="Phone / WhatsApp"></td>`,
         email: `<td data-crm-col="email"><span class="subtle">${escapeHtml(lead.parentEmail || lead.email || "-")}</span></td>`,
         status: `<td data-crm-col="status"><select data-lead-quick="${id}|status">${statusOptions}</select></td>`,
