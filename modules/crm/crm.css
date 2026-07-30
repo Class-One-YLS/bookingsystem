@@ -76,3 +76,92 @@
 .crm-workspace .metric strong { font-size: 22px; }
 .crm-workspace .crm-toolbar { margin-top: 10px; padding: 8px; }
 .crm-workspace #leadList { margin-top: 10px !important; }
+
+body.crm-workspace-expanded {
+  overflow: hidden;
+}
+
+body.crm-workspace-expanded .topbar {
+  display: none;
+}
+
+body.crm-workspace-expanded #crmContent {
+  padding: 0;
+}
+
+body.crm-workspace-expanded #crmModuleMount > .panel,
+body.crm-workspace-expanded #crm > .panel {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  margin: 0;
+  padding: 10px 12px 12px;
+  border: 0;
+  border-radius: 0;
+  background: var(--bg, #f7fbf8);
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+body.crm-workspace-expanded .crm-lead-workspace-head,
+body.crm-workspace-expanded .crm-toolbar {
+  flex: 0 0 auto;
+}
+
+body.crm-workspace-expanded .crm-lead-workspace-subtitle,
+body.crm-workspace-expanded #leadMonthSummary,
+body.crm-workspace-expanded #leadPagination {
+  display: none !important;
+}
+
+body.crm-workspace-expanded .crm-lead-workspace-head {
+  gap: 8px;
+  padding-bottom: 8px;
+}
+
+body.crm-workspace-expanded .crm-lead-workspace-head h2 {
+  margin: 0;
+}
+
+body.crm-workspace-expanded .crm-toolbar {
+  margin-top: 0;
+  padding: 8px;
+  background: #fff;
+}
+
+body.crm-workspace-expanded #leadList,
+body.crm-workspace-expanded #leadList.crm-lead-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  margin-top: 8px !important;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: #fff;
+}
+
+body.crm-workspace-expanded #leadList > .table-wrap {
+  overflow: visible;
+}
+
+body.crm-workspace-expanded .crm-menu-panel {
+  max-height: min(520px, calc(100vh - 130px));
+}
+
+@media (max-width: 900px) {
+  body.crm-workspace-expanded #crmModuleMount > .panel,
+  body.crm-workspace-expanded #crm > .panel {
+    padding: 8px;
+  }
+
+  body.crm-workspace-expanded .crm-toolbar .field,
+  body.crm-workspace-expanded .crm-toolbar .field.search {
+    min-width: 180px;
+    flex: 1 1 180px;
+  }
+}

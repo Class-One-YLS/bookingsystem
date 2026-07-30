@@ -51,6 +51,7 @@
   let lastRenderedSignature = "";
   let lastLoadStartedAt = 0;
   let eventsBound = false;
+  let workspaceExpanded = false;
 
   const $ = id => document.getElementById(id);
   const safeJson = value => JSON.parse(JSON.stringify(value || null));
@@ -520,6 +521,35 @@
       </div>`;
   }
 
+  function setWorkspaceExpanded(expanded) {
+    const leadList = $("leadList");
+    const button = $("expandCrmWorkspaceBtn");
+    const scrollTop = leadList?.scrollTop || 0;
+    const scrollLeft = leadList?.scrollLeft || 0;
+    workspaceExpanded = Boolean(expanded);
+    document.body.classList.toggle("crm-workspace-expanded", workspaceExpanded);
+    if (button) {
+      button.textContent = workspaceExpanded ? "× Exit Workspace" : "⛶ Expand Workspace";
+      button.setAttribute("aria-expanded", workspaceExpanded ? "true" : "false");
+      button.setAttribute("aria-label", workspaceExpanded ? "Exit CRM lead list workspace" : "Expand CRM lead list workspace");
+      button.title = workspaceExpanded ? "Exit CRM lead list workspace" : "Expand CRM lead list workspace";
+    }
+    requestAnimationFrame(() => {
+      const current = $("leadList");
+      if (!current) return;
+      current.scrollTop = scrollTop;
+      current.scrollLeft = scrollLeft;
+    });
+  }
+
+  function handleWorkspaceEscape(event) {
+    if (event.key !== "Escape" || !workspaceExpanded) return;
+    const modal = $("leadProfileModal");
+    if (modal && !modal.classList.contains("hide")) return;
+    event.preventDefault();
+    setWorkspaceExpanded(false);
+  }
+
   function sortIndicator(key) {
     if (currentSort.key !== key) return "↕";
     return currentSort.direction === "asc" ? "↑" : "↓";
@@ -823,6 +853,7 @@
     if (eventsBound) return;
     eventsBound = true;
     $("openLeadModalBtn").onclick = () => openLeadModal();
+    $("expandCrmWorkspaceBtn").onclick = () => setWorkspaceExpanded(!workspaceExpanded);
     $("saveLeadBtn").onclick = saveLeadFromModal;
     $("createStudentFromLeadBtn").onclick = () => { window.location.href = "./index.html#students"; };
     document.querySelectorAll("[data-close]").forEach(btn => btn.onclick = closeModal);
@@ -904,6 +935,7 @@
       const session = event.target.closest("[data-crm-session]");
       if (session) updateCrmSession(session);
     });
+    document.addEventListener("keydown", handleWorkspaceEscape);
   }
 
   async function initCRM() {
@@ -922,9 +954,12 @@
   function destroyCRM() {
     clearTimeout(saveTimer);
     clearTimeout(window.__crmFilterTimer);
+    document.removeEventListener("keydown", handleWorkspaceEscape);
+    setWorkspaceExpanded(false);
     saving = false;
     pendingSave = false;
     lastRenderedSignature = "";
+    eventsBound = false;
   }
 
   window.initCRM = initCRM;
