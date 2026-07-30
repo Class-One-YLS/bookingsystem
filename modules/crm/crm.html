@@ -1,0 +1,84 @@
+<div id="leadProfileModal" class="modal hide">
+  <div class="modal-card" style="width:min(920px,100%);">
+    <div class="row spread"><h2 id="leadProfileModalTitle">Add Lead</h2><button class="btn ghost small" data-close>Close</button></div>
+    <input id="leadId" type="hidden">
+    <div class="grid two">
+      <div><label>Parent Name</label><input id="leadParentName" placeholder="Optional"></div>
+      <div><label>Parent Phone</label><input id="leadParentPhone" placeholder="Phone / WhatsApp"></div>
+      <div><label>Child Name</label><input id="leadChildName" placeholder="Optional"></div>
+      <div><label>Child Age / Year</label><input id="leadChildAge" placeholder="Age or school year"></div>
+      <div><label>Source</label><input id="leadSource" list="leadSourceOptions" placeholder="Facebook Ads"></div>
+      <div><label>Salesperson</label><input id="leadSalesperson" placeholder="Salesperson name"></div>
+      <div><label>Status</label><select id="leadStatus"></select></div>
+      <div><label>Urgency</label><select id="leadUrgency"></select></div>
+      <div><label>Mother Tongue</label><input id="leadMotherTongue" placeholder="Mandarin / English / BM"></div>
+      <div><label>Package Interested</label><input id="leadPackage" list="packageOptions" placeholder="Optional after enrolled"></div>
+      <div><label>Preferred Class Day / Time</label><input id="leadPreferredTime" placeholder="Example: Mon 6pm"></div>
+      <div><label>Next Follow-up Date</label><input id="leadNextFollowUp" type="date"><div class="subtle">Generated from the lead stage. You may choose another date when needed.</div></div>
+      <div><label>Assessment Date</label><input id="leadAssessmentDate" type="date"></div>
+      <div><label>Trial 1 Date</label><input id="leadTrialDate" type="date"></div>
+      <div><label>Trial 2 Date</label><input id="leadTrialDate2" type="date"></div>
+      <div><label>Status Started</label><input id="leadStatusChangedAt" type="date"></div>
+    </div>
+    <div style="margin-top:12px;"><label>Subject Interested</label><div id="leadSubjectChecks" class="row"></div></div>
+    <div style="margin-top:12px;"><label>Notes / Conversation Summary</label><textarea id="leadNotes" placeholder="Latest WhatsApp/call notes"></textarea></div>
+    <datalist id="leadSourceOptions"><option value="Facebook Ads"></option><option value="Instagram"></option><option value="Referral"></option><option value="Walk-in"></option><option value="WhatsApp"></option></datalist>
+    <div class="row" style="margin-top:14px;">
+      <button class="btn mint" id="saveLeadBtn">Save Lead</button>
+      <button class="btn ghost hide" id="newLeadBtn">Clear Form</button>
+      <button class="btn ghost" id="createStudentFromLeadBtn">Create Student From Lead</button>
+    </div>
+  </div>
+</div>
+<div class="panel">
+  <div class="row spread">
+    <div><h2>CRM Lead List</h2><div class="subtle">Edit table fields directly. Changes save automatically when you leave a field.</div></div>
+    <div class="row">
+      <button class="btn mint" id="openLeadModalBtn">Add Lead</button>
+      <div class="row view-toggle hide">
+        <button class="btn small active" id="leadCardViewBtn">Card View</button>
+        <button class="btn small ghost" id="leadTableViewBtn">Table View</button>
+      </div>
+    </div>
+  </div>
+  <div class="crm-toolbar">
+    <div class="field"><label>Month</label><select id="leadMonthFilter"></select></div>
+    <div class="field"><label>Salesperson</label><select id="leadSalesFilter"></select></div>
+    <div class="field"><label>Status</label><select id="leadFilterStatus"></select></div>
+    <div class="field search"><label>Search</label><input id="leadSearch" placeholder="Parent / child / phone"></div>
+    <div class="crm-toolbar-actions">
+      <div class="crm-menu-wrap" id="leadFiltersMenuWrap">
+        <button type="button" class="btn ghost small" id="leadFiltersBtn">Filters</button>
+        <div class="crm-menu-panel" id="leadFiltersPanel">
+          <div class="row spread"><strong>CRM Filters</strong><button type="button" class="btn small ghost" id="clearLeadColumnFiltersBtn">Clear</button></div>
+          <div class="crm-filter-grid" style="margin-top:10px;">
+            <div><label>Urgency</label><select id="leadFilterUrgency"></select></div>
+            <div><label>Child</label><input id="leadFilterChild" data-lead-column-filter placeholder="Child name"></div>
+            <div><label>Parent / Phone</label><input id="leadFilterParent" data-lead-column-filter placeholder="Parent or phone"></div>
+            <div><label>Subject</label><input id="leadFilterSubject" data-lead-column-filter placeholder="BC / BM / Phonics"></div>
+            <div><label>Source</label><input id="leadFilterSource" data-lead-column-filter placeholder="Facebook Ads"></div>
+            <div><label>Salesperson</label><input id="leadFilterSalesperson" data-lead-column-filter placeholder="Salesperson"></div>
+            <div><label>Follow-up From</label><input id="leadFilterFollowFrom" data-lead-column-filter type="date"></div>
+            <div><label>Follow-up To</label><input id="leadFilterFollowTo" data-lead-column-filter type="date"></div>
+            <div><label>Assessment Date</label><input id="leadFilterAssessment" data-lead-column-filter type="date"></div>
+            <div><label>Trial Date</label><input id="leadFilterTrial" data-lead-column-filter type="date"></div>
+            <div><label>Package</label><input id="leadFilterPackage" data-lead-column-filter placeholder="Package"></div>
+            <div><label>Notes</label><input id="leadFilterNotes" data-lead-column-filter placeholder="Keyword"></div>
+            <div><label>Export From</label><input id="leadExportFromDate" type="date"></div>
+            <div><label>Export To</label><input id="leadExportToDate" type="date"></div>
+          </div>
+          <div class="row" style="margin-top:10px;"><button class="btn ghost small" id="exportLeadListPdfBtn">Export PDF</button></div>
+        </div>
+      </div>
+      <div class="crm-menu-wrap" id="leadColumnsMenuWrap">
+        <button type="button" class="btn ghost small" id="leadColumnsBtn">Columns</button>
+        <div class="crm-menu-panel" id="leadColumnsPanel"></div>
+      </div>
+      <button type="button" class="btn ghost small" id="exportLeadListCsvBtn">Export CSV</button>
+    </div>
+  </div>
+  <div class="sales-summary" id="leadMonthSummary"></div>
+  <div class="reminder-panel" id="leadReminderBox"></div>
+  <div id="leadList" class="list" style="margin-top:14px;"></div>
+  <div class="row spread" id="leadPagination" style="margin-top:12px;"></div>
+</div>
