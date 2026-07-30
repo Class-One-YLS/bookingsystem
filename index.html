@@ -2719,6 +2719,7 @@
     let archivedStudentPage = 1;
     let completedClassPage = 1;
     const SCROLL_RENDER_BATCH = 160;
+    const CRM_SCROLL_RENDER_BATCH = 60;
     const scrollRenderLimits = {};
     let autoPushTimer = null;
     let neonPushQueue = Promise.resolve(true);
@@ -10727,6 +10728,37 @@
         </button>`;
     }
 
+    function crmHasActiveColumnFilter(...ids) {
+      return ids.some(id => String($(id)?.value || "").trim());
+    }
+
+    function crmInlineEditNeedsFullRender(field) {
+      const search = String($("leadSearch")?.value || "").trim();
+      const statusFilter = $("leadFilterStatus")?.value || "all";
+      const urgencyFilter = $("leadFilterUrgency")?.value || "all";
+      const salesFilter = $("leadSalesFilter")?.value || "all";
+      const structuralFields = new Set(["createdAt", "subjects", "assessmentDate", "assessmentTime", "trialDate", "trialTime", "trialDate2", "trialTime2"]);
+      if (structuralFields.has(field)) return true;
+      if (field === "status") return statusFilter !== "all";
+      if (field === "urgency") return urgencyFilter !== "all";
+      if (field === "salesperson") return salesFilter !== "all" || crmHasActiveColumnFilter("leadFilterSalesperson");
+      if (search) return ["childName", "parentName", "parentPhone", "source", "salesperson"].includes(field);
+      if (field === "childName") return crmHasActiveColumnFilter("leadFilterChild");
+      if (["parentName", "parentPhone"].includes(field)) return crmHasActiveColumnFilter("leadFilterParent");
+      if (field === "source") return crmHasActiveColumnFilter("leadFilterSource");
+      if (field === "packageInterested") return crmHasActiveColumnFilter("leadFilterPackage");
+      if (field === "notes") return crmHasActiveColumnFilter("leadFilterNotes");
+      if (field === "nextFollowUp") return crmHasActiveColumnFilter("leadFilterFollowFrom", "leadFilterFollowTo");
+      return false;
+    }
+
+    function refreshCrmInlineSummary(field) {
+      if (field === "salesperson") syncLeadGroupingFilters();
+      renderLeadMonthSummary();
+      renderLeadReminders();
+      crmLastVisibleRenderSignature = "";
+    }
+
     function crmAutomaticFollowUpDate(lead) {
       const status = lead?.status || "New Contact";
       const statusStart = dateOnly(lead?.statusChangedAt || lead?.createdAt || lead?.updatedAt || todayISO());
@@ -11178,7 +11210,7 @@
     function groupedLeadTableRows(leads) {
       const currentMonthKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
       const selectedMonth = $("leadMonthFilter")?.value || "all";
-      const rowLimit = scrollRenderLimits.crmLeads || SCROLL_RENDER_BATCH;
+      const rowLimit = scrollRenderLimits.crmLeads || scrollRenderBatchFor("crmLeads");
       const colspan = Math.max(1, crmLeadVisibleColumnKeys().length);
       let renderedRows = 0;
       const monthGroups = new Map();
@@ -13327,8 +13359,12 @@
       pager.innerHTML = html || "";
     }
 
-    function resetScrollRenderLimit(key, total = SCROLL_RENDER_BATCH) {
-      scrollRenderLimits[key] = Math.min(Math.max(0, total), SCROLL_RENDER_BATCH);
+    function scrollRenderBatchFor(key) {
+      return key === "crmLeads" ? CRM_SCROLL_RENDER_BATCH : SCROLL_RENDER_BATCH;
+    }
+
+    function resetScrollRenderLimit(key, total = scrollRenderBatchFor(key)) {
+      scrollRenderLimits[key] = Math.min(Math.max(0, total), scrollRenderBatchFor(key));
     }
 
     function scrollLimitedRows(key, rows) {
@@ -13356,7 +13392,8 @@
         if (!nearBottom) return;
         const scrollTop = node.scrollTop;
         const scrollLeft = node.scrollLeft;
-        scrollRenderLimits[key] = Math.min(total, (scrollRenderLimits[key] || SCROLL_RENDER_BATCH) + SCROLL_RENDER_BATCH);
+        const batch = scrollRenderBatchFor(key);
+        scrollRenderLimits[key] = Math.min(total, (scrollRenderLimits[key] || batch) + batch);
         renderFn();
         requestAnimationFrame(() => {
           const nextNode = scrollPanelFor(containerId);
@@ -17050,7 +17087,8 @@
         if (field === "status") handleLeadStatusChange(lead, previousStatus);
         if (["assessmentDate", "trialDate", "trialDate2"].includes(field) && lead.followUpAuto !== false) applyCrmAutomaticFollowUp(lead, true);
         save(false, { render: false });
-        renderLeads();
+        if (crmInlineEditNeedsFullRender(field)) renderLeads();
+        else refreshCrmInlineSummary(field);
         autoPushCrmIfConfigured();
         return;
       }
