@@ -32,7 +32,16 @@
 #crm > .panel > :not(#leadList),
 #crmModuleMount > .panel > :not(#leadList) { flex: 0 0 auto; }
 .crm-lead-scroll { max-height: 660px; overflow: auto; overscroll-behavior: contain; padding-right: 4px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
-#crm #leadList.crm-lead-scroll { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain; }
+#crm #leadList,
+#crm #leadList.crm-lead-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
 .crm-lead-scroll > .table-wrap { max-height: none; overflow: visible; border: 0; border-radius: 0; }
 .crm-lead-month { border-bottom: 1px solid var(--line); background: #fff; }
 .crm-month-header { position: sticky; top: 0; z-index: 8; width: 100%; min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 12px; background: #f4fbf7; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); text-align: left; }
