@@ -43,10 +43,10 @@
     .topbar h1 { margin: 0; font-size: 28px; line-height: 1.1; }
     .subtle { color: var(--muted); font-size: 13px; font-weight: 650; }
     #crmContent { flex: 1 1 auto; min-height: 0; overflow: hidden; padding: 18px 24px 24px; }
-    #crm { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+    #crm, #crmModuleMount { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
     .panel { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 16px; box-shadow: 0 1px 0 rgba(23,33,43,.02); }
-    #crm > .panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-    #crm > .panel > :not(#leadList) { flex: 0 0 auto; }
+    #crm > .panel, #crmModuleMount > .panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+    #crm > .panel > :not(#leadList), #crmModuleMount > .panel > :not(#leadList) { flex: 0 0 auto; }
     .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .row.spread { justify-content: space-between; }
     .grid.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
@@ -117,92 +117,16 @@
       </header>
       <div id="crmContent">
         <section id="crm">
-          <div id="leadProfileModal" class="modal hide">
-            <div class="modal-card" style="width:min(920px,100%);">
-              <div class="row spread"><h2 id="leadProfileModalTitle">Add Lead</h2><button class="btn ghost small" data-close>Close</button></div>
-              <input id="leadId" type="hidden">
-              <div class="grid two">
-                <div><label>Parent Name</label><input id="leadParentName" placeholder="Optional"></div>
-                <div><label>Parent Phone</label><input id="leadParentPhone" placeholder="Phone / WhatsApp"></div>
-                <div><label>Child Name</label><input id="leadChildName" placeholder="Optional"></div>
-                <div><label>Child Age / Year</label><input id="leadChildAge" placeholder="Age or school year"></div>
-                <div><label>Source</label><input id="leadSource" list="leadSourceOptions" placeholder="Facebook Ads"></div>
-                <div><label>Salesperson</label><input id="leadSalesperson" placeholder="Salesperson name"></div>
-                <div><label>Status</label><select id="leadStatus"></select></div>
-                <div><label>Urgency</label><select id="leadUrgency"></select></div>
-                <div><label>Mother Tongue</label><input id="leadMotherTongue" placeholder="Mandarin / English / BM"></div>
-                <div><label>Package Interested</label><input id="leadPackage" placeholder="Optional after enrolled"></div>
-                <div><label>Preferred Class Day / Time</label><input id="leadPreferredTime" placeholder="Example: Mon 6pm"></div>
-                <div><label>Next Follow-up Date</label><input id="leadNextFollowUp" type="date"></div>
-                <div><label>Assessment Date</label><input id="leadAssessmentDate" type="date"></div>
-                <div><label>Trial 1 Date</label><input id="leadTrialDate" type="date"></div>
-                <div><label>Trial 2 Date</label><input id="leadTrialDate2" type="date"></div>
-                <div><label>Status Started</label><input id="leadStatusChangedAt" type="date"></div>
-              </div>
-              <div style="margin-top:12px;"><label>Subject Interested</label><div id="leadSubjectChecks" class="row"></div></div>
-              <div style="margin-top:12px;"><label>Notes / Conversation Summary</label><textarea id="leadNotes" placeholder="Latest WhatsApp/call notes"></textarea></div>
-              <datalist id="leadSourceOptions"><option value="Facebook Ads"></option><option value="Instagram"></option><option value="Referral"></option><option value="Walk-in"></option><option value="WhatsApp"></option></datalist>
-              <div class="row" style="margin-top:14px;">
-                <button class="btn mint" id="saveLeadBtn">Save Lead</button>
-                <button class="btn ghost" id="createStudentFromLeadBtn" type="button" title="Open the main system Students tab to create a registered student.">Create Student From Lead</button>
-              </div>
-            </div>
-          </div>
-          <div class="panel">
-            <div class="row spread">
-              <div><h2>CRM Lead List</h2><div class="subtle">Edit table fields directly. Changes save automatically when you leave a field.</div></div>
-              <button class="btn mint" id="openLeadModalBtn">Add Lead</button>
-            </div>
-            <div class="crm-toolbar">
-              <div class="field"><label>Month</label><select id="leadMonthFilter"></select></div>
-              <div class="field"><label>Salesperson</label><select id="leadSalesFilter"></select></div>
-              <div class="field"><label>Status</label><select id="leadFilterStatus"></select></div>
-              <div class="field search"><label>Search</label><input id="leadSearch" placeholder="Parent / child / phone"></div>
-              <div class="crm-toolbar-actions">
-                <div class="crm-menu-wrap" id="leadFiltersMenuWrap">
-                  <button type="button" class="btn ghost small" id="leadFiltersBtn">Filters</button>
-                  <div class="crm-menu-panel" id="leadFiltersPanel">
-                    <div class="row spread"><strong>CRM Filters</strong><button type="button" class="btn small ghost" id="clearLeadColumnFiltersBtn">Clear</button></div>
-                    <div class="crm-filter-grid" style="margin-top:10px;">
-                      <div><label>Urgency</label><select id="leadFilterUrgency"></select></div>
-                      <div><label>Child</label><input id="leadFilterChild" placeholder="Child name"></div>
-                      <div><label>Parent / Phone</label><input id="leadFilterParent" placeholder="Parent or phone"></div>
-                      <div><label>Subject</label><input id="leadFilterSubject" placeholder="BC / BM / Phonics"></div>
-                      <div><label>Source</label><input id="leadFilterSource" placeholder="Facebook Ads"></div>
-                      <div><label>Salesperson</label><input id="leadFilterSalesperson" placeholder="Salesperson"></div>
-                      <div><label>Follow-up From</label><input id="leadFilterFollowFrom" type="date"></div>
-                      <div><label>Follow-up To</label><input id="leadFilterFollowTo" type="date"></div>
-                      <div><label>Assessment Date</label><input id="leadFilterAssessment" type="date"></div>
-                      <div><label>Trial Date</label><input id="leadFilterTrial" type="date"></div>
-                      <div><label>Package</label><input id="leadFilterPackage" placeholder="Package"></div>
-                      <div><label>Notes</label><input id="leadFilterNotes" placeholder="Keyword"></div>
-                      <div><label>Export From</label><input id="leadExportFromDate" type="date"></div>
-                      <div><label>Export To</label><input id="leadExportToDate" type="date"></div>
-                    </div>
-                    <div class="row" style="margin-top:10px;"><button class="btn ghost small" id="exportLeadListPdfBtn">Export PDF</button></div>
-                  </div>
-                </div>
-                <div class="crm-menu-wrap" id="leadColumnsMenuWrap">
-                  <button type="button" class="btn ghost small" id="leadColumnsBtn">Columns</button>
-                  <div class="crm-menu-panel" id="leadColumnsPanel"></div>
-                </div>
-                <button type="button" class="btn ghost small" id="exportLeadListCsvBtn">Export CSV</button>
-              </div>
-            </div>
-            <div class="sales-summary" id="leadMonthSummary"></div>
-            <div class="reminder-panel" id="leadReminderBox"></div>
-            <div id="leadList" class="list crm-lead-scroll" style="margin-top:14px;"></div>
-          </div>
+          <div id="crmModuleMount" class="empty">Loading CRM leads...</div>
         </section>
       </div>
     </main>
   </div>
+  <script src="./shared/session.js"></script>
+  <script src="./shared/api.js"></script>
   <script src="./modules/crm/crm.js"></script>
   <script>
-    window.addEventListener("DOMContentLoaded", () => window.initCRMPage?.());
-    document.getElementById("createStudentFromLeadBtn")?.addEventListener("click", () => {
-      window.location.href = "./index.html#students";
-    });
+    window.addEventListener("DOMContentLoaded", () => window.initCRM?.());
   </script>
 </body>
 </html>

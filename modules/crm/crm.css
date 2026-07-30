@@ -24,9 +24,13 @@
 .lead-table [data-crm-col="assessment"] { min-width: 280px; }
 .lead-table [data-crm-col="trial"] { min-width: 340px; }
 .lead-table [data-crm-col="package"] { min-width: 180px; }
-#crm.tab:not(.hide) { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-#crm > .panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-#crm > .panel > :not(#leadList) { flex: 0 0 auto; }
+#crm,
+#crm.tab:not(.hide),
+#crmModuleMount { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+#crm > .panel,
+#crmModuleMount > .panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+#crm > .panel > :not(#leadList),
+#crmModuleMount > .panel > :not(#leadList) { flex: 0 0 auto; }
 .crm-lead-scroll { max-height: 660px; overflow: auto; overscroll-behavior: contain; padding-right: 4px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 #crm #leadList.crm-lead-scroll { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain; }
 .crm-lead-scroll > .table-wrap { max-height: none; overflow: visible; border: 0; border-radius: 0; }

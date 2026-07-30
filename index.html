@@ -714,11 +714,7 @@
     .lead-table [data-crm-col="assessment"] { min-width: 280px; }
     .lead-table [data-crm-col="trial"] { min-width: 340px; }
     .lead-table [data-crm-col="package"] { min-width: 180px; }
-    #crm.tab:not(.hide) { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-    #crm > .panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-    #crm > .panel > :not(#leadList) { flex: 0 0 auto; }
     .crm-lead-scroll { max-height: 660px; overflow: auto; overscroll-behavior: contain; padding-right: 4px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
-    #crm #leadList.crm-lead-scroll { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain; }
     .crm-lead-scroll > .table-wrap { max-height: none; overflow: visible; border: 0; border-radius: 0; }
     .crm-lead-month { border-bottom: 1px solid var(--line); background: #fff; }
     .crm-month-header { position: sticky; top: 0; z-index: 8; width: 100%; min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 12px; background: #f4fbf7; border: 0; border-bottom: 1px solid var(--line); color: var(--ink); text-align: left; }
@@ -1061,94 +1057,6 @@
           <div class="row spread"><h2>Archived Remarks</h2><span class="pill" id="teacherOverviewRemarkArchiveCount">0</span></div>
           <div id="teacherOverviewArchivedRemarks" class="list"></div>
         </div>
-      </section>
-
-      <section id="crm" class="tab hide" data-module="crm">
-        <div id="leadProfileModal" class="modal hide">
-          <div class="modal-card" style="width:min(920px,100%);">
-            <div class="row spread"><h2 id="leadProfileModalTitle">Add Lead</h2><button class="btn ghost small" data-close>Close</button></div>
-            <input id="leadId" type="hidden">
-            <div class="grid two">
-              <div><label>Parent Name</label><input id="leadParentName" placeholder="Optional"></div>
-              <div><label>Parent Phone</label><input id="leadParentPhone" placeholder="Phone / WhatsApp"></div>
-              <div><label>Child Name</label><input id="leadChildName" placeholder="Optional"></div>
-              <div><label>Child Age / Year</label><input id="leadChildAge" placeholder="Age or school year"></div>
-              <div><label>Source</label><input id="leadSource" list="leadSourceOptions" placeholder="Facebook Ads"></div>
-              <div><label>Salesperson</label><input id="leadSalesperson" placeholder="Salesperson name"></div>
-              <div><label>Status</label><select id="leadStatus"></select></div>
-              <div><label>Urgency</label><select id="leadUrgency"></select></div>
-              <div><label>Mother Tongue</label><input id="leadMotherTongue" placeholder="Mandarin / English / BM"></div>
-              <div><label>Package Interested</label><input id="leadPackage" list="packageOptions" placeholder="Optional after enrolled"></div>
-              <div><label>Preferred Class Day / Time</label><input id="leadPreferredTime" placeholder="Example: Mon 6pm"></div>
-              <div><label>Next Follow-up Date</label><input id="leadNextFollowUp" type="date"><div class="subtle">Generated from the lead stage. You may choose another date when needed.</div></div>
-              <div><label>Assessment Date</label><input id="leadAssessmentDate" type="date"></div>
-              <div><label>Trial 1 Date</label><input id="leadTrialDate" type="date"></div>
-              <div><label>Trial 2 Date</label><input id="leadTrialDate2" type="date"></div>
-              <div><label>Status Started</label><input id="leadStatusChangedAt" type="date"></div>
-            </div>
-            <div style="margin-top:12px;"><label>Subject Interested</label><div id="leadSubjectChecks" class="row"></div></div>
-            <div style="margin-top:12px;"><label>Notes / Conversation Summary</label><textarea id="leadNotes" placeholder="Latest WhatsApp/call notes"></textarea></div>
-            <datalist id="leadSourceOptions"><option value="Facebook Ads"></option><option value="Instagram"></option><option value="Referral"></option><option value="Walk-in"></option><option value="WhatsApp"></option></datalist>
-            <div class="row" style="margin-top:14px;">
-              <button class="btn mint" id="saveLeadBtn">Save Lead</button>
-              <button class="btn ghost hide" id="newLeadBtn">Clear Form</button>
-              <button class="btn ghost" id="createStudentFromLeadBtn">Create Student From Lead</button>
-            </div>
-          </div>
-        </div>
-        <div class="panel">
-            <div class="row spread">
-              <div><h2>CRM Lead List</h2><div class="subtle">Edit table fields directly. Changes save automatically when you leave a field.</div></div>
-              <div class="row">
-                <button class="btn mint" id="openLeadModalBtn">Add Lead</button>
-                <div class="row view-toggle hide">
-                <button class="btn small active" id="leadCardViewBtn">Card View</button>
-                <button class="btn small ghost" id="leadTableViewBtn">Table View</button>
-                </div>
-              </div>
-            </div>
-            <div class="crm-toolbar">
-              <div class="field"><label>Month</label><select id="leadMonthFilter"></select></div>
-              <div class="field"><label>Salesperson</label><select id="leadSalesFilter"></select></div>
-              <div class="field"><label>Status</label><select id="leadFilterStatus"></select></div>
-              <div class="field search"><label>Search</label><input id="leadSearch" placeholder="Parent / child / phone"></div>
-              <div class="crm-toolbar-actions">
-                <div class="crm-menu-wrap" id="leadFiltersMenuWrap">
-                  <button type="button" class="btn ghost small" id="leadFiltersBtn">Filters</button>
-                  <div class="crm-menu-panel" id="leadFiltersPanel">
-                    <div class="row spread"><strong>CRM Filters</strong><button type="button" class="btn small ghost" id="clearLeadColumnFiltersBtn">Clear</button></div>
-                    <div class="crm-filter-grid" style="margin-top:10px;">
-                      <div><label>Urgency</label><select id="leadFilterUrgency"></select></div>
-                      <div><label>Child</label><input id="leadFilterChild" data-lead-column-filter placeholder="Child name"></div>
-                      <div><label>Parent / Phone</label><input id="leadFilterParent" data-lead-column-filter placeholder="Parent or phone"></div>
-                      <div><label>Subject</label><input id="leadFilterSubject" data-lead-column-filter placeholder="BC / BM / Phonics"></div>
-                      <div><label>Source</label><input id="leadFilterSource" data-lead-column-filter placeholder="Facebook Ads"></div>
-                      <div><label>Salesperson</label><input id="leadFilterSalesperson" data-lead-column-filter placeholder="Salesperson"></div>
-                      <div><label>Follow-up From</label><input id="leadFilterFollowFrom" data-lead-column-filter type="date"></div>
-                      <div><label>Follow-up To</label><input id="leadFilterFollowTo" data-lead-column-filter type="date"></div>
-                      <div><label>Assessment Date</label><input id="leadFilterAssessment" data-lead-column-filter type="date"></div>
-                      <div><label>Trial Date</label><input id="leadFilterTrial" data-lead-column-filter type="date"></div>
-                      <div><label>Package</label><input id="leadFilterPackage" data-lead-column-filter placeholder="Package"></div>
-                      <div><label>Notes</label><input id="leadFilterNotes" data-lead-column-filter placeholder="Keyword"></div>
-                      <div><label>Export From</label><input id="leadExportFromDate" type="date"></div>
-                      <div><label>Export To</label><input id="leadExportToDate" type="date"></div>
-                    </div>
-                    <div class="row" style="margin-top:10px;"><button class="btn ghost small" id="exportLeadListPdfBtn">Export PDF</button></div>
-                  </div>
-                </div>
-                <div class="crm-menu-wrap" id="leadColumnsMenuWrap">
-                  <button type="button" class="btn ghost small" id="leadColumnsBtn">Columns</button>
-                  <div class="crm-menu-panel" id="leadColumnsPanel"></div>
-                </div>
-                <button type="button" class="btn ghost small" id="exportLeadListCsvBtn">Export CSV</button>
-              </div>
-            </div>
-            <div class="sales-summary" id="leadMonthSummary"></div>
-            <div class="reminder-panel" id="leadReminderBox"></div>
-            <div id="leadList" class="list" style="margin-top:14px;"></div>
-            <div class="row spread" id="leadPagination" style="margin-top:12px;"></div>
-        </div>
-
       </section>
 
       <section id="bookingRequests" class="tab hide">
@@ -5177,11 +5085,11 @@
       if ($("teacherLeaveToTime")) $("teacherLeaveToTime").value = "21:30";
       fillSelect($("typeFilter"), BOOKING_TYPES.map(type => ({ value: type, label: type.replace(/\b\w/g, char => char.toUpperCase()) })), "All Types");
       ["slotSubject", "bulkSubject", "overrideSubject", "studentRegularSubject", "bookingSubject", "assessmentSubject", "trialSubject", "openSlotSubject"].forEach(id => fillSelect($(id), SUBJECTS));
-      fillSelect($("leadStatus"), LEAD_STATUSES);
-      fillSelect($("leadUrgency"), URGENCIES);
-      fillSelect($("leadFilterStatus"), LEAD_STATUSES, "All Status");
-      fillSelect($("leadFilterUrgency"), URGENCIES, "All Urgency");
-      syncLeadGroupingFilters();
+      if ($("leadStatus")) fillSelect($("leadStatus"), LEAD_STATUSES);
+      if ($("leadUrgency")) fillSelect($("leadUrgency"), URGENCIES);
+      if ($("leadFilterStatus")) fillSelect($("leadFilterStatus"), LEAD_STATUSES, "All Status");
+      if ($("leadFilterUrgency")) fillSelect($("leadFilterUrgency"), URGENCIES, "All Urgency");
+      if ($("leadMonthFilter")) syncLeadGroupingFilters();
       fillSelect($("feedbackCategory"), TEACHER_FEEDBACK_CATEGORIES.map(value => ({ value, label: value.replace(/\b\w/g, char => char.toUpperCase()) })));
       fillSelect($("feedbackActionStatus"), TEACHER_FEEDBACK_STATUSES);
       fillSelect($("outcomeFeedbackCategory"), TEACHER_FEEDBACK_CATEGORIES.map(value => ({ value, label: value.replace(/\b\w/g, char => char.toUpperCase()) })));
@@ -5198,7 +5106,7 @@
       $("packageOptions").innerHTML = packageOptions.map(pkg => `<option value="${escapeHtml(pkg)}"></option>`).join("");
       fillSelect($("slotDay"), DAYS);
       $("studentDayChecks").innerHTML = DAYS.map(day => `<label class="pill"><input type="checkbox" value="${day}" style="width:auto;min-height:0;margin-right:6px;"> ${day.slice(0, 3)}</label>`).join("");
-      $("leadSubjectChecks").innerHTML = LEAD_SUBJECTS.map(s => `<label class="pill"><input type="checkbox" value="${s}" style="width:auto;min-height:0;margin-right:6px;"> ${s}</label>`).join("");
+      if ($("leadSubjectChecks")) $("leadSubjectChecks").innerHTML = LEAD_SUBJECTS.map(s => `<label class="pill"><input type="checkbox" value="${s}" style="width:auto;min-height:0;margin-right:6px;"> ${s}</label>`).join("");
       $("teacherSubjects").innerHTML = SUBJECTS.map(s => `<label class="pill"><input type="checkbox" value="${s}" style="width:auto;min-height:0;margin-right:6px;"> ${s}</label>`).join("");
       $("studentSubjectChecks").innerHTML = SUBJECTS.map(s => `<label class="pill"><input type="checkbox" value="${s}" style="width:auto;min-height:0;margin-right:6px;"> ${s}</label>`).join("");
       updateStudentTeacherOptions();
@@ -13486,128 +13394,12 @@
       return document.querySelector(".nav-btn.active")?.dataset.tab || "schedule";
     }
 
-    const frontendModuleRegistry = {};
-
-    function loadStylesheetOnce(id, href) {
-      if (document.getElementById(id)) return Promise.resolve();
-      return new Promise((resolve, reject) => {
-        const link = document.createElement("link");
-        link.id = id;
-        link.rel = "stylesheet";
-        link.href = href;
-        link.onload = resolve;
-        link.onerror = () => reject(new Error(`Unable to load stylesheet: ${href}`));
-        document.head.appendChild(link);
-      });
-    }
-
-    function loadScriptOnce(id, src) {
-      if (document.getElementById(id)) return Promise.resolve();
-      return new Promise((resolve, reject) => {
-        const script = document.createElement("script");
-        script.id = id;
-        script.src = src;
-        script.defer = true;
-        script.onload = resolve;
-        script.onerror = () => reject(new Error(`Unable to load script: ${src}`));
-        document.head.appendChild(script);
-      });
-    }
-
-    async function loadCrmModule({ preserveScroll = true, resetLimit = false } = {}) {
-      if (!frontendModuleRegistry.crm) {
-        frontendModuleRegistry.crm = Promise.all([
-          loadStylesheetOnce("crmModuleStylesheet", "modules/crm/crm.css"),
-          loadScriptOnce("crmModuleScript", "modules/crm/crm.js")
-        ]);
-      }
-      await frontendModuleRegistry.crm;
-      if (typeof window.initCRM !== "function") throw new Error("CRM module did not expose initCRM().");
-      return window.initCRM({
-        root: $("crm"),
-        preserveScroll,
-        resetLimit,
-        legacyEnsureCrmLeadsRendered: ensureCrmLeadsRendered,
-        renderLeads
-      });
-    }
-
-    let crmVisibleRenderFrame = 0;
-    let crmLastVisibleRenderSignature = "";
-    function ensureCrmLeadsRendered({ preserveScroll = true, resetLimit = false } = {}) {
-      if (!initialDataLoadComplete && !(state.leads || []).length) {
-        crmRenderAfterDataLoadNeeded = true;
-        renderCrmLeadsLoadingState();
-        return;
-      }
-      const total = filteredLeads().length;
-      if (resetLimit || !Object.prototype.hasOwnProperty.call(scrollRenderLimits, "crmLeads") || (total > 0 && scrollRenderLimits.crmLeads <= 0)) {
-        resetScrollRenderLimit("crmLeads", total);
-      }
-      scheduleCrmVisibleRender({ preserveScroll });
-    }
-
-    function renderCrmAfterVisible({ preserveScroll = true } = {}) {
-      const section = $("crm");
-      if (!section || section.classList.contains("hide")) return;
-      const node = scrollPanelFor("leadList");
-      const scrollTop = preserveScroll ? (node?.scrollTop || 0) : 0;
-      const scrollLeft = preserveScroll ? (node?.scrollLeft || 0) : 0;
-      renderLeads();
-      crmLastVisibleRenderSignature = crmVisibleRenderSignature();
-      if (preserveScroll) {
-        const nextNode = scrollPanelFor("leadList");
-        if (nextNode) {
-          nextNode.scrollTop = scrollTop;
-          nextNode.scrollLeft = scrollLeft;
-        }
-      }
-    }
-
-    function crmVisibleRenderSignature() {
-      const filters = [
-        $("leadMonthFilter")?.value || "",
-        $("leadSalesFilter")?.value || "",
-        $("leadFilterStatus")?.value || "",
-        $("leadFilterUrgency")?.value || "",
-        $("leadSearch")?.value || "",
-        leadSortState.key || "",
-        leadSortState.direction || "",
-        crmLeadVisibleColumnKeys().join(","),
-        [...expandedCrmLeadMonths].sort().join(",")
-      ];
-      return [
-        Number(state.settings?.neonVersion || 0),
-        Number(state.settings?.localRevision || 0),
-        (state.leads || []).length,
-        filters.join("|")
-      ].join("::");
-    }
-
-    function scheduleCrmVisibleRender({ preserveScroll = true } = {}) {
-      if (crmVisibleRenderFrame) return;
-      const signature = crmVisibleRenderSignature();
-      if ($("leadList")?.innerHTML && signature === crmLastVisibleRenderSignature) return;
-      crmVisibleRenderFrame = requestAnimationFrame(() => {
-        crmVisibleRenderFrame = 0;
-        renderCrmAfterVisible({ preserveScroll });
-      });
-    }
-
     function handleTabActivated(tabId) {
-      if (tabId === "crm") {
-        loadCrmModule({ preserveScroll: true }).catch(error => {
-          console.error(error);
-          setStatus(`CRM module failed to load: ${error.message}`, "error");
-          ensureCrmLeadsRendered({ preserveScroll: true });
-        });
-      }
+      if (tabId === "crm") window.location.href = "./crm.html";
     }
 
     function refreshActiveCrmAfterDataLoad() {
-      if (activeTabId() !== "crm" && !crmRenderAfterDataLoadNeeded) return;
       crmRenderAfterDataLoadNeeded = false;
-      ensureCrmLeadsRendered({ preserveScroll: true });
     }
 
     function restoreSessionActiveTab() {
@@ -14385,7 +14177,6 @@
       suppressAutoPush = true;
       save(false);
       suppressAutoPush = false;
-      if (activeTabId() === "crm") ensureCrmLeadsRendered({ preserveScroll: false, resetLimit: true });
       setStatus(skippedMonthly ? `Pulled current CRM leads. Skipped ${skippedMonthly} archived monthly-tab records.` : "Pulled CRM leads from Google Sheet.");
     }
 
@@ -17059,46 +16850,6 @@
         if (student) $(prefix + "ChildName").value = cleanStudentName(student.name || "");
       }
 
-      const crmSession = e.target.closest("[data-crm-session]");
-      if (crmSession) {
-        updateCrmSessionField(crmSession);
-        return;
-      }
-
-      const quick = e.target.closest("[data-lead-quick]");
-      if (quick) {
-        const [leadId, field] = quick.dataset.leadQuick.split("|");
-        const lead = state.leads.find(item => String(item.id || "") === String(leadId || ""));
-        const editableFields = ["createdAt", "childName", "childAge", "parentName", "parentPhone", "subjects", "source", "salesperson", "status", "urgency", "nextFollowUp", "assessmentDate", "assessmentTime", "trialDate", "trialTime", "trialDate2", "trialTime2", "packageInterested", "notes"];
-        if (!lead || !editableFields.includes(field)) return;
-        const before = leadLogSummary(lead);
-        const previousStatus = lead.status || "";
-        const value = String(quick.value || "").trim();
-        if (field === "status" && ["Assessment", "Trial Class"].includes(value)) {
-          renderLeads();
-          alert(`Book the ${value === "Assessment" ? "assessment" : "trial class"} using the teacher, date and available-slot controls in this lead row. The status will update automatically after booking.`);
-          return;
-        }
-        if (field === "subjects") {
-          lead.subjects = [...new Set(value.split(",").map(item => item.trim()).filter(Boolean).map(item => LEAD_SUBJECTS.find(subject => subject.toLowerCase() === item.toLowerCase()) || item))];
-        } else if (field === "createdAt") {
-          if (value) lead.createdAt = `${value}T12:00:00.000Z`;
-        } else {
-          lead[field] = value;
-        }
-        if (field === "nextFollowUp") lead.followUpAuto = false;
-        if (field === "status" && lead.status !== previousStatus) lead.statusChangedAt = todayISO();
-        lead.updatedAt = new Date().toISOString();
-        logAction("CRM Lead Table Updated", lead.childName || lead.parentName || lead.parentPhone || "Lead", before, leadLogSummary(lead), `Changed ${field}.`);
-        if (field === "status") handleLeadStatusChange(lead, previousStatus);
-        if (["assessmentDate", "trialDate", "trialDate2"].includes(field) && lead.followUpAuto !== false) applyCrmAutomaticFollowUp(lead, true);
-        save(false, { render: false });
-        if (crmInlineEditNeedsFullRender(field)) renderLeads();
-        else refreshCrmInlineSummary(field);
-        autoPushCrmIfConfigured();
-        return;
-      }
-
       const tutorQuick = e.target.closest("[data-tutor-lead-quick]");
       if (tutorQuick) {
         const [leadId, field] = tutorQuick.dataset.tutorLeadQuick.split("|");
@@ -17410,8 +17161,8 @@
       }
       refreshStudentScheduleOptions($("studentTeacher").value);
     });
-    ["leadStatus", "leadAssessmentDate", "leadTrialDate", "leadTrialDate2"].forEach(id => $(id).addEventListener("change", refreshLeadFormAutomaticFollowUp));
-    $("saveLeadBtn").onclick = () => {
+    if ($("leadStatus")) ["leadStatus", "leadAssessmentDate", "leadTrialDate", "leadTrialDate2"].forEach(id => $(id)?.addEventListener("change", refreshLeadFormAutomaticFollowUp));
+    if ($("saveLeadBtn")) $("saveLeadBtn").onclick = () => {
       const parentName = $("leadParentName").value.trim();
       const parentPhone = $("leadParentPhone").value.trim();
       const childName = $("leadChildName").value.trim();
@@ -17464,8 +17215,8 @@
       if (bookingPrepared) setStatus(`${pendingCrmBookingKind === "assessment" ? "Assessment" : "Trial"} is pending. Choose a teacher slot in Weekly Timetable to complete the CRM status update.`);
       autoPushCrmIfConfigured();
     };
-    $("newLeadBtn").onclick = clearLeadForm;
-    $("openLeadModalBtn").onclick = openNewLeadModal;
+    if ($("newLeadBtn")) $("newLeadBtn").onclick = clearLeadForm;
+    if ($("openLeadModalBtn")) $("openLeadModalBtn").onclick = openNewLeadModal;
     $("saveTutorLeadBtn").onclick = () => {
       const name = $("tutorLeadName").value.trim();
       const phone = $("tutorLeadPhone").value.trim();
@@ -17522,7 +17273,7 @@
     };
     ["tutorLeadFilterStatus", "tutorLeadFilterCategory"].forEach(id => $(id).addEventListener("change", resetTutorLeadPageAndRender));
     $("tutorLeadSearch").addEventListener("input", resetTutorLeadPageAndRender);
-    $("createStudentFromLeadBtn").onclick = () => {
+    if ($("createStudentFromLeadBtn")) $("createStudentFromLeadBtn").onclick = () => {
       const childName = cleanStudentName($("leadChildName").value);
       const packageName = $("leadPackage").value.trim();
       if (!childName || !packageName) return alert("Child name and package interested are required first.");
@@ -17887,42 +17638,9 @@
       renderLeads();
       scrollToListStart("leadList");
     };
-    ["leadMonthFilter", "leadSalesFilter", "leadFilterStatus", "leadFilterUrgency"].forEach(id => $(id).addEventListener("change", resetLeadPageAndRender));
-    $("leadSearch").addEventListener("input", resetLeadPageAndRender);
+    ["leadMonthFilter", "leadSalesFilter", "leadFilterStatus", "leadFilterUrgency"].forEach(id => $(id)?.addEventListener("change", resetLeadPageAndRender));
+    $("leadSearch")?.addEventListener("input", resetLeadPageAndRender);
     document.addEventListener("click", event => {
-      const crmMenuButton = event.target.closest("#leadFiltersBtn, #leadColumnsBtn");
-      if (crmMenuButton) {
-        const targetWrap = crmMenuButton.id === "leadFiltersBtn" ? $("leadFiltersMenuWrap") : $("leadColumnsMenuWrap");
-        document.querySelectorAll(".crm-menu-wrap.open").forEach(menu => {
-          if (menu !== targetWrap) menu.classList.remove("open");
-        });
-        targetWrap?.classList.toggle("open");
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-      const leadSortButton = event.target.closest("[data-lead-sort]");
-      if (leadSortButton) {
-        const key = leadSortButton.dataset.leadSort;
-        if (leadSortState.key !== key) leadSortState = { key, direction: "asc" };
-        else if (leadSortState.direction === "asc") leadSortState.direction = "desc";
-        else leadSortState = { key: "", direction: "" };
-        resetLeadPageAndRender();
-        return;
-      }
-      const crmMonthToggle = event.target.closest("[data-crm-month-toggle]");
-      if (crmMonthToggle) {
-        const monthKey = crmMonthToggle.dataset.crmMonthToggle;
-        if (expandedCrmLeadMonths.has(monthKey)) {
-          expandedCrmLeadMonths.delete(monthKey);
-          expandedCrmLeadMonths.add(`closed:${monthKey}`);
-        } else {
-          expandedCrmLeadMonths.add(monthKey);
-          expandedCrmLeadMonths.delete(`closed:${monthKey}`);
-        }
-        renderLeads();
-        return;
-      }
       if (!event.target.closest(".crm-menu-wrap")) {
         document.querySelectorAll(".crm-menu-wrap.open").forEach(menu => menu.classList.remove("open"));
       }
@@ -17942,26 +17660,18 @@
       }
     });
     document.addEventListener("input", event => {
-      const leadFilter = event.target.closest("[data-lead-column-filter]");
       const tutorFilter = event.target.closest("[data-tutor-lead-column-filter]");
-      if (!leadFilter && !tutorFilter) return;
-      const control = leadFilter || tutorFilter;
+      if (!tutorFilter) return;
+      const control = tutorFilter;
       const controlId = control.id;
       const selectionStart = control.selectionStart;
       const selectionEnd = control.selectionEnd;
       clearTimeout(leadColumnFilterTimer);
         leadColumnFilterTimer = setTimeout(() => {
-          if (leadFilter) {
-            leadPage = 1;
-            resetScrollRenderLimit("crmLeads", filteredLeads().length);
-            renderLeads();
-            scrollToListStart("leadList");
-          } else {
-            tutorLeadPage = 1;
-            resetScrollRenderLimit("tutorLeads", filteredTutorLeads().length);
-            renderTutorCrm();
-            scrollToListStart("tutorLeadList");
-          }
+          tutorLeadPage = 1;
+          resetScrollRenderLimit("tutorLeads", filteredTutorLeads().length);
+          renderTutorCrm();
+          scrollToListStart("tutorLeadList");
         const replacement = $(controlId);
         if (replacement) {
           replacement.focus({ preventScroll: true });
@@ -17969,7 +17679,7 @@
         }
       }, 300);
     });
-    $("clearLeadColumnFiltersBtn").onclick = () => {
+    if ($("clearLeadColumnFiltersBtn")) $("clearLeadColumnFiltersBtn").onclick = () => {
       document.querySelectorAll("[data-lead-column-filter]").forEach(input => input.value = "");
       openColumnFilterId = "";
       resetLeadPageAndRender();
@@ -17979,8 +17689,8 @@
       openColumnFilterId = "";
       resetTutorLeadPageAndRender();
     };
-    $("leadCardViewBtn").onclick = () => { leadViewMode = "cards"; uiStateSet("LeadViewMode", leadViewMode); resetLeadPageAndRender(); };
-    $("leadTableViewBtn").onclick = () => { leadViewMode = "table"; uiStateSet("LeadViewMode", leadViewMode); resetLeadPageAndRender(); };
+    if ($("leadCardViewBtn")) $("leadCardViewBtn").onclick = () => { leadViewMode = "cards"; uiStateSet("LeadViewMode", leadViewMode); resetLeadPageAndRender(); };
+    if ($("leadTableViewBtn")) $("leadTableViewBtn").onclick = () => { leadViewMode = "table"; uiStateSet("LeadViewMode", leadViewMode); resetLeadPageAndRender(); };
     $("newTemplateBtn").onclick = clearTemplateForm;
     $("saveTemplateBtn").onclick = saveTemplate;
     $("templateBody").addEventListener("input", () => $("templatePreview").textContent = $("templateBody").value);
@@ -18150,7 +17860,7 @@
     $("exportTeachersPdfBtn").onclick = () => openPrintReport("Class One Teachers", ["No.", "Name", "Subjects", "Category", "Tier", "Rate", "Profit Share", "Regular Slots", "Date Slots", "Feedback Count", "Latest Feedback"], numbered(teacherExportRows()));
     $("exportTeacherDirectoryCsvBtn").onclick = () => downloadCsv("class-one-teacher-directory.csv", ["No.", "Teacher Name", "Subjects Covered", "Internal Remark", "Email", "Contact Number", "Zoom ID", "Zoom Link", "Teacher View Link"], numbered(teacherDirectoryExportRows()));
     $("exportTeacherDirectoryPdfBtn").onclick = () => openPrintReport("Class One Teacher Directory", ["No.", "Teacher Name", "Subjects Covered", "Internal Remark", "Email", "Contact Number", "Zoom ID", "Zoom Link", "Teacher View Link"], numbered(teacherDirectoryExportRows()), true);
-    $("exportLeadListCsvBtn").onclick = () => {
+    if ($("exportLeadListCsvBtn")) $("exportLeadListCsvBtn").onclick = () => {
       try {
         downloadCsv("class-one-crm-lead-list.csv", ["No.", "Added", "Child", "Parent / Phone", "Subjects", "Source", "Salesperson", "Status", "Urgency", "Next Follow-up", "Assessment", "Trial 1 / 2", "Notes"], numbered(crmLeadListExportRows()));
       } catch (error) {
@@ -18158,7 +17868,7 @@
         alert(error.message);
       }
     };
-    $("exportLeadListPdfBtn").onclick = () => {
+    if ($("exportLeadListPdfBtn")) $("exportLeadListPdfBtn").onclick = () => {
       try {
         const rows = crmLeadListExportRows();
         const from = $("leadExportFromDate").value;

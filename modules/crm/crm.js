@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const DEFAULT_NEON = {
+  const DEFAULT_NEON = window.ClassOneApi?.DEFAULT_NEON || {
     apiUrl: "https://classone-booking-api-yiit.vercel.app",
     apiKey: "73a5baa8e4a70be55d79615e2dfbf4e843fa04b57ec04764",
     stateKey: "production"
@@ -50,6 +50,7 @@
   let expandedMonths = new Set([CURRENT_MONTH]);
   let lastRenderedSignature = "";
   let lastLoadStartedAt = 0;
+  let eventsBound = false;
 
   const $ = id => document.getElementById(id);
   const safeJson = value => JSON.parse(JSON.stringify(value || null));
@@ -78,6 +79,8 @@
   }
 
   function sessionRecord() {
+    const shared = window.ClassOneSession?.getSession?.();
+    if (shared?.token) return shared;
     for (const store of [localStorage, sessionStorage]) {
       try {
         const saved = JSON.parse(store.getItem(SESSION_KEY) || "null");
@@ -131,11 +134,21 @@
     el.dataset.type = type;
   }
 
+  async function ensureCrmMarkup() {
+    if ($("openLeadModalBtn")) return;
+    const mount = $("crmModuleMount") || $("crm");
+    if (!mount) throw new Error("CRM mount point is missing.");
+    const res = await fetch("./modules/crm/crm.html", { cache: "no-store" });
+    if (!res.ok) throw new Error(`Unable to load CRM module HTML (${res.status}).`);
+    mount.innerHTML = await res.text();
+  }
+
   function apiBase() {
     return DEFAULT_NEON.apiUrl.replace(/\/+$/, "");
   }
 
   async function apiFetch(path, options = {}) {
+    if (window.ClassOneApi?.request) return window.ClassOneApi.request(path, options);
     const token = sessionRecord()?.token || "";
     const res = await fetch(`${apiBase()}${path}`, {
       ...options,
@@ -460,9 +473,11 @@
   }
 
   function renderReminders() {
+    const box = $("leadReminderBox");
+    if (!box) return;
     const today = dateOnly(new Date().toISOString());
     const reminders = (state.leads || []).filter(lead => !lead.archived && !isOldImportedLead(lead) && lead.nextFollowUp && lead.nextFollowUp <= today && !["Enrolled", "Lost", "Not Interested"].includes(leadStatus(lead)));
-    $("leadReminderBox").innerHTML = `<button class="metric" id="openLeadActionModalBtn" style="width:100%;"><span class="subtle">CRM Needs Action</span><strong>${reminders.length}</strong><span class="subtle">Active leads that require follow-up or a status update.</span></button>`;
+    box.innerHTML = `<button class="metric" id="openLeadActionModalBtn" style="width:100%;"><span class="subtle">CRM Needs Action</span><strong>${reminders.length}</strong><span class="subtle">Active leads that require follow-up or a status update.</span></button>`;
   }
 
   function renderColumnControls() {
@@ -778,8 +793,11 @@
   }
 
   function bindEvents() {
+    if (eventsBound) return;
+    eventsBound = true;
     $("openLeadModalBtn").onclick = () => openLeadModal();
     $("saveLeadBtn").onclick = saveLeadFromModal;
+    $("createStudentFromLeadBtn").onclick = () => { window.location.href = "./index.html#students"; };
     document.querySelectorAll("[data-close]").forEach(btn => btn.onclick = closeModal);
     $("exportLeadListCsvBtn").onclick = exportCsv;
     $("exportLeadListPdfBtn").onclick = exportPdf;
@@ -861,16 +879,27 @@
     });
   }
 
-  async function initCRMPage() {
-    bindEvents();
-    renderColumnControls();
+  async function initCRM() {
     try {
+      await ensureCrmMarkup();
+      bindEvents();
+      renderColumnControls();
       await loadState();
     } catch (err) {
       setStatus(`Unable to load CRM: ${err.message}`, "error");
-      $("leadList").innerHTML = `<div class="empty">Unable to load CRM data. Please check API connection or sign in again from the main page.</div>`;
+      const target = $("leadList") || $("crmModuleMount") || $("crm");
+      if (target) target.innerHTML = `<div class="empty">Unable to load CRM data. Please check API connection or sign in again from the main page.</div>`;
     }
   }
 
-  window.initCRMPage = initCRMPage;
+  function destroyCRM() {
+    clearTimeout(saveTimer);
+    clearTimeout(window.__crmFilterTimer);
+    saving = false;
+    pendingSave = false;
+    lastRenderedSignature = "";
+  }
+
+  window.initCRM = initCRM;
+  window.destroyCRM = destroyCRM;
 })();
