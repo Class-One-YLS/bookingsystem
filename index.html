@@ -2665,6 +2665,7 @@
       { key: "updated", label: "Latest Update" },
       { key: "actions", label: "Actions" }
     ];
+    let crmRenderCache = null;
     let leadSortState = { key: "", direction: "" };
     let tutorLeadPage = 1;
     let tutorLeadViewMode = uiStateGet("TutorLeadViewMode", "table") || "table";
@@ -11000,32 +11001,60 @@
 
     function crmEligibleTeachers(lead) {
       const subject = crmLeadSubject(lead);
+      if (crmRenderCache) {
+        const key = subject || "__all__";
+        if (!crmRenderCache.eligibleTeachers.has(key)) {
+          const active = crmRenderCache.activeTeachers || (crmRenderCache.activeTeachers = [...activeTeachers()].sort(byName));
+          crmRenderCache.eligibleTeachers.set(key, active.filter(teacher => !subject || (teacher.subjects || []).map(normalizeSubject).includes(subject)));
+        }
+        return crmRenderCache.eligibleTeachers.get(key);
+      }
       return [...activeTeachers()].filter(teacher => !subject || (teacher.subjects || []).map(normalizeSubject).includes(subject)).sort(byName);
     }
 
     function crmTeacherOptions(lead, selectedId = "") {
+      const subject = crmLeadSubject(lead);
+      const cacheKey = `${subject || "__all__"}|${selectedId || ""}`;
+      if (crmRenderCache?.teacherOptionHtml.has(cacheKey)) return crmRenderCache.teacherOptionHtml.get(cacheKey);
       const teachers = crmEligibleTeachers(lead);
       const selectedTeacher = selectedId ? teacherById(selectedId) : null;
-      if (selectedTeacher && !teachers.some(teacher => teacher.id === selectedId)) teachers.push(selectedTeacher);
-      return `<option value="">Choose teacher</option>${teachers.map(teacher => `<option value="${escapeHtml(teacher.id)}" ${teacher.id === selectedId ? "selected" : ""}>${escapeHtml(teacher.name)}</option>`).join("")}`;
+      const optionTeachers = selectedTeacher && !teachers.some(teacher => teacher.id === selectedId) ? [...teachers, selectedTeacher] : teachers;
+      const html = `<option value="">Choose teacher</option>${optionTeachers.map(teacher => `<option value="${escapeHtml(teacher.id)}" ${teacher.id === selectedId ? "selected" : ""}>${escapeHtml(teacher.name)}</option>`).join("")}`;
+      if (crmRenderCache) crmRenderCache.teacherOptionHtml.set(cacheKey, html);
+      return html;
     }
 
     function crmAvailableTimes(lead, kind, teacherId, date) {
       if (!teacherId || !date) return [];
       const config = crmSessionConfig(kind);
       const currentBookingId = lead[config.booking] || "";
-      const times = new Set(collectSlotsForDate(parseISODate(date)).filter(slot => slot.teacherId === teacherId).map(slot => slot.time));
-      return [...times]
+      const cacheKey = `${lead.id || ""}|${kind}|${teacherId}|${date}|${currentBookingId}`;
+      if (crmRenderCache?.availableTimes.has(cacheKey)) return crmRenderCache.availableTimes.get(cacheKey);
+      const slotKey = `${date}|${teacherId}`;
+      let teacherTimes;
+      if (crmRenderCache) {
+        if (!crmRenderCache.teacherDateTimes.has(slotKey)) {
+          crmRenderCache.teacherDateTimes.set(slotKey, new Set(collectSlotsForDate(parseISODate(date)).filter(slot => slot.teacherId === teacherId).map(slot => slot.time)));
+        }
+        teacherTimes = crmRenderCache.teacherDateTimes.get(slotKey);
+      } else {
+        teacherTimes = new Set(collectSlotsForDate(parseISODate(date)).filter(slot => slot.teacherId === teacherId).map(slot => slot.time));
+      }
+      const available = [...teacherTimes]
         .filter(time => slotAvailabilityCheck(teacherId, date, time, { excludeBookingId: currentBookingId }).kind === "open")
         .sort((a, b) => minutes(a) - minutes(b));
+      if (crmRenderCache) crmRenderCache.availableTimes.set(cacheKey, available);
+      return available;
     }
 
     function crmTimeOptions(lead, kind, teacherId, date, selectedTime = "") {
-      const times = crmAvailableTimes(lead, kind, teacherId, date);
+      const availableTimes = crmAvailableTimes(lead, kind, teacherId, date);
+      const availableSet = new Set(availableTimes);
+      const times = [...availableTimes];
       if (selectedTime && !times.includes(selectedTime)) times.push(selectedTime);
       times.sort((a, b) => minutes(a) - minutes(b));
       const label = !teacherId ? "Choose teacher first" : (!date ? "Choose date first" : (times.length ? "Choose available slot" : "No open slots"));
-      return `<option value="">${label}</option>${times.map(time => `<option value="${escapeHtml(time)}" ${time === selectedTime ? "selected" : ""}>${escapeHtml(timeLabel(time))}${time === selectedTime && !crmAvailableTimes(lead, kind, teacherId, date).includes(time) ? " (current)" : ""}</option>`).join("")}`;
+      return `<option value="">${label}</option>${times.map(time => `<option value="${escapeHtml(time)}" ${time === selectedTime ? "selected" : ""}>${escapeHtml(timeLabel(time))}${time === selectedTime && !availableSet.has(time) ? " (current)" : ""}</option>`).join("")}`;
     }
 
     function crmSessionEditorHtml(lead, kind, title) {
@@ -11352,6 +11381,15 @@
         renderCrmLeadsLoadingState();
         return;
       }
+      const previousCrmRenderCache = crmRenderCache;
+      crmRenderCache = {
+        activeTeachers: null,
+        eligibleTeachers: new Map(),
+        teacherOptionHtml: new Map(),
+        teacherDateTimes: new Map(),
+        availableTimes: new Map()
+      };
+      try {
       leadViewMode = "table";
       syncLeadGroupingFilters();
       renderCrmLeadColumnControls();
@@ -11368,18 +11406,11 @@
       $("leadList").innerHTML = leadViewMode === "table" ? renderLeadTable(allLeads) : renderLeadCards(scrollLimitedRows("crmLeads", allLeads));
       $("leadPagination").innerHTML = "";
       bindScrollExpansion("leadList", "crmLeads", allLeads.length, renderLeads);
-      if (leadViewMode === "table") {
-        const quickFields = [...document.querySelectorAll("[data-lead-quick]")];
-        quickFields.forEach(field => {
-          const [leadId, property] = String(field.dataset.leadQuick || "").split("|");
-          const lead = state.leads.find(item => String(item.id || "") === leadId);
-          if (!lead) return;
-          if (property === "status") field.value = lead.status || "New Contact";
-          if (property === "urgency") field.value = lead.urgency || "warm";
-        });
-      }
       renderLeadMonthSummary();
       renderLeadReminders();
+      } finally {
+        crmRenderCache = previousCrmRenderCache;
+      }
     }
 
     function filteredTutorLeads() {
