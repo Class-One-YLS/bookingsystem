@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRM Leads | Class One Internal System</title>
+  <link rel="icon" href="./favicon.png">
+  <link rel="stylesheet" href="./modules/crm/crm.css">
+  <style>
+    :root {
+      --mint: #6ed0a0;
+      --mint-dark: #31a873;
+      --soft: #eef8f3;
+      --ink: #17212b;
+      --muted: #66738a;
+      --line: #dbe7e1;
+      --danger: #e5484d;
+      --nav: #15212c;
+      --bg: #f7fbf8;
+      --radius: 8px;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: var(--bg); }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; border: 0; }
+    a { color: inherit; text-decoration: none; }
+    label { display: block; margin-bottom: 6px; color: var(--muted); font-weight: 900; font-size: 11px; text-transform: uppercase; letter-spacing: .02em; }
+    input, select, textarea { width: 100%; min-height: 42px; border: 1px solid var(--line); border-radius: var(--radius); padding: 9px 11px; background: #fff; color: var(--ink); }
+    textarea { min-height: 92px; resize: vertical; }
+    .app-shell { height: 100%; min-height: 0; display: grid; grid-template-columns: 248px minmax(0, 1fr); overflow: hidden; }
+    .sidebar { min-height: 0; display: flex; flex-direction: column; gap: 16px; padding: 18px 16px; background: var(--nav); color: #fff; overflow: hidden; }
+    .sidebar-brand { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px; align-items: center; }
+    .sidebar-brand img { width: 92px; border-radius: 8px; background: #fff; }
+    .sidebar-brand strong { display: block; font-size: 17px; line-height: 1.08; }
+    .sidebar-nav { min-height: 0; overflow-y: auto; padding-right: 3px; }
+    .nav-btn { width: 100%; display: block; text-align: left; color: #cbd5d1; background: transparent; padding: 12px 14px; border-radius: 8px; margin: 4px 0; font-weight: 850; font-size: 13px; }
+    .nav-btn:hover, .nav-btn.active { color: var(--ink); background: var(--mint); }
+    .settings-fixed { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 999px; color: #cbd5d1; background: transparent; font-size: 20px; }
+    .settings-fixed:hover { background: var(--mint); color: #fff; }
+    main { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+    .topbar { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px 24px 12px; border-bottom: 1px solid var(--line); background: #fff; }
+    .topbar h1 { margin: 0; font-size: 28px; line-height: 1.1; }
+    .subtle { color: var(--muted); font-size: 13px; font-weight: 650; }
+    #crmContent { flex: 1 1 auto; min-height: 0; overflow: hidden; padding: 18px 24px 24px; }
+    #crm { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+    .panel { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 16px; box-shadow: 0 1px 0 rgba(23,33,43,.02); }
+    #crm > .panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+    #crm > .panel > :not(#leadList) { flex: 0 0 auto; }
+    .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .row.spread { justify-content: space-between; }
+    .grid.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .btn { min-height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 13px; border-radius: 8px; background: #eef5f1; color: var(--ink); font-weight: 900; white-space: nowrap; }
+    .btn.small { min-height: 32px; padding: 7px 10px; font-size: 12px; }
+    .btn.mint { background: var(--mint); color: var(--ink); }
+    .btn.ghost { background: #eef5f1; }
+    .btn.danger { background: var(--danger); color: #fff; }
+    .metric { min-height: 76px; display: grid; gap: 2px; align-content: center; padding: 13px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); text-align: left; }
+    .metric strong { display: block; font-size: 28px; line-height: 1; }
+    .sales-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+    .hide { display: none !important; }
+    .empty { padding: 28px; color: var(--muted); text-align: center; font-weight: 800; }
+    .modal { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 18px; background: rgba(23,33,43,.55); }
+    .modal-card { max-height: calc(100vh - 36px); overflow: auto; background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 24px 70px rgba(23,33,43,.28); }
+    .chip { display: inline-flex; align-items: center; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--soft); color: var(--ink); text-transform: none; letter-spacing: 0; font-size: 12px; }
+    .crm-lead-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+    .table-wrap { width: 100%; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid var(--line); padding: 9px 10px; text-align: left; }
+    th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .02em; }
+    @media (max-width: 900px) {
+      .app-shell { grid-template-columns: 78px minmax(0, 1fr); }
+      .sidebar-brand { grid-template-columns: 1fr; }
+      .sidebar-brand strong { display: none; }
+      .sidebar-brand img { width: 48px; }
+      .nav-btn { font-size: 0; text-align: center; padding: 12px 8px; }
+      .nav-btn::before { content: attr(data-short); font-size: 13px; }
+      .sales-summary, .grid.two { grid-template-columns: 1fr; }
+      .topbar { padding: 14px; }
+      #crmContent { padding: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <img src="./classone-logo.jpeg" alt="Class One">
+        <strong>Class One<br>Internal<br>System</strong>
+      </div>
+      <nav class="sidebar-nav" aria-label="Main navigation">
+        <a class="nav-btn" data-short="Home" href="./index.html">Dashboard</a>
+        <a class="nav-btn" data-short="Biz" href="./index.html#reports">Business Dashboard</a>
+        <a class="nav-btn" data-short="Week" href="./index.html#schedule">Weekly Timetable</a>
+        <a class="nav-btn" data-short="Tutor" href="./index.html#teacherOverview">Teacher Overview</a>
+        <a class="nav-btn" data-short="Class" href="./index.html#replacements">Class Management</a>
+        <a class="nav-btn" data-short="Stu" href="./index.html#students">Students</a>
+        <a class="nav-btn" data-short="Teach" href="./index.html#teachers">Teachers</a>
+        <a class="nav-btn" data-short="Users" href="./index.html#users">Users</a>
+        <a class="nav-btn active" data-short="CRM" href="./crm.html">CRM Leads</a>
+        <a class="nav-btn" data-short="TCRM" href="./index.html#tutorCrm">Tutor CRM</a>
+        <a class="nav-btn" data-short="PH" href="./index.html#publicHoliday">Public Holiday</a>
+        <a class="nav-btn" data-short="Log" href="./index.html#activity">Activity Log</a>
+      </nav>
+      <a class="settings-fixed" href="./index.html#settings" title="Settings" aria-label="Settings">&#9881;</a>
+    </aside>
+    <main>
+      <header class="topbar">
+        <div>
+          <h1>CRM Leads</h1>
+          <div class="subtle" id="statusText">Preparing CRM...</div>
+        </div>
+        <div class="row">
+          <span class="subtle" id="leadCountText"></span>
+          <a class="btn ghost" href="./index.html">Back to Dashboard</a>
+        </div>
+      </header>
+      <div id="crmContent">
+        <section id="crm">
+          <div id="leadProfileModal" class="modal hide">
+            <div class="modal-card" style="width:min(920px,100%);">
+              <div class="row spread"><h2 id="leadProfileModalTitle">Add Lead</h2><button class="btn ghost small" data-close>Close</button></div>
+              <input id="leadId" type="hidden">
+              <div class="grid two">
+                <div><label>Parent Name</label><input id="leadParentName" placeholder="Optional"></div>
+                <div><label>Parent Phone</label><input id="leadParentPhone" placeholder="Phone / WhatsApp"></div>
+                <div><label>Child Name</label><input id="leadChildName" placeholder="Optional"></div>
+                <div><label>Child Age / Year</label><input id="leadChildAge" placeholder="Age or school year"></div>
+                <div><label>Source</label><input id="leadSource" list="leadSourceOptions" placeholder="Facebook Ads"></div>
+                <div><label>Salesperson</label><input id="leadSalesperson" placeholder="Salesperson name"></div>
+                <div><label>Status</label><select id="leadStatus"></select></div>
+                <div><label>Urgency</label><select id="leadUrgency"></select></div>
+                <div><label>Mother Tongue</label><input id="leadMotherTongue" placeholder="Mandarin / English / BM"></div>
+                <div><label>Package Interested</label><input id="leadPackage" placeholder="Optional after enrolled"></div>
+                <div><label>Preferred Class Day / Time</label><input id="leadPreferredTime" placeholder="Example: Mon 6pm"></div>
+                <div><label>Next Follow-up Date</label><input id="leadNextFollowUp" type="date"></div>
+                <div><label>Assessment Date</label><input id="leadAssessmentDate" type="date"></div>
+                <div><label>Trial 1 Date</label><input id="leadTrialDate" type="date"></div>
+                <div><label>Trial 2 Date</label><input id="leadTrialDate2" type="date"></div>
+                <div><label>Status Started</label><input id="leadStatusChangedAt" type="date"></div>
+              </div>
+              <div style="margin-top:12px;"><label>Subject Interested</label><div id="leadSubjectChecks" class="row"></div></div>
+              <div style="margin-top:12px;"><label>Notes / Conversation Summary</label><textarea id="leadNotes" placeholder="Latest WhatsApp/call notes"></textarea></div>
+              <datalist id="leadSourceOptions"><option value="Facebook Ads"></option><option value="Instagram"></option><option value="Referral"></option><option value="Walk-in"></option><option value="WhatsApp"></option></datalist>
+              <div class="row" style="margin-top:14px;">
+                <button class="btn mint" id="saveLeadBtn">Save Lead</button>
+                <button class="btn ghost" id="createStudentFromLeadBtn" type="button" title="Open the main system Students tab to create a registered student.">Create Student From Lead</button>
+              </div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="row spread">
+              <div><h2>CRM Lead List</h2><div class="subtle">Edit table fields directly. Changes save automatically when you leave a field.</div></div>
+              <button class="btn mint" id="openLeadModalBtn">Add Lead</button>
+            </div>
+            <div class="crm-toolbar">
+              <div class="field"><label>Month</label><select id="leadMonthFilter"></select></div>
+              <div class="field"><label>Salesperson</label><select id="leadSalesFilter"></select></div>
+              <div class="field"><label>Status</label><select id="leadFilterStatus"></select></div>
+              <div class="field search"><label>Search</label><input id="leadSearch" placeholder="Parent / child / phone"></div>
+              <div class="crm-toolbar-actions">
+                <div class="crm-menu-wrap" id="leadFiltersMenuWrap">
+                  <button type="button" class="btn ghost small" id="leadFiltersBtn">Filters</button>
+                  <div class="crm-menu-panel" id="leadFiltersPanel">
+                    <div class="row spread"><strong>CRM Filters</strong><button type="button" class="btn small ghost" id="clearLeadColumnFiltersBtn">Clear</button></div>
+                    <div class="crm-filter-grid" style="margin-top:10px;">
+                      <div><label>Urgency</label><select id="leadFilterUrgency"></select></div>
+                      <div><label>Child</label><input id="leadFilterChild" placeholder="Child name"></div>
+                      <div><label>Parent / Phone</label><input id="leadFilterParent" placeholder="Parent or phone"></div>
+                      <div><label>Subject</label><input id="leadFilterSubject" placeholder="BC / BM / Phonics"></div>
+                      <div><label>Source</label><input id="leadFilterSource" placeholder="Facebook Ads"></div>
+                      <div><label>Salesperson</label><input id="leadFilterSalesperson" placeholder="Salesperson"></div>
+                      <div><label>Follow-up From</label><input id="leadFilterFollowFrom" type="date"></div>
+                      <div><label>Follow-up To</label><input id="leadFilterFollowTo" type="date"></div>
+                      <div><label>Assessment Date</label><input id="leadFilterAssessment" type="date"></div>
+                      <div><label>Trial Date</label><input id="leadFilterTrial" type="date"></div>
+                      <div><label>Package</label><input id="leadFilterPackage" placeholder="Package"></div>
+                      <div><label>Notes</label><input id="leadFilterNotes" placeholder="Keyword"></div>
+                      <div><label>Export From</label><input id="leadExportFromDate" type="date"></div>
+                      <div><label>Export To</label><input id="leadExportToDate" type="date"></div>
+                    </div>
+                    <div class="row" style="margin-top:10px;"><button class="btn ghost small" id="exportLeadListPdfBtn">Export PDF</button></div>
+                  </div>
+                </div>
+                <div class="crm-menu-wrap" id="leadColumnsMenuWrap">
+                  <button type="button" class="btn ghost small" id="leadColumnsBtn">Columns</button>
+                  <div class="crm-menu-panel" id="leadColumnsPanel"></div>
+                </div>
+                <button type="button" class="btn ghost small" id="exportLeadListCsvBtn">Export CSV</button>
+              </div>
+            </div>
+            <div class="sales-summary" id="leadMonthSummary"></div>
+            <div class="reminder-panel" id="leadReminderBox"></div>
+            <div id="leadList" class="list crm-lead-scroll" style="margin-top:14px;"></div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script src="./modules/crm/crm.js"></script>
+  <script>
+    window.addEventListener("DOMContentLoaded", () => window.initCRMPage?.());
+    document.getElementById("createStudentFromLeadBtn")?.addEventListener("click", () => {
+      window.location.href = "./index.html#students";
+    });
+  </script>
+</body>
+</html>

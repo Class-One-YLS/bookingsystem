@@ -961,7 +961,7 @@
         <button class="nav-btn" data-tab="users" data-short="Users">Users</button>
         <button class="nav-btn" data-tab="activity" data-short="Log">Activity Log</button>
         <button class="nav-btn" data-tab="teacherStudentRecords" data-short="TSR">Teacher Student Records</button>
-        <button class="nav-btn" data-tab="crm" data-short="CRM">CRM Leads</button>
+        <button class="nav-btn" data-page="./crm.html" data-short="CRM">CRM Leads</button>
         <button class="nav-btn" data-tab="tutorCrm" data-short="TCRM">Tutor CRM</button>
         <button class="nav-btn" data-tab="publicHoliday" data-short="PH">Public Holiday</button>
         <button class="nav-btn" data-tab="policySettings" data-short="Policy">Policy Settings</button>
@@ -13611,7 +13611,9 @@
     }
 
     function restoreSessionActiveTab() {
-      const savedTab = uiSessionGet("active_tab", "");
+      const hashTab = String(window.location.hash || "").replace(/^#/, "");
+      const requestedTab = hashTab && document.getElementById(hashTab) ? hashTab : "";
+      const savedTab = requestedTab || uiSessionGet("active_tab", "");
       if (!savedTab || !hasTabAccess(savedTab)) return false;
       const button = document.querySelector(`.nav-btn[data-tab="${CSS.escape(savedTab)}"]`);
       if (!button || button.classList.contains("hide")) return false;
@@ -16277,6 +16279,10 @@
     document.addEventListener("click", (e) => {
       const nav = e.target.closest(".nav-btn");
       if (nav) {
+        if (nav.dataset.page) {
+          window.location.href = nav.dataset.page;
+          return;
+        }
         if (!hasTabAccess(nav.dataset.tab)) {
           if (!isAuthenticated()) return handleAccessDenied({ context: "section", fallbackTab: firstPermittedTab() });
           return handleAccessDenied({ context: "section", fallbackTab: firstPermittedTab() });
@@ -18330,7 +18336,7 @@
     };
     $("goCrmActionBtn").onclick = () => {
       $("actionPopup").classList.add("hide");
-      document.querySelector('[data-tab="crm"]').click();
+      window.location.href = "./crm.html";
     };
     $("goReplacementActionBtn").onclick = () => {
       $("actionPopup").classList.add("hide");
