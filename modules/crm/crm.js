@@ -149,25 +149,52 @@
 
   async function apiFetch(path, options = {}) {
     if (window.ClassOneApi?.request) return window.ClassOneApi.request(path, options);
-    const token = sessionRecord()?.token || "";
-    const res = await fetch(`${apiBase()}${path}`, {
-      ...options,
-      cache: "no-store",
-      headers: {
-        "Content-Type": "application/json",
-        "X-API-Key": DEFAULT_NEON.apiKey,
-        ...(token ? { "X-User-Session": token } : {}),
-        ...(options.headers || {})
+    const session = sessionRecord() || {};
+    const token = session.token || "";
+    const userEmail = session.user?.email || "";
+    const method = String(options.method || "GET").toUpperCase();
+    const url = `${apiBase()}${path}`;
+    try {
+      const res = await fetch(url, {
+        ...options,
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": DEFAULT_NEON.apiKey,
+          ...(token ? { "X-User-Session": token } : {}),
+          ...(userEmail ? { "X-User-Email": userEmail } : {}),
+          ...(options.headers || {})
+        }
+      });
+      const text = await res.text();
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; } catch (error) { data = { error: text }; }
+      if (!res.ok || data.ok === false) {
+        console.warn("[ClassOne CRM API] request failed", {
+          operation: path,
+          url,
+          method,
+          status: res.status,
+          response: data.error || text || res.statusText
+        });
+        const err = new Error(data.error || res.statusText || "API request failed.");
+        err.status = res.status;
+        throw err;
       }
-    });
-    const text = await res.text();
-    const data = text ? JSON.parse(text) : {};
-    if (!res.ok || data.ok === false) {
-      const err = new Error(data.error || res.statusText || "API request failed.");
-      err.status = res.status;
-      throw err;
+      return data;
+    } catch (error) {
+      if (error.status) throw error;
+      console.warn("[ClassOne CRM API] network error", {
+        operation: path,
+        url,
+        method,
+        error: error.message || String(error)
+      });
+      if (/failed to fetch/i.test(String(error.message || error))) {
+        throw new Error(`Cannot connect to Class One API at ${url}. Please check deployment, CORS, and network access.`);
+      }
+      throw error;
     }
-    return data;
   }
 
   async function loadState() {
