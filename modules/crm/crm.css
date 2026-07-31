@@ -36,6 +36,8 @@
 .crm-profile-scheduling-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
 .crm-enrollment-card { width: min(980px, 100%); max-height: calc(100vh - 36px); overflow: auto; }
 .crm-enrollment-grid { margin-top: 12px; }
+.crm-enrollment-day-checks .chip { cursor: pointer; }
+.crm-enrollment-day-checks .chip:has(input:checked) { border-color: var(--mint); background: var(--mint); color: var(--ink); box-shadow: 0 0 0 2px rgba(110, 208, 160, .18); }
 .crm-enrollment-section { margin-top: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #fbfdfc; }
 .crm-enrollment-slot-list { display: grid; gap: 8px; margin-top: 10px; }
 .crm-enrollment-slot { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }

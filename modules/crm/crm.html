@@ -63,12 +63,13 @@
       <label>Regular Class</label>
       <div class="grid two crm-enrollment-grid">
         <div><label>Teacher</label><select id="crmEnrollmentTeacher"></select></div>
+        <div><label>Weekday</label><div id="crmEnrollmentDayChecks" class="row crm-enrollment-day-checks"></div></div>
         <div><label>Time</label><select id="crmEnrollmentTime"></select></div>
         <div><label>Subject</label><select id="crmEnrollmentRegularSubject"></select></div>
         <div><label>Effective Start Date</label><input id="crmEnrollmentRegularStartDate" type="date"></div>
         <div><label>Effective End Date</label><input id="crmEnrollmentRegularEndDate" type="date"></div>
       </div>
-      <div style="margin-top:10px;"><label>Day</label><div id="crmEnrollmentDayChecks" class="row"></div></div>
+      <div class="subtle" style="margin-top:8px;">One day per regular slot. Add another slot for another weekday.</div>
       <div class="row" style="margin-top:10px;"><button class="btn ghost small" id="crmEnrollmentAddSlotBtn" type="button">Add Regular Slot</button></div>
       <div id="crmEnrollmentRegularSlotList" class="crm-enrollment-slot-list"></div>
     </div>

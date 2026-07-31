@@ -554,6 +554,10 @@
     return [...$("crmEnrollmentDayChecks").querySelectorAll("input:checked")].map(input => input.value);
   }
 
+  function selectedEnrollmentDay() {
+    return selectedEnrollmentDays()[0] || "";
+  }
+
   function setEnrollmentError(message = "") {
     const box = $("crmEnrollmentError");
     if (!box) return;
@@ -572,7 +576,6 @@
     $("crmEnrollmentRegularSubject").innerHTML = selected.length
       ? selected.map(subject => `<option value="${escapeHtml(subject)}" ${subject === current ? "selected" : ""}>${escapeHtml(subject)}</option>`).join("")
       : `<option value="">Choose subject first</option>`;
-    refreshEnrollmentAvailableTimes();
   }
 
   function renderEnrollmentTeacherOptions(selected = "") {
@@ -585,9 +588,24 @@
   }
 
   function renderEnrollmentDayChecks(days = []) {
-    const selected = new Set(days);
+    const selected = new Set(days.slice(0, 1));
     const names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
     $("crmEnrollmentDayChecks").innerHTML = names.map(day => `<label class="chip"><input type="checkbox" value="${escapeHtml(day)}" ${selected.has(day) ? "checked" : ""}> ${escapeHtml(day.slice(0, 3))}</label>`).join("");
+  }
+
+  function enforceSingleEnrollmentDay(changedInput = null) {
+    const inputs = [...$("crmEnrollmentDayChecks").querySelectorAll("input")];
+    if (changedInput?.checked) {
+      inputs.forEach(input => {
+        if (input !== changedInput) input.checked = false;
+      });
+      return changedInput.value;
+    }
+    const checked = inputs.find(input => input.checked);
+    inputs.forEach(input => {
+      input.checked = checked ? input === checked : false;
+    });
+    return checked?.value || "";
   }
 
   function addMonthsISO(dateISO, months) {
@@ -647,13 +665,26 @@
     return ["cancelled", "public_holiday"].includes(String(status || "").toLowerCase());
   }
 
-  function teacherOpenSlotCovers(teacher, day, time, startDate, endDate) {
-    return (teacher?.regularSlots || []).some(slot => {
+  function teacherGeneralOpenSlots(teacher, day) {
+    return (teacher?.regularSlots || []).filter(slot => {
       if (!activeRecord(slot)) return false;
       if (String(slot.day || slot.weekday || "") !== day) return false;
-      if (!timeRangeOverlaps(slot.time || slot.startTime || "", slot.minutes || slot.duration || 30, time, 30)) return false;
       if (slot.studentName || slot.studentId || slot.locked) return false;
       if (slot.status === "off" || slot.unavailable) return false;
+      return true;
+    });
+  }
+
+  function teacherGeneralOpenTimes(teacher, day) {
+    return [...new Set(teacherGeneralOpenSlots(teacher, day)
+      .map(slot => slot.time || slot.startTime || "")
+      .filter(Boolean))]
+      .sort((a, b) => minutes(a) - minutes(b));
+  }
+
+  function teacherOpenSlotCovers(teacher, day, time, startDate, endDate) {
+    return teacherGeneralOpenSlots(teacher, day).some(slot => {
+      if (!timeRangeOverlaps(slot.time || slot.startTime || "", slot.minutes || slot.duration || 30, time, 30)) return false;
       if (!rangesOverlap(slot.startDate || "", slot.endDate || "", startDate, endDate)) return false;
       if (slot.startDate && dateOnly(slot.startDate) > startDate) return false;
       if (slot.endDate && dateOnly(slot.endDate) < endDate) return false;
@@ -799,14 +830,11 @@
 
   function availableEnrollmentTimes() {
     const teacherId = $("crmEnrollmentTeacher")?.value || "";
-    const startDate = dateOnly($("crmEnrollmentRegularStartDate")?.value || "");
-    const endDate = dateOnly($("crmEnrollmentRegularEndDate")?.value || "");
-    const subject = $("crmEnrollmentRegularSubject")?.value || "";
-    const days = selectedEnrollmentDays();
+    const day = selectedEnrollmentDay();
     if (!teacherId) return { disabled: true, placeholder: "Choose teacher first", times: [] };
-    if (!startDate) return { disabled: true, placeholder: "Choose start date first", times: [] };
-    if (!days.length) return { disabled: true, placeholder: "Choose day first", times: [] };
-    const times = timeOptions().filter(time => days.every(day => !enrollmentAvailabilityReason({ teacherId, day, time, startDate, endDate, subject })));
+    if (!day) return { disabled: true, placeholder: "Choose day first", times: [] };
+    const teacher = teacherById(teacherId);
+    const times = teacherGeneralOpenTimes(teacher, day);
     return { disabled: !times.length, placeholder: times.length ? "Choose available time" : "No available times", times };
   }
 
@@ -855,14 +883,14 @@
     const subject = $("crmEnrollmentRegularSubject").value;
     const startDate = dateOnly($("crmEnrollmentRegularStartDate").value);
     const endDate = dateOnly($("crmEnrollmentRegularEndDate").value);
-    if (!teacherId || !days.length || !time) return setEnrollmentError("Choose teacher, at least one day, and time first.");
+    if (!teacherId || !days.length || !time) return setEnrollmentError("Choose teacher, one day, and time first.");
+    if (days.length > 1) return setEnrollmentError("Choose only one day per regular slot. Add another slot for another weekday.");
+    if (!startDate) return setEnrollmentError("Choose an effective start date before adding the regular slot.");
     if (!selectedEnrollmentSubjects().includes(subject)) return setEnrollmentError("Choose a regular subject that is included under Subject Taken.");
     if (endDate && !startDate) return setEnrollmentError("Choose an effective start date when using an end date.");
     if (startDate && endDate && endDate < startDate) return setEnrollmentError("Effective end date cannot be before the start date.");
     const conflict = days.map(day => enrollmentAvailabilityReason({ teacherId, day, time, startDate, endDate, subject })).find(Boolean);
     if (conflict) {
-      $("crmEnrollmentTime").value = "";
-      refreshEnrollmentAvailableTimes();
       return setEnrollmentError(conflict);
     }
     days.forEach(day => {
@@ -1725,8 +1753,16 @@
     document.querySelectorAll("[data-enrollment-cancel]").forEach(btn => btn.onclick = () => closeEnrollmentStudentForm(true));
     $("crmEnrollmentAddSlotBtn").onclick = addEnrollmentRegularSlot;
     $("crmEnrollmentSubjectChecks").addEventListener("change", renderEnrollmentSubjectOptions);
-    ["crmEnrollmentTeacher", "crmEnrollmentRegularStartDate", "crmEnrollmentRegularEndDate", "crmEnrollmentRegularSubject"].forEach(id => $(id).addEventListener("change", refreshEnrollmentAvailableTimes));
-    $("crmEnrollmentDayChecks").addEventListener("change", refreshEnrollmentAvailableTimes);
+    $("crmEnrollmentTeacher").addEventListener("change", () => {
+      $("crmEnrollmentTime").value = "";
+      refreshEnrollmentAvailableTimes();
+    });
+    $("crmEnrollmentDayChecks").addEventListener("change", event => {
+      const input = event.target.closest("input");
+      enforceSingleEnrollmentDay(input);
+      $("crmEnrollmentTime").value = "";
+      refreshEnrollmentAvailableTimes();
+    });
     $("crmEnrollmentRegularSlotList").addEventListener("click", event => {
       const remove = event.target.closest("[data-remove-enrollment-slot]");
       if (remove) removeEnrollmentRegularSlot(remove.dataset.removeEnrollmentSlot);
