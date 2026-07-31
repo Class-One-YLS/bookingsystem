@@ -10,7 +10,9 @@
   const USER_KEY = "classone_user";
   const UI_STATE_KEY = "classone_ui_state";
   const CRM_LEAD_COLUMN_KEY = "crmLeadVisibleColumns.v1";
+  const CRM_DEVICE_KEY = "classone_crm_device_id";
   const CRM_BATCH = 70;
+  const CRM_PERF = new URLSearchParams(window.location.search).has("perf");
   const CURRENT_MONTH = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
   const LEAD_STATUSES = ["New Contact", "Follow Up", "Assessment", "Trial Class", "Enrolled", "No Response", "Not Interested", "Lost"];
   const URGENCIES = ["hot", "warm", "cold"];
@@ -52,6 +54,9 @@
   let lastLoadStartedAt = 0;
   let eventsBound = false;
   let workspaceExpanded = false;
+  let dirtyLeads = new Map();
+  let dirtyBookings = new Map();
+  let dirtyActivityLogs = new Map();
 
   const $ = id => document.getElementById(id);
   const safeJson = value => JSON.parse(JSON.stringify(value || null));
@@ -71,12 +76,30 @@
   const leadStatus = lead => lead.status || "New Contact";
   const isOldImportedLead = lead => Boolean(lead.oldImported || lead.importedFromSheet || lead.monthlyTabImported);
 
+  function perfInfo(label, details = {}) {
+    if (!CRM_PERF) return;
+    console.info(`[CRM perf] ${label}`, details);
+  }
+
+  function byteSize(text) {
+    try { return new TextEncoder().encode(String(text || "")).length; } catch (err) { return String(text || "").length; }
+  }
+
   function storageGet(key) {
     try { return localStorage.getItem(key) || sessionStorage.getItem(key) || ""; } catch (err) { return ""; }
   }
 
   function storageSet(key, value) {
     try { localStorage.setItem(key, value); } catch (err) {}
+  }
+
+  function deviceId() {
+    let id = storageGet(CRM_DEVICE_KEY);
+    if (!id) {
+      id = `crm_device_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      storageSet(CRM_DEVICE_KEY, id);
+    }
+    return id;
   }
 
   function sessionRecord() {
@@ -205,7 +228,15 @@
     }
     lastLoadStartedAt = performance.now();
     setStatus("Loading CRM from Neon...");
+    const apiStarted = performance.now();
     const result = await apiFetch(`/api/state?key=${encodeURIComponent(DEFAULT_NEON.stateKey)}`, { method: "GET" });
+    perfInfo("state load", {
+      ms: Math.round(performance.now() - apiStarted),
+      version: Number(result.version || 0),
+      leads: Array.isArray(result.data?.leads) ? result.data.leads.length : 0,
+      bookings: Array.isArray(result.data?.bookings) ? result.data.bookings.length : 0,
+      teachers: Array.isArray(result.data?.teachers) ? result.data.teachers.length : 0
+    });
     state = result.data || {};
     version = Number(result.version || state.settings?.neonVersion || 0);
     state.leads ||= [];
@@ -218,26 +249,73 @@
     }
     hydrateFilters();
     renderLeads({ reset: true });
+    perfInfo("crm initial load total", {
+      ms: Math.round(performance.now() - lastLoadStartedAt),
+      domNodes: document.querySelectorAll("*").length,
+      inputs: document.querySelectorAll("#crm input").length,
+      selects: document.querySelectorAll("#crm select").length,
+      textareas: document.querySelectorAll("#crm textarea").length
+    });
     setStatus(`CRM loaded in ${Math.round(performance.now() - lastLoadStartedAt)} ms.`);
   }
 
-  function sharedPayload() {
-    return safeJson(state);
+  function markLeadDirty(lead) {
+    if (lead?.id) dirtyLeads.set(String(lead.id), lead);
   }
 
-  function mergeLeads(remote, local) {
-    const map = new Map((remote.leads || []).map(item => [String(item.id || ""), item]));
-    (local.leads || []).forEach(lead => {
-      const id = String(lead.id || "");
-      if (!id) return;
-      const existing = map.get(id);
-      if (!existing || leadLatestTime(lead) >= leadLatestTime(existing)) map.set(id, lead);
-    });
-    remote.leads = [...map.values()];
-    const logMap = new Map((remote.activityLogs || []).map(log => [String(log.id || ""), log]));
-    (local.activityLogs || []).forEach(log => { if (log?.id && !logMap.has(String(log.id))) logMap.set(String(log.id), log); });
-    remote.activityLogs = [...logMap.values()];
-    return remote;
+  function markBookingDirty(booking) {
+    if (booking?.id) dirtyBookings.set(String(booking.id), booking);
+  }
+
+  function markActivityLogDirty(log) {
+    if (log?.id) dirtyActivityLogs.set(String(log.id), log);
+  }
+
+  function hasDirtyChanges() {
+    return Boolean(dirtyLeads.size || dirtyBookings.size || dirtyActivityLogs.size);
+  }
+
+  function buildPatchSnapshot() {
+    return {
+      leads: [...dirtyLeads.entries()].map(([id, record]) => [id, safeJson(record)]),
+      bookings: [...dirtyBookings.entries()].map(([id, record]) => [id, safeJson(record)]),
+      activityLogs: [...dirtyActivityLogs.entries()].map(([id, record]) => [id, safeJson(record)])
+    };
+  }
+
+  function patchFromSnapshot(snapshot) {
+    const updatedBy = currentUser()?.email || "crm";
+    return {
+      format: "classone_record_patch_v1",
+      baseVersion: version,
+      deviceId: deviceId(),
+      updatedAt: nowISO(),
+      updatedBy,
+      changes: {
+        leads: snapshot.leads.map(([, record]) => record),
+        bookings: snapshot.bookings.map(([, record]) => record),
+        activityLogs: snapshot.activityLogs.map(([, record]) => record)
+      }
+    };
+  }
+
+  function patchHasRecords(patch) {
+    return Boolean(
+      patch.changes.leads.length ||
+      patch.changes.bookings.length ||
+      patch.changes.activityLogs.length
+    );
+  }
+
+  function clearSyncedSnapshot(snapshot) {
+    const clearIfUnchanged = (map, id, sentRecord) => {
+      const current = map.get(id);
+      if (!current) return;
+      if (JSON.stringify(safeJson(current)) === JSON.stringify(sentRecord)) map.delete(id);
+    };
+    snapshot.leads.forEach(([id, record]) => clearIfUnchanged(dirtyLeads, id, record));
+    snapshot.bookings.forEach(([id, record]) => clearIfUnchanged(dirtyBookings, id, record));
+    snapshot.activityLogs.forEach(([id, record]) => clearIfUnchanged(dirtyActivityLogs, id, record));
   }
 
   async function saveState({ immediate = false } = {}) {
@@ -252,38 +330,60 @@
     saving = true;
     setStatus("Syncing CRM changes...");
     try {
-      let payload = sharedPayload();
+      const prepareStarted = performance.now();
+      const snapshot = buildPatchSnapshot();
+      const patch = patchFromSnapshot(snapshot);
+      if (!patchHasRecords(patch)) {
+        setStatus("Saved.", "success");
+        return true;
+      }
+      const body = JSON.stringify({
+        key: DEFAULT_NEON.stateKey,
+        patch,
+        updatedBy: currentUser()?.email || "crm",
+        userSession: sessionRecord()?.token || "",
+        userEmail: currentUser()?.email || ""
+      });
+      perfInfo("patch prepared", {
+        ms: Math.round(performance.now() - prepareStarted),
+        bytes: byteSize(body),
+        leads: patch.changes.leads.length,
+        bookings: patch.changes.bookings.length,
+        activityLogs: patch.changes.activityLogs.length,
+        baseVersion: patch.baseVersion
+      });
       try {
-        const saved = await apiFetch("/api/state", {
-          method: "PUT",
-          body: JSON.stringify({
-            key: DEFAULT_NEON.stateKey,
-            data: payload,
-            expectedVersion: version,
-            updatedBy: currentUser()?.email || "crm",
-            userSession: sessionRecord()?.token || "",
-            userEmail: currentUser()?.email || ""
-          })
+        const uploadStarted = performance.now();
+        const saved = await apiFetch("/api/state-patch", { method: "POST", body });
+        perfInfo("patch upload", {
+          ms: Math.round(performance.now() - uploadStarted),
+          version: Number(saved.version || 0),
+          chunks: saved.totalChunks || 0
         });
         version = Number(saved.version || version + 1);
+        clearSyncedSnapshot(snapshot);
       } catch (err) {
         if (err.status !== 409) throw err;
         setStatus("Merging CRM with latest Neon data...");
-        const latest = await apiFetch(`/api/state?key=${encodeURIComponent(DEFAULT_NEON.stateKey)}`, { method: "GET" });
-        payload = mergeLeads(latest.data || {}, state);
-        const saved = await apiFetch("/api/state", {
-          method: "PUT",
+        const retryPatch = { ...patch, baseVersion: version, retryOf: patch.updatedAt, updatedAt: nowISO() };
+        const retryStarted = performance.now();
+        const saved = await apiFetch("/api/state-patch", {
+          method: "POST",
           body: JSON.stringify({
             key: DEFAULT_NEON.stateKey,
-            data: payload,
-            expectedVersion: Number(latest.version || 0),
+            patch: retryPatch,
             updatedBy: currentUser()?.email || "crm",
             userSession: sessionRecord()?.token || "",
             userEmail: currentUser()?.email || ""
           })
         });
-        version = Number(saved.version || latest.version || version + 1);
-        state = payload;
+        perfInfo("patch retry upload", {
+          ms: Math.round(performance.now() - retryStarted),
+          version: Number(saved.version || 0),
+          chunks: saved.totalChunks || 0
+        });
+        version = Number(saved.version || version + 1);
+        clearSyncedSnapshot(snapshot);
       }
       setStatus(`Saved to Neon at ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`, "success");
       return true;
@@ -292,7 +392,7 @@
       return false;
     } finally {
       saving = false;
-      if (pendingSave || immediate) {
+      if (pendingSave || hasDirtyChanges()) {
         pendingSave = false;
         clearTimeout(saveTimer);
         saveTimer = setTimeout(() => saveState(), 250);
@@ -307,7 +407,7 @@
 
   function logAction(action, target, remark = "") {
     state.activityLogs ||= [];
-    state.activityLogs.unshift({
+    const log = {
       id: uid("log"),
       action,
       target,
@@ -315,7 +415,9 @@
       createdAt: nowISO(),
       updatedAt: nowISO(),
       createdBy: currentUser()?.email || "crm"
-    });
+    };
+    state.activityLogs.unshift(log);
+    markActivityLogDirty(log);
   }
 
   function visibleColumnKeys() {
@@ -633,7 +735,9 @@
   function renderLeads({ reset = false } = {}) {
     const started = performance.now();
     if (reset) renderLimit = CRM_BATCH;
+    const filterStarted = performance.now();
     const leads = filteredLeads();
+    const filterMs = performance.now() - filterStarted;
     const signature = JSON.stringify({
       count: state.leads.length,
       limit: renderLimit,
@@ -651,8 +755,25 @@
     renderColumnControls();
     renderSummary();
     renderReminders();
-    $("leadList").innerHTML = `<div class="table-wrap"><table class="lead-table">${tableHeader()}<tbody>${groupedRows(leads)}</tbody></table></div>`;
+    const htmlStarted = performance.now();
+    const html = `<div class="table-wrap"><table class="lead-table">${tableHeader()}<tbody>${groupedRows(leads)}</tbody></table></div>`;
+    const htmlMs = performance.now() - htmlStarted;
+    const insertStarted = performance.now();
+    $("leadList").innerHTML = html;
+    const insertMs = performance.now() - insertStarted;
     $("leadCountText").textContent = `${Math.min(renderLimit, leads.length)} of ${leads.length} leads shown`;
+    perfInfo("renderLeads", {
+      totalMs: Math.round(performance.now() - started),
+      filterMs: Math.round(filterMs),
+      htmlMs: Math.round(htmlMs),
+      insertMs: Math.round(insertMs),
+      rowsRendered: Math.min(renderLimit, leads.length),
+      filteredLeads: leads.length,
+      crmNodes: document.querySelectorAll("#crm *").length,
+      inputs: document.querySelectorAll("#crm input").length,
+      selects: document.querySelectorAll("#crm select").length,
+      textareas: document.querySelectorAll("#crm textarea").length
+    });
     setStatus(`CRM rendered in ${Math.round(performance.now() - started)} ms.`);
   }
 
@@ -682,6 +803,7 @@
     if (field === "nextFollowUp") lead.followUpAuto = false;
     lead.updatedAt = nowISO();
     lead.updatedBy = currentUser()?.email || "crm";
+    markLeadDirty(lead);
   }
 
   function updateFiltersSoon() {
@@ -737,6 +859,7 @@
         updatedAt: nowISO(),
         updatedBy: currentUser()?.email || "crm"
       });
+      markBookingDirty(booking);
       lead[config.booking] = booking.id;
       lead.status = config.status;
       lead.statusChangedAt = nowISO();
@@ -744,6 +867,7 @@
     }
     lead.updatedAt = nowISO();
     lead.updatedBy = currentUser()?.email || "crm";
+    markLeadDirty(lead);
     queueSave(true);
     renderLeads();
   }
@@ -810,6 +934,7 @@
       lead.nextFollowUp = automaticFollowUp(lead);
       lead.followUpAuto = true;
     }
+    markLeadDirty(lead);
     logAction(isNew ? "CRM Lead Created" : "CRM Lead Updated", lead.childName || lead.parentName || lead.parentPhone || "Lead");
     closeModal();
     hydrateFilters();
@@ -914,6 +1039,8 @@
         if (!lead || !confirm(`Archive ${lead.childName || lead.parentName || "this lead"}?`)) return;
         lead.archived = true;
         lead.updatedAt = nowISO();
+        lead.updatedBy = currentUser()?.email || "crm";
+        markLeadDirty(lead);
         logAction("CRM Lead Archived", lead.childName || lead.parentName || "Lead");
         renderLeads({ reset: true });
         queueSave(true);
