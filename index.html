@@ -2325,7 +2325,9 @@
     const CANCELLED_STATUSES = ["cancelled", "public_holiday", "teacher_leave"];
     const REPLACEMENT_STATUSES = ["Action Needed", "Parent Contacted", "Waiting Parent Confirmation", "Parent Confirmed", "Replacement Booked", "Settled", "No Replacement Needed", "Cancellation Withdrawn"];
     const REPLACEMENT_REASONS = ["Cancelled", "Teacher Leave", "Public Holiday"];
-    const LEAD_STATUSES = ["New Contact", "Follow Up", "No Response", "Assessment", "Trial Class", "Enrolled", "Lost", "Not Interested"];
+    const LEAD_STATUSES = ["New Contact", "Follow Up", "No Response", "Assessment", "Trial Class", "Enrolled", "Registered", "Lost", "Not Interested"];
+    const CRM_FINAL_STATUSES = new Set(["Enrolled", "Registered"]);
+    const isCrmFinalStatus = status => CRM_FINAL_STATUSES.has(String(status || ""));
     const TUTOR_STATUSES = ["New Applicant", "Responded", "Sent Self Introduction Video", "Paid", "Start Training", "Accepted", "Rejected", "Lost", "Onboard"];
     const TUTOR_ONBOARDING_STEPS = ["Contact", "Paid", "Access Learn.Class.One", "Contact Trainer", "Training (Hybrid)", "Passed Demo Class (Record Video)", "Passed Practical Class", "Approved Rate & Onboard"];
     const URGENCIES = ["hot", "warm", "cold"];
@@ -3895,11 +3897,11 @@
         lead.urgency ||= "warm";
         lead.pinnedActive = Boolean(lead.pinnedActive);
         lead.statusChangedAt ||= dateOnly(lead.updatedAt || lead.createdAt || new Date().toISOString());
-        if (lead.status === "Enrolled") lead.enrolledAt ||= dateOnly(lead.statusChangedAt || lead.updatedAt || lead.createdAt || new Date().toISOString());
+        if (isCrmFinalStatus(lead.status)) lead.enrolledAt ||= dateOnly(lead.statusChangedAt || lead.updatedAt || lead.createdAt || new Date().toISOString());
         lead.trialDate2 ||= "";
         lead.trialTime2 ||= "";
         lead.subjects = Array.isArray(lead.subjects) ? lead.subjects : [];
-        if (!lead.nextFollowUp && !isOldImportedLead(lead) && !["Enrolled", "Lost", "Not Interested"].includes(lead.status)) {
+        if (!lead.nextFollowUp && !isOldImportedLead(lead) && !isCrmFinalStatus(lead.status) && !["Lost", "Not Interested"].includes(lead.status)) {
           applyCrmAutomaticFollowUp(lead, true);
         }
       });
@@ -4575,13 +4577,13 @@
     }
 
     function leadEnrolledDate(lead) {
-      if ((lead.status || "") !== "Enrolled") return "";
+      if (!isCrmFinalStatus(lead.status)) return "";
       return dateOnly(lead.enrolledAt || lead.statusChangedAt || lead.updatedAt || lead.createdAt || "");
     }
 
     function leadHasTrialActivityInMonth(lead, month, year) {
       return ["trialDate", "trialDate2", "statusChangedAt", "updatedAt"].some(field => {
-        if (field === "statusChangedAt" || field === "updatedAt") return (lead.status === "Trial Class" || lead.status === "Enrolled") && isDateInMonth(lead[field], month, year);
+        if (field === "statusChangedAt" || field === "updatedAt") return (lead.status === "Trial Class" || isCrmFinalStatus(lead.status)) && isDateInMonth(lead[field], month, year);
         return isDateInMonth(lead[field], month, year);
       });
     }
@@ -4593,7 +4595,7 @@
       const leadsThisMonth = leads.filter(lead => isDateInMonth(lead.createdAt || lead.updatedAt, month, year));
       const monthlyClosing = leads.filter(lead => isDateInMonth(leadEnrolledDate(lead), month, year));
       const trialLeads = leads.filter(lead => leadHasTrialActivityInMonth(lead, month, year));
-      const enrolledFromTrial = trialLeads.filter(lead => (lead.status || "") === "Enrolled" && isDateInMonth(leadEnrolledDate(lead), month, year));
+      const enrolledFromTrial = trialLeads.filter(lead => isCrmFinalStatus(lead.status) && isDateInMonth(leadEnrolledDate(lead), month, year));
       return {
         activeTeachers: teachers.length,
         registeredStudents: registeredStudents.length,
@@ -8022,7 +8024,7 @@
           label: `${cleanStudentName(student.name || "Unnamed student")} - Registered${student.package ? ` - ${student.package}` : ""}`
         }));
       const leads = [...(state.leads || [])]
-        .filter(lead => !lead.archived && !["Enrolled", "Lost", "Not Interested"].includes(lead.status || ""))
+        .filter(lead => !lead.archived && !isCrmFinalStatus(lead.status) && !["Lost", "Not Interested"].includes(lead.status || ""))
         .map(lead => {
           const childName = cleanStudentName(lead.childName || "");
           const fallback = cleanStudentName(lead.parentName || "") || String(lead.parentPhone || "").trim() || "Unnamed lead";
@@ -10211,7 +10213,7 @@
       if (previousStatus && lead.status !== previousStatus) {
         lead.statusChangedAt = todayISO();
       }
-      if (lead.status === "Enrolled" && previousStatus !== "Enrolled") {
+      if (isCrmFinalStatus(lead.status) && !isCrmFinalStatus(previousStatus)) {
         lead.enrolledAt = todayISO();
       }
       if (lead.status === "Assessment" && previousStatus !== "Assessment") {
@@ -10701,7 +10703,7 @@
       if (status === "Assessment" && !lead.assessmentDate) return "Assessment date missing.";
       if (status === "Trial Class" && (!lead.trialDate || !lead.trialDate2)) return "Trial Class missing Trial 1 or Trial 2 date.";
       if (status === "Trial Class" && lead.trialDate < today && lead.trialDate2 < today) return "Both trial classes ended.";
-      if (status === "Enrolled" && !state.students.some(s => cleanStudentName(s.name || "").toLowerCase() === cleanStudentName(lead.childName || "").toLowerCase())) return "Enrolled lead not yet created in Students.";
+      if (isCrmFinalStatus(status) && !state.students.some(s => cleanStudentName(s.name || "").toLowerCase() === cleanStudentName(lead.childName || "").toLowerCase())) return "Registered lead not yet created in Students.";
       if (lead.nextFollowUp && lead.nextFollowUp <= today) return "Follow-up date reached.";
       return "";
     }
@@ -10714,7 +10716,7 @@
       if (status === "No Response") return "Try contacting the parent again, then update the status or next follow-up date.";
       if (status === "Assessment") return reason.includes("missing") ? "Fill assessment date or update status." : "Update to Trial Class, Enrolled, Lost, or Not Interested.";
       if (status === "Trial Class") return reason.includes("missing") ? "Fill Trial 1 and Trial 2 dates." : "Update to Enrolled, Lost, or Not Interested.";
-      if (status === "Enrolled") return "Create or update the student profile.";
+      if (isCrmFinalStatus(status)) return "Create or update the student profile.";
       return "Review lead and update status.";
     }
 
@@ -10758,10 +10760,10 @@
       const urgency = lead.urgency || "warm";
       const due = lead.nextFollowUp && lead.nextFollowUp <= today;
       const nearBooking = [lead.assessmentDate, lead.trialDate].some(date => date && date <= tomorrow);
-      const needsSetup = status === "Enrolled" && !state.students.some(s => String(s.name || "").toLowerCase() === String(lead.childName || "").toLowerCase());
+      const needsSetup = isCrmFinalStatus(status) && !state.students.some(s => String(s.name || "").toLowerCase() === String(lead.childName || "").toLowerCase());
       if (["Lost", "Not Interested"].includes(status)) return "notUrgentNotImportant";
       if (urgency === "hot" || due || nearBooking || needsSetup) {
-        if (["New Contact", "Follow Up", "Assessment", "Trial Class", "Enrolled"].includes(status)) return "urgentImportant";
+        if (["New Contact", "Follow Up", "Assessment", "Trial Class"].includes(status) || isCrmFinalStatus(status)) return "urgentImportant";
         return "urgentNotImportant";
       }
       if (urgency === "warm" || ["Assessment", "Trial Class"].includes(status)) return "notUrgentImportant";
@@ -10844,7 +10846,7 @@
     }
 
     function shouldPreserveImportedLead(lead) {
-      if (lead.pinnedActive || lead.status === "Enrolled" || lead.studentId) return true;
+      if (lead.pinnedActive || isCrmFinalStatus(lead.status) || lead.studentId) return true;
       return state.students.some(student => studentNameKey(student.name) === studentNameKey(lead.childName) && student.status !== "archived");
     }
 
@@ -11185,8 +11187,8 @@
       const status = lead => lead.status || "New Contact";
       const contacted = leads.filter(lead => status(lead) !== "New Contact").length;
       const trialBooked = leads.filter(lead => status(lead) === "Trial Class" || lead.trialDate || lead.trialDate2 || lead.trialBookingId || lead.trialBookingId2).length;
-      const enrolled = leads.filter(lead => status(lead) === "Enrolled").length;
-      const pending = leads.filter(lead => !["Enrolled", "Lost", "Not Interested"].includes(status(lead))).length;
+      const enrolled = leads.filter(lead => isCrmFinalStatus(status(lead))).length;
+      const pending = leads.filter(lead => !isCrmFinalStatus(status(lead)) && !["Lost", "Not Interested"].includes(status(lead))).length;
       const card = (label, value) => `<div class="metric"><span class="subtle">${escapeHtml(label)}</span><strong>${value}</strong><span class="subtle">${escapeHtml(monthKeyLabel(monthKey))}${salesFilter !== "all" ? ` | ${escapeHtml(salesFilter)}` : ""}</span></div>`;
       box.innerHTML = [
         card("Total Leads", leads.length),
@@ -11476,9 +11478,9 @@
     }
 
     function promptSyncEnrolledLeadToStudent(lead, previousStatus = "") {
-      if (!lead || lead.status !== "Enrolled") return false;
+      if (!lead || !isCrmFinalStatus(lead.status)) return false;
       const matchedStudent = state.students.find(s => studentNameKey(s.name) === studentNameKey(lead.childName));
-      if (previousStatus === "Enrolled" && matchedStudent && matchedStudent.status === "registered") return false;
+      if (isCrmFinalStatus(previousStatus) && matchedStudent && matchedStudent.status === "registered") return false;
       lead.status = previousStatus || "Trial Class";
       lead.pendingEnrollment = true;
       pendingEnrollmentLeadId = lead.id;
@@ -12874,13 +12876,14 @@
         });
         const historical = (state.crmHistoricalMonthlyStats || []).find(item => Number(item.year) === year && Number(item.month) === month) || {};
         const liveCountStatus = (status) => leads.filter(lead => lead.status === status).length;
+        const liveFinalStatusCount = () => leads.filter(lead => isCrmFinalStatus(lead.status)).length;
         const statusCount = (status, historicalKey) => liveCountStatus(status) + Number(historical[historicalKey] || 0);
         const total = leads.length + Number(historical.total || 0);
         const newContact = statusCount("New Contact", "newContact");
         const followUp = statusCount("Follow Up", "followUp");
         const assessment = statusCount("Assessment", "assessment");
         const trial = statusCount("Trial Class", "trial");
-        const enrolled = statusCount("Enrolled", "enrolled");
+        const enrolled = liveFinalStatusCount() + Number(historical.enrolled || 0);
         const lost = statusCount("Lost", "lost");
         return {
           month: new Date(year, month, 1).toLocaleString("en", { month: "long" }),

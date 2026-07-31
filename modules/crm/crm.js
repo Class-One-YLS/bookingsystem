@@ -14,7 +14,10 @@
   const CRM_BATCH = 70;
   const CRM_PERF = new URLSearchParams(window.location.search).has("perf");
   const CURRENT_MONTH = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
-  const LEAD_STATUSES = ["New Contact", "Follow Up", "Assessment", "Trial Class", "Enrolled", "No Response", "Not Interested", "Lost"];
+  const CRM_ENROLLMENT_TRIGGER_STATUS = "Enrolled";
+  const CRM_REGISTERED_STATUS = "Registered";
+  const CRM_FINAL_STATUSES = new Set([CRM_ENROLLMENT_TRIGGER_STATUS, CRM_REGISTERED_STATUS]);
+  const LEAD_STATUSES = ["New Contact", "Follow Up", "Assessment", "Trial Class", CRM_ENROLLMENT_TRIGGER_STATUS, CRM_REGISTERED_STATUS, "No Response", "Not Interested", "Lost"];
   const URGENCIES = ["hot", "warm", "cold"];
   const LEAD_SUBJECTS = ["BC", "BM", "BI", "CN", "PK", "Phonics", "BC Exam", "BM Exam", "Speakokid"];
   const CRM_SESSION = {
@@ -69,6 +72,7 @@
   const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch]));
   const dateOnly = value => String(value || "").slice(0, 10);
   const uid = prefix => `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const deterministicId = (prefix, value) => `${prefix}_${String(value || "").replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80) || Date.now().toString(36)}`;
   const nowISO = () => new Date().toISOString();
   const monthKey = value => dateOnly(value).slice(0, 7) || "unknown";
   const timeValue = value => {
@@ -80,6 +84,9 @@
   const leadLatestTime = lead => timeValue(lead.updatedAt || lead.statusChangedAt || lead.createdAt);
   const leadSalespersonKey = lead => String(lead.salesperson || "Unassigned").trim() || "Unassigned";
   const leadStatus = lead => lead.status || "New Contact";
+  const isCrmFinalStatus = status => CRM_FINAL_STATUSES.has(String(status || ""));
+  const isEnrollmentActionStatus = status => String(status || "") === CRM_ENROLLMENT_TRIGGER_STATUS || String(status || "") === CRM_REGISTERED_STATUS;
+  const canonicalLeadStatusAfterSave = status => isEnrollmentActionStatus(status) ? CRM_REGISTERED_STATUS : status;
   const isOldImportedLead = lead => Boolean(lead.oldImported || lead.importedFromSheet || lead.monthlyTabImported);
 
   function perfInfo(label, details = {}) {
@@ -167,6 +174,10 @@
     if (!el) return;
     el.textContent = message;
     el.dataset.type = type;
+  }
+
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   async function ensureCrmMarkup() {
@@ -348,13 +359,17 @@
     snapshot.activityLogs.forEach(([id, record]) => clearIfUnchanged(dirtyActivityLogs, id, record));
   }
 
-  async function saveState({ immediate = false } = {}) {
+  async function saveState({ immediate = false, waitForActive = false } = {}) {
     if (!userCanEdit()) {
       setStatus("You do not have permission to edit CRM Leads.", "error");
       return false;
     }
     if (saving) {
       pendingSave = true;
+      if (waitForActive) {
+        for (let attempt = 0; attempt < 80 && saving; attempt += 1) await sleep(100);
+        if (!saving) return saveState({ immediate, waitForActive: false });
+      }
       return false;
     }
     saving = true;
@@ -923,8 +938,8 @@
     return { ok: true };
   }
 
-  function syncEnrollmentSlotsToTeachers(student, previousSlots = []) {
-    const nextSlots = enrollmentRegularSlotsDraft.map(slot => ({ ...slot }));
+  function syncEnrollmentSlotsToTeachers(student, previousSlots = [], nextSlotsInput = null) {
+    const nextSlots = (nextSlotsInput || enrollmentRegularSlotsDraft).map(slot => ({ ...slot }));
     const nextIds = new Set(nextSlots.map(slot => slot.id));
     const previousIds = new Set(previousSlots.map(slot => slot.id).filter(Boolean));
     const affected = new Set([...previousSlots, ...nextSlots].map(slot => slot.teacherId).filter(Boolean));
@@ -942,7 +957,7 @@
         if (String(studentSlot.teacherId || "") !== String(teacher.id || "")) return;
         let teacherSlot = teacher.regularSlots.find(slot => slot.studentSlotId === studentSlot.id);
         if (!teacherSlot) {
-          teacherSlot = { id: uid("slot"), source: "student-profile", locked: true, createdAt: now };
+          teacherSlot = { id: studentSlot.teacherSlotId || deterministicId("slot", studentSlot.id), source: "student-profile", locked: true, createdAt: now };
           teacher.regularSlots.push(teacherSlot);
         }
         Object.assign(teacherSlot, {
@@ -963,8 +978,58 @@
         });
         changed = true;
       });
-      if (changed || affected.has(teacher.id)) markTeacherDirty(teacher);
+      if (changed || affected.has(teacher.id)) {
+        teacher.updatedAt = now;
+        teacher.updatedBy = currentUser()?.email || "crm";
+        markTeacherDirty(teacher);
+      }
     });
+  }
+
+  function studentIdForEnrollment(lead, name) {
+    return $("crmEnrollmentStudentId").value
+      || lead.linkedStudentId
+      || lead.studentId
+      || studentByName(name)?.id
+      || deterministicId("student_crm", lead.id);
+  }
+
+  function enrollmentSlotRecordsForStudent(studentId) {
+    const now = nowISO();
+    return enrollmentRegularSlotsDraft.map(slot => ({
+      ...slot,
+      id: slot.id || uid("student_slot"),
+      teacherSlotId: slot.teacherSlotId || deterministicId("slot", slot.id || `${studentId}_${slot.teacherId}_${slot.day}_${slot.time}`),
+      studentId,
+      type: "regular class",
+      minutes: Number(slot.minutes || 30),
+      startDate: dateOnly(slot.startDate),
+      endDate: dateOnly(slot.endDate),
+      createdAt: slot.createdAt || now,
+      updatedAt: now,
+      updatedBy: currentUser()?.email || "crm"
+    }));
+  }
+
+  function registerStudentWithRegularClasses({ lead, studentData, regularSlots }) {
+    const id = studentData.id;
+    let student = studentById(id);
+    const isNew = !student;
+    if (!student) {
+      student = { id, createdAt: nowISO(), regularSlots: [] };
+      state.students.unshift(student);
+    }
+    const previousRegularSlots = Array.isArray(student.regularSlots) ? student.regularSlots.map(slot => ({ ...slot })) : [];
+    Object.assign(student, {
+      ...studentData,
+      id,
+      regularSlots,
+      updatedAt: nowISO(),
+      updatedBy: currentUser()?.email || "crm"
+    });
+    syncEnrollmentSlotsToTeachers(student, previousRegularSlots, regularSlots);
+    markStudentDirty(student);
+    return { student, isNew };
   }
 
   function leadSubject(lead) {
@@ -1089,13 +1154,13 @@
       .filter(lead => sales === "all" || leadSalespersonKey(lead) === sales);
     const contacted = leads.filter(lead => leadStatus(lead) !== "New Contact").length;
     const trialBooked = leads.filter(lead => leadStatus(lead) === "Trial Class" || lead.trialDate || lead.trialDate2 || lead.trialBookingId || lead.trialBookingId2).length;
-    const enrolled = leads.filter(lead => leadStatus(lead) === "Enrolled").length;
-    const pending = leads.filter(lead => !["Enrolled", "Lost", "Not Interested"].includes(leadStatus(lead))).length;
+    const enrolled = leads.filter(lead => isCrmFinalStatus(leadStatus(lead))).length;
+    const pending = leads.filter(lead => !isCrmFinalStatus(leadStatus(lead)) && !["Lost", "Not Interested"].includes(leadStatus(lead))).length;
     $("leadMonthSummary").innerHTML = [
       ["Total Leads", leads.length],
       ["Contacted", contacted],
       ["Trial Booked", trialBooked],
-      ["Enrolled", enrolled],
+      ["Registered", enrolled],
       ["Pending", pending]
     ].map(([label, value]) => `<div class="metric"><span class="subtle">${escapeHtml(label)}</span><strong>${value}</strong><span class="subtle">${escapeHtml(monthLabel(month))}</span></div>`).join("");
   }
@@ -1104,7 +1169,7 @@
     const box = $("leadReminderBox");
     if (!box) return;
     const today = dateOnly(new Date().toISOString());
-    const reminders = (state.leads || []).filter(lead => !lead.archived && !isOldImportedLead(lead) && lead.nextFollowUp && lead.nextFollowUp <= today && !["Enrolled", "Lost", "Not Interested"].includes(leadStatus(lead)));
+    const reminders = (state.leads || []).filter(lead => !lead.archived && !isOldImportedLead(lead) && lead.nextFollowUp && lead.nextFollowUp <= today && !isCrmFinalStatus(leadStatus(lead)) && !["Lost", "Not Interested"].includes(leadStatus(lead)));
     box.innerHTML = `<button class="metric" id="openLeadActionModalBtn" style="width:100%;"><span class="subtle">CRM Needs Action</span><strong>${reminders.length}</strong><span class="subtle">Active leads that require follow-up or a status update.</span></button>`;
   }
 
@@ -1443,41 +1508,41 @@
       dirtyActivityLogs: new Map(dirtyActivityLogs)
     };
     try {
-      const id = $("crmEnrollmentStudentId").value || lead.studentId || studentByName(name)?.id || uid("student");
-      let student = studentById(id);
-      const isNew = !student;
-      if (!student) {
-        student = { id, createdAt: nowISO(), regularSlots: [] };
-        state.students.unshift(student);
-      }
-      const previousRegularSlots = Array.isArray(student.regularSlots) ? student.regularSlots.map(slot => ({ ...slot })) : [];
-      Object.assign(student, {
-        name,
-        parentName: $("crmEnrollmentParentName").value.trim(),
-        parentPhone: $("crmEnrollmentParentPhone").value.trim(),
-        parentEmail: $("crmEnrollmentParentEmail").value.trim(),
-        subjects,
-        subject: subjects[0] || "",
-        package: packageName,
-        packageAmount: Number($("crmEnrollmentPackageAmount").value || 0),
-        packageClasses: Number($("crmEnrollmentPackageClasses").value || 0),
-        packageNotes: $("crmEnrollmentPackageNotes").value.trim(),
-        registeredStatus: $("crmEnrollmentRegisteredStatus").value || "new",
-        registeredRemark: $("crmEnrollmentRegisteredRemark").value.trim(),
-        status: $("crmEnrollmentStudentStatus").value || "registered",
-        regularSlots: enrollmentRegularSlotsDraft.map(slot => ({ ...slot, updatedAt: nowISO() })),
-        crmLeadId: lead.id,
-        updatedAt: nowISO(),
-        updatedBy: currentUser()?.email || "crm"
+      setStatus("Creating student and regular classes...");
+      const id = studentIdForEnrollment(lead, name);
+      const regularSlots = enrollmentSlotRecordsForStudent(id);
+      const { student, isNew } = registerStudentWithRegularClasses({
+        lead,
+        regularSlots,
+        studentData: {
+          id,
+          name,
+          parentName: $("crmEnrollmentParentName").value.trim(),
+          parentPhone: $("crmEnrollmentParentPhone").value.trim(),
+          parentEmail: $("crmEnrollmentParentEmail").value.trim(),
+          subjects,
+          subject: subjects[0] || "",
+          package: packageName,
+          packageAmount: Number($("crmEnrollmentPackageAmount").value || 0),
+          packageClasses: Number($("crmEnrollmentPackageClasses").value || 0),
+          packageNotes: $("crmEnrollmentPackageNotes").value.trim(),
+          registeredStatus: $("crmEnrollmentRegisteredStatus").value || "new",
+          registeredRemark: $("crmEnrollmentRegisteredRemark").value.trim(),
+          status: $("crmEnrollmentStudentStatus").value || "registered",
+          crmLeadId: lead.id,
+          registeredAt: nowISO(),
+          registeredBy: currentUser()?.email || "crm"
+        }
       });
-      syncEnrollmentSlotsToTeachers(student, previousRegularSlots);
-      markStudentDirty(student);
       Object.assign(lead, {
-        status: "Enrolled",
+        status: CRM_REGISTERED_STATUS,
         pendingEnrollment: false,
+        registeredAt: nowISO(),
+        registeredBy: currentUser()?.email || "crm",
         enrolledAt: dateOnly(nowISO()),
         enrolledBy: currentUser()?.email || "crm",
         studentId: student.id,
+        linkedStudentId: student.id,
         packageInterested: student.package,
         subjects: [...student.subjects],
         nextFollowUp: "",
@@ -1488,15 +1553,16 @@
       });
       markLeadDirty(lead);
       logAction(isNew ? "Student Added" : "Student Updated", student.name, `Created from CRM lead ${enrollmentContextName(lead)}.`);
-      logAction("CRM Lead Enrolled", lead.childName || lead.parentName || lead.id, `Linked student: ${student.name}.`);
-      const synced = await saveState({ immediate: true });
-      if (!synced) throw new Error(lastSaveErrorMessage || "Unable to sync enrollment to Neon. Please retry.");
+      logAction("CRM Lead Registered", lead.childName || lead.parentName || lead.id, `Linked student: ${student.name}.`);
+      const synced = await saveState({ immediate: true, waitForActive: true });
+      if (!synced) throw new Error(lastSaveErrorMessage || "Unable to sync registration to Neon. Please retry.");
+      $("crmEnrollmentStudentId").value = student.id;
       $("crmEnrollmentStudentModal").classList.add("hide");
       pendingEnrollment = null;
       enrollmentRegularSlotsDraft = [];
       updateLeadRowOrRender(lead.id);
       hydrateFilters();
-      setStatus("Student created and lead enrolled in Neon.", "success");
+      setStatus(`Student registered successfully. ${student.name} has been added to the Student List, and the regular class schedule has been added to the Weekly Timetable.`, "success");
     } catch (err) {
       state.leads = rollbackState.leads || [];
       state.students = rollbackState.students || [];
@@ -1508,7 +1574,7 @@
       dirtyActivityLogs = rollbackState.dirtyActivityLogs;
       clearTimeout(saveTimer);
       if (hasDirtyChanges()) queueSave();
-      setEnrollmentError(`Student could not be created. ${err.message || err}`);
+      setEnrollmentError(`Student could not be registered. ${err.message || err}`);
       $("crmEnrollmentSaveBtn").disabled = false;
       pendingEnrollment.saving = false;
     }
@@ -1523,6 +1589,7 @@
   }
 
   function updateLeadField(lead, field, value) {
+    if (field === "status") value = canonicalLeadStatusAfterSave(value);
     if (field === "subjects") lead.subjects = [...new Set(String(value).split(",").map(item => item.trim()).filter(Boolean))];
     else if (field === "createdAt") lead.createdAt = value ? `${value}T12:00:00.000Z` : "";
     else lead[field] = value;
@@ -1656,7 +1723,8 @@
     const isNew = !lead;
     const requestedStatus = $("leadStatus").value;
     const previousStatus = leadStatus(lead || {});
-    const shouldOpenEnrollment = requestedStatus === "Enrolled" && !(lead?.studentId && studentById(lead.studentId));
+    const hasLinkedStudent = Boolean((lead?.studentId && studentById(lead.studentId)) || (lead?.linkedStudentId && studentById(lead.linkedStudentId)));
+    const shouldOpenEnrollment = isEnrollmentActionStatus(requestedStatus) && !hasLinkedStudent;
     if (!lead) {
       lead = { id: uid("lead"), createdAt: nowISO(), status: "New Contact", urgency: "warm" };
       state.leads.unshift(lead);
@@ -1668,7 +1736,7 @@
       childAge: $("leadChildAge").value.trim(),
       source: $("leadSource").value.trim(),
       salesperson: $("leadSalesperson").value.trim(),
-      status: shouldOpenEnrollment ? (previousStatus === "Enrolled" ? "New Contact" : previousStatus) : requestedStatus,
+      status: shouldOpenEnrollment ? (isEnrollmentActionStatus(previousStatus) ? "New Contact" : previousStatus) : canonicalLeadStatusAfterSave(requestedStatus),
       urgency: $("leadUrgency").value,
       motherTongue: $("leadMotherTongue").value.trim(),
       packageInterested: $("leadPackage").value.trim(),
@@ -1839,12 +1907,13 @@
         const lead = leadById(leadId);
         if (!lead) return;
         const previousStatus = leadStatus(lead);
-        if (field === "status" && String(quick.value || "") === "Enrolled" && !(lead.studentId && studentById(lead.studentId))) {
+        const hasLinkedStudent = Boolean((lead.studentId && studentById(lead.studentId)) || (lead.linkedStudentId && studentById(lead.linkedStudentId)));
+        if (field === "status" && isEnrollmentActionStatus(String(quick.value || "")) && !hasLinkedStudent) {
           quick.value = previousStatus;
           openEnrollmentStudentForm(lead, previousStatus, quick);
           return;
         }
-        updateLeadField(lead, field, String(quick.value || "").trim());
+        updateLeadField(lead, field, field === "status" ? canonicalLeadStatusAfterSave(String(quick.value || "").trim()) : String(quick.value || "").trim());
         logAction("CRM Lead Table Updated", lead.childName || lead.parentName || lead.parentPhone || "Lead", `Changed ${field}.`);
         renderSummary();
         renderReminders();
