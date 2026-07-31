@@ -61,6 +61,8 @@
   let dirtyActivityLogs = new Map();
   let pendingEnrollment = null;
   let enrollmentRegularSlotsDraft = [];
+  let enrollmentAvailabilityRequest = 0;
+  let lastSaveErrorMessage = "";
 
   const $ = id => document.getElementById(id);
   const safeJson = value => JSON.parse(JSON.stringify(value || null));
@@ -252,6 +254,8 @@
     state.teachers ||= [];
     state.students ||= [];
     state.bookings ||= [];
+    state.teacherLeaves ||= [];
+    state.publicHolidays ||= [];
     state.activityLogs ||= [];
     if (!hasCrmAccess()) {
       $("crmContent").innerHTML = `<div class="panel"><h2>No Access</h2><p class="subtle">You do not have permission to access CRM Leads.</p><a class="btn ghost" href="./index.html">Back to Dashboard</a></div>`;
@@ -354,6 +358,7 @@
       return false;
     }
     saving = true;
+    lastSaveErrorMessage = "";
     setStatus("Syncing CRM changes...");
     try {
       const prepareStarted = performance.now();
@@ -416,6 +421,7 @@
       setStatus(`Saved to Neon at ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`, "success");
       return true;
     } catch (err) {
+      lastSaveErrorMessage = err.message || String(err);
       setStatus(`Save failed. Your change is still on this page: ${err.message}`, "error");
       return false;
     } finally {
@@ -566,6 +572,7 @@
     $("crmEnrollmentRegularSubject").innerHTML = selected.length
       ? selected.map(subject => `<option value="${escapeHtml(subject)}" ${subject === current ? "selected" : ""}>${escapeHtml(subject)}</option>`).join("")
       : `<option value="">Choose subject first</option>`;
+    refreshEnrollmentAvailableTimes();
   }
 
   function renderEnrollmentTeacherOptions(selected = "") {
@@ -573,7 +580,8 @@
   }
 
   function renderEnrollmentTimeOptions(selected = "") {
-    $("crmEnrollmentTime").innerHTML = `<option value="">Choose time</option>${timeOptions().map(time => `<option value="${escapeHtml(time)}" ${time === selected ? "selected" : ""}>${escapeHtml(timeLabel(time))}</option>`).join("")}`;
+    $("crmEnrollmentTime").innerHTML = `<option value="">Choose teacher first</option>`;
+    $("crmEnrollmentTime").disabled = true;
   }
 
   function renderEnrollmentDayChecks(days = []) {
@@ -582,12 +590,249 @@
     $("crmEnrollmentDayChecks").innerHTML = names.map(day => `<label class="chip"><input type="checkbox" value="${escapeHtml(day)}" ${selected.has(day) ? "checked" : ""}> ${escapeHtml(day.slice(0, 3))}</label>`).join("");
   }
 
+  function addMonthsISO(dateISO, months) {
+    const date = new Date(`${dateISO}T12:00:00`);
+    if (Number.isNaN(date.getTime())) return "";
+    date.setMonth(date.getMonth() + months);
+    return dateOnly(date.toISOString());
+  }
+
+  function rangesOverlap(startA, endA, startB, endB) {
+    const aStart = dateOnly(startA) || "0000-01-01";
+    const aEnd = dateOnly(endA) || "9999-12-31";
+    const bStart = dateOnly(startB) || "0000-01-01";
+    const bEnd = dateOnly(endB) || "9999-12-31";
+    return aStart <= bEnd && bStart <= aEnd;
+  }
+
+  function maxISODate(a, b) {
+    a = dateOnly(a);
+    b = dateOnly(b);
+    if (!a) return b;
+    if (!b) return a;
+    return a > b ? a : b;
+  }
+
+  function minISODate(a, b) {
+    a = dateOnly(a);
+    b = dateOnly(b);
+    if (!a) return b;
+    if (!b) return a;
+    return a < b ? a : b;
+  }
+
+  function recurringValidationEnd(startDate, endDate) {
+    return dateOnly(endDate) || addMonthsISO(startDate, 12);
+  }
+
+  function timeRangeOverlaps(startA, durationA, startB, durationB) {
+    const aStart = minutes(startA);
+    const bStart = minutes(startB);
+    const aEnd = aStart + Math.max(1, Number(durationA || 30));
+    const bEnd = bStart + Math.max(1, Number(durationB || 30));
+    return aStart < bEnd && bStart < aEnd;
+  }
+
+  function activeRecord(record) {
+    if (!record) return false;
+    if (record.archived || record.deleted || record.status === "deleted") return false;
+    return true;
+  }
+
+  function activeLeaveRecord(leave) {
+    return activeRecord(leave) && !["cancelled", "undone"].includes(String(leave.status || "active").toLowerCase());
+  }
+
+  function inactiveBookingStatus(status) {
+    return ["cancelled", "public_holiday"].includes(String(status || "").toLowerCase());
+  }
+
+  function teacherOpenSlotCovers(teacher, day, time, startDate, endDate) {
+    return (teacher?.regularSlots || []).some(slot => {
+      if (!activeRecord(slot)) return false;
+      if (String(slot.day || slot.weekday || "") !== day) return false;
+      if (!timeRangeOverlaps(slot.time || slot.startTime || "", slot.minutes || slot.duration || 30, time, 30)) return false;
+      if (slot.studentName || slot.studentId || slot.locked) return false;
+      if (slot.status === "off" || slot.unavailable) return false;
+      if (!rangesOverlap(slot.startDate || "", slot.endDate || "", startDate, endDate)) return false;
+      if (slot.startDate && dateOnly(slot.startDate) > startDate) return false;
+      if (slot.endDate && dateOnly(slot.endDate) < endDate) return false;
+      return true;
+    });
+  }
+
+  function teacherRecurringConflict(teacher, day, time, startDate, endDate, ignoredStudentSlotId = "") {
+    return (teacher?.regularSlots || []).find(slot => {
+      if (!activeRecord(slot)) return false;
+      if (String(slot.day || slot.weekday || "") !== day) return false;
+      if (String(slot.studentSlotId || "") === String(ignoredStudentSlotId || "")) return false;
+      if (!timeRangeOverlaps(slot.time || slot.startTime || "", slot.minutes || slot.duration || 30, time, 30)) return false;
+      if (!rangesOverlap(slot.startDate || "", slot.endDate || "", startDate, endDate)) return false;
+      if (slot.studentName || slot.studentId || slot.locked || slot.unavailable || slot.status === "off") return slot;
+      return null;
+    }) || null;
+  }
+
+  function dateInRange(date, startDate, endDate) {
+    const iso = dateOnly(date);
+    return iso && iso >= startDate && iso <= endDate;
+  }
+
+  function eachDateInRange(startDate, endDate, callback) {
+    const current = new Date(`${startDate}T12:00:00`);
+    const end = new Date(`${endDate}T12:00:00`);
+    if (Number.isNaN(current.getTime()) || Number.isNaN(end.getTime())) return;
+    while (current <= end) {
+      const iso = dateOnly(current.toISOString());
+      if (callback(iso) === true) return;
+      current.setDate(current.getDate() + 1);
+    }
+  }
+
+  function exactBookingConflict(teacherId, day, time, startDate, endDate, currentBookingId = "") {
+    return (state.bookings || []).find(booking => {
+      if (!activeRecord(booking)) return false;
+      if (String(booking.id || "") === String(currentBookingId || "")) return false;
+      if (String(booking.teacherId || "") !== String(teacherId || "")) return false;
+      const date = dateOnly(booking.date);
+      if (!dateInRange(date, startDate, endDate)) return false;
+      if (dayName(date) !== day) return false;
+      if (inactiveBookingStatus(booking.status)) return false;
+      return timeRangeOverlaps(booking.time || booking.startTime || "", booking.minutes || booking.duration || 30, time, 30);
+    }) || null;
+  }
+
+  function teacherLeaveConflict(teacherId, day, time, startDate, endDate) {
+    return (state.teacherLeaves || []).find(leave => {
+      if (!activeLeaveRecord(leave)) return false;
+      if (String(leave.teacherId || "") !== String(teacherId || "")) return false;
+      const leaveStart = dateOnly(leave.startDate || leave.date);
+      const leaveEnd = dateOnly(leave.endDate || leave.date || leaveStart);
+      if (!rangesOverlap(leaveStart, leaveEnd, startDate, endDate)) return false;
+      let touchesDay = false;
+      eachDateInRange(maxISODate(leaveStart, startDate), minISODate(leaveEnd, endDate), iso => {
+        if (dayName(iso) === day) {
+          touchesDay = true;
+          return true;
+        }
+        return false;
+      });
+      if (!touchesDay) return false;
+      const start = leave.startTime || leave.fromTime || "";
+      const end = leave.endTime || leave.toTime || "";
+      if (!start && !end) return true;
+      const leaveStartMinutes = minutes(start || "00:00");
+      const leaveEndMinutes = minutes(end || "23:59") + 1;
+      const slotStart = minutes(time);
+      const slotEnd = slotStart + 30;
+      return slotStart < leaveEndMinutes && leaveStartMinutes < slotEnd;
+    }) || null;
+  }
+
+  function publicHolidayConflict(day, startDate, endDate) {
+    return (state.publicHolidays || []).find(holiday => {
+      if (!activeRecord(holiday)) return false;
+      const holidayStart = dateOnly(holiday.startDate || holiday.date);
+      const holidayEnd = dateOnly(holiday.endDate || holiday.date || holidayStart);
+      if (!rangesOverlap(holidayStart, holidayEnd, startDate, endDate)) return false;
+      let touchesDay = false;
+      eachDateInRange(maxISODate(holidayStart, startDate), minISODate(holidayEnd, endDate), iso => {
+        if (dayName(iso) === day) {
+          touchesDay = true;
+          return true;
+        }
+        return false;
+      });
+      return touchesDay;
+    }) || null;
+  }
+
+  function dateSpecificOverrideConflict(teacherId, day, time, startDate, endDate) {
+    const teacher = teacherById(teacherId);
+    return (teacher?.overrideSlots || []).find(slot => {
+      if (!activeRecord(slot)) return false;
+      if (!slot.date || !dateInRange(slot.date, startDate, endDate)) return false;
+      if (dayName(slot.date) !== day) return false;
+      if (!timeRangeOverlaps(slot.time || slot.startTime || "", slot.minutes || slot.duration || 30, time, 30)) return false;
+      return slot.unavailable || ["off", "teacher_leave", "public_holiday"].includes(String(slot.status || "").toLowerCase());
+    }) || null;
+  }
+
+  function enrollmentPendingConflict(candidate, ignoredId = "") {
+    return enrollmentRegularSlotsDraft.find(slot => {
+      if (String(slot.id || "") === String(ignoredId || "")) return false;
+      if (String(slot.teacherId || "") !== String(candidate.teacherId || "")) return false;
+      if (String(slot.day || "") !== String(candidate.day || "")) return false;
+      if (!rangesOverlap(slot.startDate || "", slot.endDate || "", candidate.startDate || "", candidate.endDate || "")) return false;
+      return timeRangeOverlaps(slot.time, 30, candidate.time, 30);
+    }) || null;
+  }
+
+  function enrollmentAvailabilityReason(candidate) {
+    const teacher = teacherById(candidate.teacherId);
+    const startDate = dateOnly(candidate.startDate);
+    const endDate = recurringValidationEnd(startDate, candidate.endDate);
+    if (!teacher) return "Choose a valid active teacher.";
+    if (candidate.subject && !(teacher.subjects || []).map(item => String(item || "").trim().toLowerCase()).includes(String(candidate.subject || "").trim().toLowerCase())) {
+      return `${teacherNameById(candidate.teacherId)} does not teach ${candidate.subject}.`;
+    }
+    if (!startDate) return "Choose an effective start date first.";
+    if (!candidate.day) return "Choose a day first.";
+    if (!candidate.time) return "Choose an available time first.";
+    if (!teacherOpenSlotCovers(teacher, candidate.day, candidate.time, startDate, endDate)) {
+      return `${teacherNameById(candidate.teacherId)} is not open on ${candidate.day} at ${timeLabel(candidate.time)} for the selected period.`;
+    }
+    const recurring = teacherRecurringConflict(teacher, candidate.day, candidate.time, startDate, endDate, candidate.ignoredStudentSlotId || "");
+    if (recurring) return `${teacherNameById(candidate.teacherId)} already has ${recurring.studentName || "another class"} on ${candidate.day} at ${timeLabel(recurring.time || candidate.time)}.`;
+    const booking = exactBookingConflict(candidate.teacherId, candidate.day, candidate.time, startDate, endDate, candidate.currentBookingId || "");
+    if (booking) return `${teacherNameById(candidate.teacherId)} already has ${booking.studentName || "another class"} on ${dateLabel(dateOnly(booking.date))} at ${timeLabel(booking.time || candidate.time)}.`;
+    const leave = teacherLeaveConflict(candidate.teacherId, candidate.day, candidate.time, startDate, endDate);
+    if (leave) return `${teacherNameById(candidate.teacherId)} is on leave during this selected period.`;
+    const holiday = publicHolidayConflict(candidate.day, startDate, startDate);
+    if (holiday) return `${teacherNameById(candidate.teacherId)} is unavailable because of ${holiday.name || "a public holiday"} on the effective start date.`;
+    const override = dateSpecificOverrideConflict(candidate.teacherId, candidate.day, candidate.time, startDate, endDate);
+    if (override) return `${teacherNameById(candidate.teacherId)} has this slot marked unavailable on ${dateLabel(dateOnly(override.date))}.`;
+    const pending = enrollmentPendingConflict(candidate, candidate.ignoredStudentSlotId || "");
+    if (pending) return `This enrollment form already includes ${teacherNameById(candidate.teacherId)} on ${candidate.day} at ${timeLabel(candidate.time)}.`;
+    return "";
+  }
+
+  function availableEnrollmentTimes() {
+    const teacherId = $("crmEnrollmentTeacher")?.value || "";
+    const startDate = dateOnly($("crmEnrollmentRegularStartDate")?.value || "");
+    const endDate = dateOnly($("crmEnrollmentRegularEndDate")?.value || "");
+    const subject = $("crmEnrollmentRegularSubject")?.value || "";
+    const days = selectedEnrollmentDays();
+    if (!teacherId) return { disabled: true, placeholder: "Choose teacher first", times: [] };
+    if (!startDate) return { disabled: true, placeholder: "Choose start date first", times: [] };
+    if (!days.length) return { disabled: true, placeholder: "Choose day first", times: [] };
+    const times = timeOptions().filter(time => days.every(day => !enrollmentAvailabilityReason({ teacherId, day, time, startDate, endDate, subject })));
+    return { disabled: !times.length, placeholder: times.length ? "Choose available time" : "No available times", times };
+  }
+
+  function refreshEnrollmentAvailableTimes() {
+    const timeSelect = $("crmEnrollmentTime");
+    if (!timeSelect) return;
+    const requestId = ++enrollmentAvailabilityRequest;
+    const previous = timeSelect.value;
+    timeSelect.disabled = true;
+    timeSelect.innerHTML = `<option value="">Loading available times...</option>`;
+    requestAnimationFrame(() => {
+      if (requestId !== enrollmentAvailabilityRequest) return;
+      const result = availableEnrollmentTimes();
+      const keepPrevious = previous && result.times.includes(previous);
+      timeSelect.innerHTML = `<option value="">${escapeHtml(result.placeholder)}</option>${result.times.map(time => `<option value="${escapeHtml(time)}" ${keepPrevious && time === previous ? "selected" : ""}>${escapeHtml(timeLabel(time))}</option>`).join("")}`;
+      timeSelect.disabled = result.disabled;
+    });
+  }
+
   function resetEnrollmentSlotInputs() {
     $("crmEnrollmentTeacher").value = "";
     $("crmEnrollmentTime").value = "";
     $("crmEnrollmentRegularStartDate").value = "";
     $("crmEnrollmentRegularEndDate").value = "";
     renderEnrollmentDayChecks();
+    refreshEnrollmentAvailableTimes();
   }
 
   function renderEnrollmentRegularSlots() {
@@ -614,6 +859,12 @@
     if (!selectedEnrollmentSubjects().includes(subject)) return setEnrollmentError("Choose a regular subject that is included under Subject Taken.");
     if (endDate && !startDate) return setEnrollmentError("Choose an effective start date when using an end date.");
     if (startDate && endDate && endDate < startDate) return setEnrollmentError("Effective end date cannot be before the start date.");
+    const conflict = days.map(day => enrollmentAvailabilityReason({ teacherId, day, time, startDate, endDate, subject })).find(Boolean);
+    if (conflict) {
+      $("crmEnrollmentTime").value = "";
+      refreshEnrollmentAvailableTimes();
+      return setEnrollmentError(conflict);
+    }
     days.forEach(day => {
       enrollmentRegularSlotsDraft.push({ id: uid("student_slot"), teacherId, day, time, subject, startDate: startDate || "", endDate: endDate || "", createdAt: nowISO(), updatedAt: nowISO() });
     });
@@ -625,6 +876,23 @@
   function removeEnrollmentRegularSlot(id) {
     enrollmentRegularSlotsDraft = enrollmentRegularSlotsDraft.filter(slot => String(slot.id) !== String(id));
     renderEnrollmentRegularSlots();
+    refreshEnrollmentAvailableTimes();
+  }
+
+  function validateEnrollmentRegularSlots() {
+    for (const slot of enrollmentRegularSlotsDraft) {
+      const reason = enrollmentAvailabilityReason({
+        teacherId: slot.teacherId,
+        day: slot.day,
+        time: slot.time,
+        subject: slot.subject,
+        startDate: slot.startDate,
+        endDate: slot.endDate,
+        ignoredStudentSlotId: slot.id
+      });
+      if (reason) return { ok: false, slot, reason };
+    }
+    return { ok: true };
   }
 
   function syncEnrollmentSlotsToTeachers(student, previousSlots = []) {
@@ -1094,6 +1362,7 @@
     renderEnrollmentTimeOptions();
     renderEnrollmentDayChecks();
     renderEnrollmentRegularSlots();
+    refreshEnrollmentAvailableTimes();
     setEnrollmentError("");
     $("crmEnrollmentSaveBtn").disabled = false;
     $("crmEnrollmentStudentModal").classList.remove("hide");
@@ -1126,6 +1395,12 @@
     if (!subjects.length) return setEnrollmentError("Choose at least one subject taken.");
     if (!packageName) return setEnrollmentError("Choose or type the student's package first.");
     if (!enrollmentRegularSlotsDraft.length) return setEnrollmentError("Add at least one regular class teacher, day and time to complete enrollment.");
+    const slotValidation = validateEnrollmentRegularSlots();
+    if (!slotValidation.ok) {
+      setEnrollmentError(`${slotValidation.reason} The student has not been created.`);
+      refreshEnrollmentAvailableTimes();
+      return;
+    }
     pendingEnrollment.saving = true;
     $("crmEnrollmentSaveBtn").disabled = true;
     setEnrollmentError("");
@@ -1187,7 +1462,7 @@
       logAction(isNew ? "Student Added" : "Student Updated", student.name, `Created from CRM lead ${enrollmentContextName(lead)}.`);
       logAction("CRM Lead Enrolled", lead.childName || lead.parentName || lead.id, `Linked student: ${student.name}.`);
       const synced = await saveState({ immediate: true });
-      if (!synced) throw new Error("Unable to sync enrollment to Neon. Please retry.");
+      if (!synced) throw new Error(lastSaveErrorMessage || "Unable to sync enrollment to Neon. Please retry.");
       $("crmEnrollmentStudentModal").classList.add("hide");
       pendingEnrollment = null;
       enrollmentRegularSlotsDraft = [];
@@ -1450,6 +1725,8 @@
     document.querySelectorAll("[data-enrollment-cancel]").forEach(btn => btn.onclick = () => closeEnrollmentStudentForm(true));
     $("crmEnrollmentAddSlotBtn").onclick = addEnrollmentRegularSlot;
     $("crmEnrollmentSubjectChecks").addEventListener("change", renderEnrollmentSubjectOptions);
+    ["crmEnrollmentTeacher", "crmEnrollmentRegularStartDate", "crmEnrollmentRegularEndDate", "crmEnrollmentRegularSubject"].forEach(id => $(id).addEventListener("change", refreshEnrollmentAvailableTimes));
+    $("crmEnrollmentDayChecks").addEventListener("change", refreshEnrollmentAvailableTimes);
     $("crmEnrollmentRegularSlotList").addEventListener("click", event => {
       const remove = event.target.closest("[data-remove-enrollment-slot]");
       if (remove) removeEnrollmentRegularSlot(remove.dataset.removeEnrollmentSlot);
