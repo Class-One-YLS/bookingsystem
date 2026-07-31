@@ -56,7 +56,11 @@
   let workspaceExpanded = false;
   let dirtyLeads = new Map();
   let dirtyBookings = new Map();
+  let dirtyStudents = new Map();
+  let dirtyTeachers = new Map();
   let dirtyActivityLogs = new Map();
+  let pendingEnrollment = null;
+  let enrollmentRegularSlotsDraft = [];
 
   const $ = id => document.getElementById(id);
   const safeJson = value => JSON.parse(JSON.stringify(value || null));
@@ -246,6 +250,7 @@
     version = Number(result.version || state.settings?.neonVersion || 0);
     state.leads ||= [];
     state.teachers ||= [];
+    state.students ||= [];
     state.bookings ||= [];
     state.activityLogs ||= [];
     if (!hasCrmAccess()) {
@@ -272,18 +277,28 @@
     if (booking?.id) dirtyBookings.set(String(booking.id), booking);
   }
 
+  function markStudentDirty(student) {
+    if (student?.id) dirtyStudents.set(String(student.id), student);
+  }
+
+  function markTeacherDirty(teacher) {
+    if (teacher?.id) dirtyTeachers.set(String(teacher.id), teacher);
+  }
+
   function markActivityLogDirty(log) {
     if (log?.id) dirtyActivityLogs.set(String(log.id), log);
   }
 
   function hasDirtyChanges() {
-    return Boolean(dirtyLeads.size || dirtyBookings.size || dirtyActivityLogs.size);
+    return Boolean(dirtyLeads.size || dirtyBookings.size || dirtyStudents.size || dirtyTeachers.size || dirtyActivityLogs.size);
   }
 
   function buildPatchSnapshot() {
     return {
       leads: [...dirtyLeads.entries()].map(([id, record]) => [id, safeJson(record)]),
       bookings: [...dirtyBookings.entries()].map(([id, record]) => [id, safeJson(record)]),
+      students: [...dirtyStudents.entries()].map(([id, record]) => [id, safeJson(record)]),
+      teachers: [...dirtyTeachers.entries()].map(([id, record]) => [id, safeJson(record)]),
       activityLogs: [...dirtyActivityLogs.entries()].map(([id, record]) => [id, safeJson(record)])
     };
   }
@@ -299,6 +314,8 @@
       changes: {
         leads: snapshot.leads.map(([, record]) => record),
         bookings: snapshot.bookings.map(([, record]) => record),
+        students: snapshot.students.map(([, record]) => record),
+        teachers: snapshot.teachers.map(([, record]) => record),
         activityLogs: snapshot.activityLogs.map(([, record]) => record)
       }
     };
@@ -308,6 +325,8 @@
     return Boolean(
       patch.changes.leads.length ||
       patch.changes.bookings.length ||
+      patch.changes.students.length ||
+      patch.changes.teachers.length ||
       patch.changes.activityLogs.length
     );
   }
@@ -320,6 +339,8 @@
     };
     snapshot.leads.forEach(([id, record]) => clearIfUnchanged(dirtyLeads, id, record));
     snapshot.bookings.forEach(([id, record]) => clearIfUnchanged(dirtyBookings, id, record));
+    snapshot.students.forEach(([id, record]) => clearIfUnchanged(dirtyStudents, id, record));
+    snapshot.teachers.forEach(([id, record]) => clearIfUnchanged(dirtyTeachers, id, record));
     snapshot.activityLogs.forEach(([id, record]) => clearIfUnchanged(dirtyActivityLogs, id, record));
   }
 
@@ -354,6 +375,8 @@
         bytes: byteSize(body),
         leads: patch.changes.leads.length,
         bookings: patch.changes.bookings.length,
+        students: patch.changes.students.length,
+        teachers: patch.changes.teachers.length,
         activityLogs: patch.changes.activityLogs.length,
         baseVersion: patch.baseVersion
       });
@@ -488,6 +511,166 @@
     return teacher ? (teacher.name || teacher.teacherName || "Teacher") : "";
   }
 
+  function studentById(id) {
+    return (state.students || []).find(student => String(student.id || "") === String(id || "")) || null;
+  }
+
+  function cleanName(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+  }
+
+  function nameKey(value) {
+    return cleanName(value).toLowerCase();
+  }
+
+  function studentByName(name) {
+    const key = nameKey(name);
+    if (!key) return null;
+    return (state.students || []).find(student => nameKey(student.name || student.studentName || "") === key) || null;
+  }
+
+  function normalizeSubjectsInput(value) {
+    if (Array.isArray(value)) return [...new Set(value.map(item => String(item || "").trim()).filter(Boolean))];
+    return [...new Set(String(value || "").split(",").map(item => item.trim()).filter(Boolean))];
+  }
+
+  function selectedEnrollmentSubjects() {
+    return [...$("crmEnrollmentSubjectChecks").querySelectorAll("input:checked")].map(input => input.value);
+  }
+
+  function setSelectedEnrollmentSubjects(subjects) {
+    const selected = new Set(normalizeSubjectsInput(subjects));
+    $("crmEnrollmentSubjectChecks").innerHTML = LEAD_SUBJECTS.map(subject => `<label class="chip"><input type="checkbox" value="${escapeHtml(subject)}" ${selected.has(subject) ? "checked" : ""}> ${escapeHtml(subject)}</label>`).join("");
+    renderEnrollmentSubjectOptions();
+  }
+
+  function selectedEnrollmentDays() {
+    return [...$("crmEnrollmentDayChecks").querySelectorAll("input:checked")].map(input => input.value);
+  }
+
+  function setEnrollmentError(message = "") {
+    const box = $("crmEnrollmentError");
+    if (!box) return;
+    box.textContent = message;
+    box.classList.toggle("hide", !message);
+  }
+
+  function enrollmentContextName(lead) {
+    return lead?.childName || lead?.parentName || lead?.parentPhone || "CRM lead";
+  }
+
+  function renderEnrollmentSubjectOptions() {
+    const selected = selectedEnrollmentSubjects();
+    const current = $("crmEnrollmentRegularSubject")?.value || selected[0] || "";
+    if (!$("crmEnrollmentRegularSubject")) return;
+    $("crmEnrollmentRegularSubject").innerHTML = selected.length
+      ? selected.map(subject => `<option value="${escapeHtml(subject)}" ${subject === current ? "selected" : ""}>${escapeHtml(subject)}</option>`).join("")
+      : `<option value="">Choose subject first</option>`;
+  }
+
+  function renderEnrollmentTeacherOptions(selected = "") {
+    $("crmEnrollmentTeacher").innerHTML = teacherOptions(selected);
+  }
+
+  function renderEnrollmentTimeOptions(selected = "") {
+    $("crmEnrollmentTime").innerHTML = `<option value="">Choose time</option>${timeOptions().map(time => `<option value="${escapeHtml(time)}" ${time === selected ? "selected" : ""}>${escapeHtml(timeLabel(time))}</option>`).join("")}`;
+  }
+
+  function renderEnrollmentDayChecks(days = []) {
+    const selected = new Set(days);
+    const names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    $("crmEnrollmentDayChecks").innerHTML = names.map(day => `<label class="chip"><input type="checkbox" value="${escapeHtml(day)}" ${selected.has(day) ? "checked" : ""}> ${escapeHtml(day.slice(0, 3))}</label>`).join("");
+  }
+
+  function resetEnrollmentSlotInputs() {
+    $("crmEnrollmentTeacher").value = "";
+    $("crmEnrollmentTime").value = "";
+    $("crmEnrollmentRegularStartDate").value = "";
+    $("crmEnrollmentRegularEndDate").value = "";
+    renderEnrollmentDayChecks();
+  }
+
+  function renderEnrollmentRegularSlots() {
+    const list = $("crmEnrollmentRegularSlotList");
+    if (!list) return;
+    if (!enrollmentRegularSlotsDraft.length) {
+      list.innerHTML = `<div class="subtle">No regular class added yet.</div>`;
+      return;
+    }
+    list.innerHTML = enrollmentRegularSlotsDraft.map(slot => `<div class="crm-enrollment-slot">
+      <div><strong>${escapeHtml(teacherNameById(slot.teacherId) || "Teacher")}</strong><div class="subtle">${escapeHtml(slot.day)} · ${escapeHtml(timeLabel(slot.time))} · ${escapeHtml(slot.subject || "")}${slot.startDate ? ` · from ${escapeHtml(dateLabel(slot.startDate))}` : ""}${slot.endDate ? ` to ${escapeHtml(dateLabel(slot.endDate))}` : ""}</div></div>
+      <button class="btn ghost small" type="button" data-remove-enrollment-slot="${escapeHtml(slot.id)}">Remove</button>
+    </div>`).join("");
+  }
+
+  function addEnrollmentRegularSlot() {
+    const teacherId = $("crmEnrollmentTeacher").value;
+    const days = selectedEnrollmentDays();
+    const time = $("crmEnrollmentTime").value;
+    const subject = $("crmEnrollmentRegularSubject").value;
+    const startDate = dateOnly($("crmEnrollmentRegularStartDate").value);
+    const endDate = dateOnly($("crmEnrollmentRegularEndDate").value);
+    if (!teacherId || !days.length || !time) return setEnrollmentError("Choose teacher, at least one day, and time first.");
+    if (!selectedEnrollmentSubjects().includes(subject)) return setEnrollmentError("Choose a regular subject that is included under Subject Taken.");
+    if (endDate && !startDate) return setEnrollmentError("Choose an effective start date when using an end date.");
+    if (startDate && endDate && endDate < startDate) return setEnrollmentError("Effective end date cannot be before the start date.");
+    days.forEach(day => {
+      enrollmentRegularSlotsDraft.push({ id: uid("student_slot"), teacherId, day, time, subject, startDate: startDate || "", endDate: endDate || "", createdAt: nowISO(), updatedAt: nowISO() });
+    });
+    setEnrollmentError("");
+    resetEnrollmentSlotInputs();
+    renderEnrollmentRegularSlots();
+  }
+
+  function removeEnrollmentRegularSlot(id) {
+    enrollmentRegularSlotsDraft = enrollmentRegularSlotsDraft.filter(slot => String(slot.id) !== String(id));
+    renderEnrollmentRegularSlots();
+  }
+
+  function syncEnrollmentSlotsToTeachers(student, previousSlots = []) {
+    const nextSlots = enrollmentRegularSlotsDraft.map(slot => ({ ...slot }));
+    const nextIds = new Set(nextSlots.map(slot => slot.id));
+    const previousIds = new Set(previousSlots.map(slot => slot.id).filter(Boolean));
+    const affected = new Set([...previousSlots, ...nextSlots].map(slot => slot.teacherId).filter(Boolean));
+    const now = nowISO();
+    activeTeachers().forEach(teacher => {
+      let changed = false;
+      teacher.regularSlots ||= [];
+      teacher.regularSlots = teacher.regularSlots.map(slot => {
+        const linked = String(slot.studentId || "") === String(student.id || "") || previousIds.has(slot.studentSlotId);
+        if (!linked || (slot.studentSlotId && nextIds.has(slot.studentSlotId))) return slot;
+        changed = true;
+        return { ...slot, deleted: true, archived: true, deletedAt: now, updatedAt: now, updatedBy: currentUser()?.email || "crm" };
+      });
+      nextSlots.forEach(studentSlot => {
+        if (String(studentSlot.teacherId || "") !== String(teacher.id || "")) return;
+        let teacherSlot = teacher.regularSlots.find(slot => slot.studentSlotId === studentSlot.id);
+        if (!teacherSlot) {
+          teacherSlot = { id: uid("slot"), source: "student-profile", locked: true, createdAt: now };
+          teacher.regularSlots.push(teacherSlot);
+        }
+        Object.assign(teacherSlot, {
+          studentId: student.id,
+          studentSlotId: studentSlot.id,
+          studentName: student.name,
+          day: studentSlot.day,
+          time: studentSlot.time,
+          subject: studentSlot.subject,
+          startDate: studentSlot.startDate || "",
+          endDate: studentSlot.endDate || "",
+          locked: true,
+          unavailable: false,
+          deleted: false,
+          archived: false,
+          updatedAt: now,
+          updatedBy: currentUser()?.email || "crm"
+        });
+        changed = true;
+      });
+      if (changed || affected.has(teacher.id)) markTeacherDirty(teacher);
+    });
+  }
+
   function leadSubject(lead) {
     if (Array.isArray(lead.subjects) && lead.subjects.length) return lead.subjects[0];
     return lead.subject || "";
@@ -594,6 +777,11 @@
     $("leadFilterUrgency").innerHTML = `<option value="all">All Urgency</option>${URGENCIES.map(item => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}`;
     $("leadStatus").innerHTML = LEAD_STATUSES.map(item => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("");
     $("leadUrgency").innerHTML = URGENCIES.map(item => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("");
+    const packages = [...new Set([
+      ...(state.students || []).map(student => student.package),
+      ...(state.leads || []).map(lead => lead.packageInterested)
+    ].filter(Boolean))].sort();
+    if ($("packageOptions")) $("packageOptions").innerHTML = packages.map(pkg => `<option value="${escapeHtml(pkg)}"></option>`).join("");
   }
 
   function renderSummary() {
@@ -865,6 +1053,164 @@
     return (state.leads || []).find(lead => String(lead.id || "") === String(id || ""));
   }
 
+  function updateLeadRowOrRender(leadId) {
+    const lead = leadById(leadId);
+    const row = document.querySelector(`[data-lead-row="${cssEscape(leadId)}"]`);
+    if (!lead || !row || !leadMatchesFilters(lead)) {
+      renderLeads({ reset: true });
+      return;
+    }
+    row.innerHTML = visibleColumnKeys().map(key => cellHtml(key, lead)).join("");
+    renderSummary();
+    renderReminders();
+  }
+
+  function openEnrollmentStudentForm(lead, previousStatus = "", sourceControl = null) {
+    if (!lead?.id) return;
+    const existingStudent = studentById(lead.studentId) || studentByName(lead.childName);
+    pendingEnrollment = {
+      leadId: lead.id,
+      previousStatus: previousStatus || leadStatus(lead),
+      sourceControl,
+      saving: false
+    };
+    enrollmentRegularSlotsDraft = existingStudent?.regularSlots ? existingStudent.regularSlots.map(slot => ({ ...slot })) : [];
+    $("crmEnrollmentLeadId").value = lead.id;
+    $("crmEnrollmentStudentId").value = existingStudent?.id || "";
+    $("crmEnrollmentLeadContext").textContent = `Creating a student profile from: ${enrollmentContextName(lead)}`;
+    $("crmEnrollmentStudentName").value = cleanName(existingStudent?.name || lead.childName || "");
+    $("crmEnrollmentParentName").value = existingStudent?.parentName || lead.parentName || "";
+    $("crmEnrollmentParentPhone").value = existingStudent?.parentPhone || lead.parentPhone || "";
+    $("crmEnrollmentParentEmail").value = existingStudent?.parentEmail || lead.parentEmail || lead.email || "";
+    $("crmEnrollmentStudentStatus").value = existingStudent?.status || "registered";
+    $("crmEnrollmentRegisteredStatus").value = existingStudent?.registeredStatus || "new";
+    $("crmEnrollmentPackage").value = existingStudent?.package || lead.packageInterested || "";
+    $("crmEnrollmentPackageAmount").value = existingStudent?.packageAmount || "";
+    $("crmEnrollmentPackageClasses").value = existingStudent?.packageClasses || "";
+    $("crmEnrollmentRegisteredRemark").value = existingStudent?.registeredRemark || "";
+    $("crmEnrollmentPackageNotes").value = existingStudent?.packageNotes || lead.notes || "";
+    setSelectedEnrollmentSubjects(existingStudent?.subjects?.length ? existingStudent.subjects : normalizeSubjectsInput(lead.subjects || lead.subject || ""));
+    renderEnrollmentTeacherOptions();
+    renderEnrollmentTimeOptions();
+    renderEnrollmentDayChecks();
+    renderEnrollmentRegularSlots();
+    setEnrollmentError("");
+    $("crmEnrollmentSaveBtn").disabled = false;
+    $("crmEnrollmentStudentModal").classList.remove("hide");
+    setTimeout(() => $("crmEnrollmentStudentName")?.focus(), 0);
+  }
+
+  function closeEnrollmentStudentForm(cancelled = true) {
+    if (cancelled && pendingEnrollment) {
+      const lead = leadById(pendingEnrollment.leadId);
+      if (lead) {
+        lead.status = pendingEnrollment.previousStatus || leadStatus(lead);
+        updateLeadRowOrRender(lead.id);
+      }
+      if (pendingEnrollment.sourceControl) pendingEnrollment.sourceControl.value = pendingEnrollment.previousStatus || "";
+    }
+    $("crmEnrollmentStudentModal")?.classList.add("hide");
+    pendingEnrollment = null;
+    enrollmentRegularSlotsDraft = [];
+    setEnrollmentError("");
+  }
+
+  async function saveEnrollmentStudentFromModal() {
+    if (!pendingEnrollment || pendingEnrollment.saving) return;
+    const lead = leadById($("crmEnrollmentLeadId").value);
+    if (!lead) return setEnrollmentError("The CRM lead could not be found. Please refresh and try again.");
+    const name = cleanName($("crmEnrollmentStudentName").value);
+    const subjects = selectedEnrollmentSubjects();
+    const packageName = $("crmEnrollmentPackage").value.trim();
+    if (!name) return setEnrollmentError("Student name is required.");
+    if (!subjects.length) return setEnrollmentError("Choose at least one subject taken.");
+    if (!packageName) return setEnrollmentError("Choose or type the student's package first.");
+    if (!enrollmentRegularSlotsDraft.length) return setEnrollmentError("Add at least one regular class teacher, day and time to complete enrollment.");
+    pendingEnrollment.saving = true;
+    $("crmEnrollmentSaveBtn").disabled = true;
+    setEnrollmentError("");
+    const rollbackState = {
+      leads: safeJson(state.leads || []),
+      students: safeJson(state.students || []),
+      teachers: safeJson(state.teachers || []),
+      activityLogs: safeJson(state.activityLogs || []),
+      dirtyLeads: new Map(dirtyLeads),
+      dirtyStudents: new Map(dirtyStudents),
+      dirtyTeachers: new Map(dirtyTeachers),
+      dirtyActivityLogs: new Map(dirtyActivityLogs)
+    };
+    try {
+      const id = $("crmEnrollmentStudentId").value || lead.studentId || studentByName(name)?.id || uid("student");
+      let student = studentById(id);
+      const isNew = !student;
+      if (!student) {
+        student = { id, createdAt: nowISO(), regularSlots: [] };
+        state.students.unshift(student);
+      }
+      const previousRegularSlots = Array.isArray(student.regularSlots) ? student.regularSlots.map(slot => ({ ...slot })) : [];
+      Object.assign(student, {
+        name,
+        parentName: $("crmEnrollmentParentName").value.trim(),
+        parentPhone: $("crmEnrollmentParentPhone").value.trim(),
+        parentEmail: $("crmEnrollmentParentEmail").value.trim(),
+        subjects,
+        subject: subjects[0] || "",
+        package: packageName,
+        packageAmount: Number($("crmEnrollmentPackageAmount").value || 0),
+        packageClasses: Number($("crmEnrollmentPackageClasses").value || 0),
+        packageNotes: $("crmEnrollmentPackageNotes").value.trim(),
+        registeredStatus: $("crmEnrollmentRegisteredStatus").value || "new",
+        registeredRemark: $("crmEnrollmentRegisteredRemark").value.trim(),
+        status: $("crmEnrollmentStudentStatus").value || "registered",
+        regularSlots: enrollmentRegularSlotsDraft.map(slot => ({ ...slot, updatedAt: nowISO() })),
+        crmLeadId: lead.id,
+        updatedAt: nowISO(),
+        updatedBy: currentUser()?.email || "crm"
+      });
+      syncEnrollmentSlotsToTeachers(student, previousRegularSlots);
+      markStudentDirty(student);
+      Object.assign(lead, {
+        status: "Enrolled",
+        pendingEnrollment: false,
+        enrolledAt: dateOnly(nowISO()),
+        enrolledBy: currentUser()?.email || "crm",
+        studentId: student.id,
+        packageInterested: student.package,
+        subjects: [...student.subjects],
+        nextFollowUp: "",
+        followUpAuto: true,
+        statusChangedAt: nowISO(),
+        updatedAt: nowISO(),
+        updatedBy: currentUser()?.email || "crm"
+      });
+      markLeadDirty(lead);
+      logAction(isNew ? "Student Added" : "Student Updated", student.name, `Created from CRM lead ${enrollmentContextName(lead)}.`);
+      logAction("CRM Lead Enrolled", lead.childName || lead.parentName || lead.id, `Linked student: ${student.name}.`);
+      const synced = await saveState({ immediate: true });
+      if (!synced) throw new Error("Unable to sync enrollment to Neon. Please retry.");
+      $("crmEnrollmentStudentModal").classList.add("hide");
+      pendingEnrollment = null;
+      enrollmentRegularSlotsDraft = [];
+      updateLeadRowOrRender(lead.id);
+      hydrateFilters();
+      setStatus("Student created and lead enrolled in Neon.", "success");
+    } catch (err) {
+      state.leads = rollbackState.leads || [];
+      state.students = rollbackState.students || [];
+      state.teachers = rollbackState.teachers || [];
+      state.activityLogs = rollbackState.activityLogs || [];
+      dirtyLeads = rollbackState.dirtyLeads;
+      dirtyStudents = rollbackState.dirtyStudents;
+      dirtyTeachers = rollbackState.dirtyTeachers;
+      dirtyActivityLogs = rollbackState.dirtyActivityLogs;
+      clearTimeout(saveTimer);
+      if (hasDirtyChanges()) queueSave();
+      setEnrollmentError(`Student could not be created. ${err.message || err}`);
+      $("crmEnrollmentSaveBtn").disabled = false;
+      pendingEnrollment.saving = false;
+    }
+  }
+
   function automaticFollowUp(lead) {
     const base = new Date();
     if (leadStatus(lead) === "New Contact") base.setDate(base.getDate() + 7);
@@ -1005,6 +1351,9 @@
   function saveLeadFromModal() {
     let lead = leadById($("leadId").value);
     const isNew = !lead;
+    const requestedStatus = $("leadStatus").value;
+    const previousStatus = leadStatus(lead || {});
+    const shouldOpenEnrollment = requestedStatus === "Enrolled" && !(lead?.studentId && studentById(lead.studentId));
     if (!lead) {
       lead = { id: uid("lead"), createdAt: nowISO(), status: "New Contact", urgency: "warm" };
       state.leads.unshift(lead);
@@ -1016,7 +1365,7 @@
       childAge: $("leadChildAge").value.trim(),
       source: $("leadSource").value.trim(),
       salesperson: $("leadSalesperson").value.trim(),
-      status: $("leadStatus").value,
+      status: shouldOpenEnrollment ? (previousStatus === "Enrolled" ? "New Contact" : previousStatus) : requestedStatus,
       urgency: $("leadUrgency").value,
       motherTongue: $("leadMotherTongue").value.trim(),
       packageInterested: $("leadPackage").value.trim(),
@@ -1038,6 +1387,12 @@
     markLeadDirty(lead);
     logAction(isNew ? "CRM Lead Created" : "CRM Lead Updated", lead.childName || lead.parentName || lead.parentPhone || "Lead");
     closeModal();
+    if (shouldOpenEnrollment) {
+      updateLeadRowOrRender(lead.id);
+      queueSave(true);
+      openEnrollmentStudentForm(lead, lead.status);
+      return;
+    }
     hydrateFilters();
     renderLeads({ reset: true });
     queueSave(true);
@@ -1081,7 +1436,24 @@
     $("openLeadModalBtn").onclick = () => openLeadModal();
     $("expandCrmWorkspaceBtn").onclick = () => setWorkspaceExpanded(!workspaceExpanded);
     $("saveLeadBtn").onclick = saveLeadFromModal;
-    $("createStudentFromLeadBtn").onclick = () => { window.location.href = "./index.html#students"; };
+    $("createStudentFromLeadBtn").onclick = () => {
+      const lead = leadById($("leadId").value);
+      if (!lead) {
+        setStatus("Save this CRM lead first before creating a student profile.", "error");
+        return;
+      }
+      closeModal();
+      openEnrollmentStudentForm(lead, leadStatus(lead));
+    };
+    $("crmEnrollmentSaveBtn").onclick = saveEnrollmentStudentFromModal;
+    $("crmEnrollmentCancelBtn").onclick = () => closeEnrollmentStudentForm(true);
+    document.querySelectorAll("[data-enrollment-cancel]").forEach(btn => btn.onclick = () => closeEnrollmentStudentForm(true));
+    $("crmEnrollmentAddSlotBtn").onclick = addEnrollmentRegularSlot;
+    $("crmEnrollmentSubjectChecks").addEventListener("change", renderEnrollmentSubjectOptions);
+    $("crmEnrollmentRegularSlotList").addEventListener("click", event => {
+      const remove = event.target.closest("[data-remove-enrollment-slot]");
+      if (remove) removeEnrollmentRegularSlot(remove.dataset.removeEnrollmentSlot);
+    });
     document.querySelectorAll("[data-close]").forEach(btn => btn.onclick = closeModal);
     $("exportLeadListCsvBtn").onclick = exportCsv;
     $("exportLeadListPdfBtn").onclick = exportPdf;
@@ -1153,6 +1525,12 @@
         const [leadId, field] = quick.dataset.leadQuick.split("|");
         const lead = leadById(leadId);
         if (!lead) return;
+        const previousStatus = leadStatus(lead);
+        if (field === "status" && String(quick.value || "") === "Enrolled" && !(lead.studentId && studentById(lead.studentId))) {
+          quick.value = previousStatus;
+          openEnrollmentStudentForm(lead, previousStatus, quick);
+          return;
+        }
         updateLeadField(lead, field, String(quick.value || "").trim());
         logAction("CRM Lead Table Updated", lead.childName || lead.parentName || lead.parentPhone || "Lead", `Changed ${field}.`);
         renderSummary();

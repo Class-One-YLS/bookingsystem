@@ -24,10 +24,59 @@
     <div id="leadProfileScheduling" class="crm-profile-scheduling" style="margin-top:12px;"></div>
     <div style="margin-top:12px;"><label>Notes / Conversation Summary</label><textarea id="leadNotes" placeholder="Latest WhatsApp/call notes"></textarea></div>
     <datalist id="leadSourceOptions"><option value="Facebook Ads"></option><option value="Instagram"></option><option value="Referral"></option><option value="Walk-in"></option><option value="WhatsApp"></option></datalist>
+    <datalist id="packageOptions"></datalist>
     <div class="row" style="margin-top:14px;">
       <button class="btn mint" id="saveLeadBtn">Save Lead</button>
       <button class="btn ghost hide" id="newLeadBtn">Clear Form</button>
       <button class="btn ghost" id="createStudentFromLeadBtn">Create Student From Lead</button>
+    </div>
+  </div>
+</div>
+<div id="crmEnrollmentStudentModal" class="modal hide">
+  <div class="modal-card crm-enrollment-card">
+    <div class="row spread">
+      <div>
+        <h2>Enroll Lead as Student</h2>
+        <div id="crmEnrollmentLeadContext" class="subtle">Creating a student profile from CRM lead.</div>
+      </div>
+      <button class="btn ghost small" type="button" data-enrollment-cancel>Close</button>
+    </div>
+    <input id="crmEnrollmentLeadId" type="hidden">
+    <input id="crmEnrollmentStudentId" type="hidden">
+    <div class="grid two crm-enrollment-grid">
+      <div><label>Student Name</label><input id="crmEnrollmentStudentName" placeholder="Student name"></div>
+      <div><label>Status</label><select id="crmEnrollmentStudentStatus"><option value="registered">Registered</option><option value="trial">Trial</option><option value="archived">Archived</option></select></div>
+      <div><label>Parent Name</label><input id="crmEnrollmentParentName" placeholder="Optional"></div>
+      <div><label>Parent Phone</label><input id="crmEnrollmentParentPhone" placeholder="Phone / WhatsApp"></div>
+      <div><label>Parent Email</label><input id="crmEnrollmentParentEmail" placeholder="Optional"></div>
+      <div><label>Registered Status</label><select id="crmEnrollmentRegisteredStatus"><option value="active">Active</option><option value="new">New</option><option value="drop">Drop</option></select></div>
+      <div><label>Package</label><input id="crmEnrollmentPackage" list="packageOptions" placeholder="Student package"></div>
+      <div><label>Package Amount (RM)</label><input id="crmEnrollmentPackageAmount" type="number" min="0" step="0.01" placeholder="0.00"></div>
+      <div><label>Package Classes</label><input id="crmEnrollmentPackageClasses" type="number" min="0" step="1" placeholder="0"></div>
+      <div><label>Registered Remark</label><input id="crmEnrollmentRegisteredRemark" placeholder="Optional"></div>
+    </div>
+    <div class="crm-enrollment-section">
+      <label>Subject Taken</label>
+      <div id="crmEnrollmentSubjectChecks" class="row"></div>
+    </div>
+    <div class="crm-enrollment-section">
+      <label>Regular Class</label>
+      <div class="grid two crm-enrollment-grid">
+        <div><label>Teacher</label><select id="crmEnrollmentTeacher"></select></div>
+        <div><label>Time</label><select id="crmEnrollmentTime"></select></div>
+        <div><label>Subject</label><select id="crmEnrollmentRegularSubject"></select></div>
+        <div><label>Effective Start Date</label><input id="crmEnrollmentRegularStartDate" type="date"></div>
+        <div><label>Effective End Date</label><input id="crmEnrollmentRegularEndDate" type="date"></div>
+      </div>
+      <div style="margin-top:10px;"><label>Day</label><div id="crmEnrollmentDayChecks" class="row"></div></div>
+      <div class="row" style="margin-top:10px;"><button class="btn ghost small" id="crmEnrollmentAddSlotBtn" type="button">Add Regular Slot</button></div>
+      <div id="crmEnrollmentRegularSlotList" class="crm-enrollment-slot-list"></div>
+    </div>
+    <div class="crm-enrollment-section"><label>Package Notes</label><textarea id="crmEnrollmentPackageNotes" placeholder="Notes from CRM / package details"></textarea></div>
+    <div id="crmEnrollmentError" class="crm-enrollment-error hide"></div>
+    <div class="row" style="margin-top:14px;">
+      <button class="btn mint" id="crmEnrollmentSaveBtn" type="button">Create Student & Enroll Lead</button>
+      <button class="btn ghost" id="crmEnrollmentCancelBtn" type="button">Cancel</button>
     </div>
   </div>
 </div>
