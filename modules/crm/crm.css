@@ -24,6 +24,16 @@
 .lead-table [data-crm-col="assessment"] { min-width: 280px; }
 .lead-table [data-crm-col="trial"] { min-width: 340px; }
 .lead-table [data-crm-col="package"] { min-width: 180px; }
+.crm-session-editor { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.crm-session-editor + .crm-session-editor { margin-top: 8px; }
+.crm-session-editor strong { font-size: 12px; color: var(--ink); }
+.crm-session-editor.readonly { background: #f4f6f5; border-color: #dde7e2; color: var(--muted); }
+.crm-session-editor.readonly strong { color: #718096; }
+.crm-readonly-grid { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 3px 8px; font-size: 12px; }
+.crm-readonly-grid span { color: #8a98a8; font-weight: 800; }
+.crm-readonly-grid b { color: #607083; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crm-profile-scheduling { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #fbfdfc; }
+.crm-profile-scheduling-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
 #crm,
 #crm.tab:not(.hide),
 #crmModuleMount { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
@@ -163,5 +173,9 @@ body.crm-workspace-expanded .crm-menu-panel {
   body.crm-workspace-expanded .crm-toolbar .field.search {
     min-width: 180px;
     flex: 1 1 180px;
+  }
+
+  .crm-profile-scheduling-grid {
+    grid-template-columns: 1fr;
   }
 }

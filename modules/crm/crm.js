@@ -85,6 +85,11 @@
     try { return new TextEncoder().encode(String(text || "")).length; } catch (err) { return String(text || "").length; }
   }
 
+  function cssEscape(value) {
+    if (window.CSS?.escape) return CSS.escape(String(value || ""));
+    return String(value || "").replace(/["\\]/g, "\\$&");
+  }
+
   function storageGet(key) {
     try { return localStorage.getItem(key) || sessionStorage.getItem(key) || ""; } catch (err) { return ""; }
   }
@@ -474,6 +479,15 @@
     return (state.teachers || []).filter(teacher => !teacher.archived && !teacher.deleted && teacher.status !== "disabled");
   }
 
+  function teacherById(id) {
+    return activeTeachers().find(teacher => String(teacher.id || "") === String(id || "")) || null;
+  }
+
+  function teacherNameById(id) {
+    const teacher = teacherById(id);
+    return teacher ? (teacher.name || teacher.teacherName || "Teacher") : "";
+  }
+
   function leadSubject(lead) {
     if (Array.isArray(lead.subjects) && lead.subjects.length) return lead.subjects[0];
     return lead.subject || "";
@@ -516,7 +530,7 @@
     const options = timeOptions().filter(time => slotOpenForTeacher(teacherId, date, time, currentBookingId));
     if (selected && !options.includes(selected)) options.push(selected);
     options.sort((a, b) => minutes(a) - minutes(b));
-    return `<option value="">${options.length ? "Choose available slot" : "No open slots"}</option>${options.map(time => `<option value="${escapeHtml(time)}" ${time === selected ? "selected" : ""}>${escapeHtml(timeLabel(time))}${selected === time && !slotOpenForTeacher(teacherId, date, time, currentBookingId) ? " (current)" : ""}</option>`).join("")}`;
+    return `<option value="">${options.length ? "Choose available slot" : "No available slots"}</option>${options.map(time => `<option value="${escapeHtml(time)}" ${time === selected ? "selected" : ""}>${escapeHtml(timeLabel(time))}${selected === time && !slotOpenForTeacher(teacherId, date, time, currentBookingId) ? " (existing booking)" : ""}</option>`).join("")}`;
   }
 
   function leadMatchesFilters(lead) {
@@ -671,17 +685,87 @@
     return values.map(value => `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(value)}</option>`).join("");
   }
 
-  function sessionEditor(lead, kind) {
+  function getLeadSchedulingState(lead) {
+    const status = String(leadStatus(lead) || "").trim().toLowerCase();
+    const isAssessment = status.includes("assessment");
+    const isTrial = status.includes("trial");
+    return {
+      assessment: isAssessment ? "active" : "readonly",
+      trial1: isTrial ? "active" : "readonly",
+      trial2: isTrial ? "active" : "readonly"
+    };
+  }
+
+  function readonlySessionDisplay(lead, kind) {
     const config = CRM_SESSION[kind];
     const teacherId = lead[config.teacher] || (kind === "trial2" ? lead.trialTeacherId || "" : "");
     const date = lead[config.date] || "";
     const time = lead[config.time] || "";
-    return `<div class="crm-session-editor">
+    return `<div class="crm-session-editor readonly" data-lead-id="${escapeHtml(lead.id || "")}" data-schedule-type="${escapeHtml(kind)}">
       <strong>${escapeHtml(config.title)}</strong>
-      <select data-crm-session="${escapeHtml(`${lead.id}|${kind}|teacher`)}">${teacherOptions(teacherId)}</select>
-      <input type="date" value="${escapeHtml(date)}" data-crm-session="${escapeHtml(`${lead.id}|${kind}|date`)}" ${teacherId ? "" : "disabled"}>
-      <select data-crm-session="${escapeHtml(`${lead.id}|${kind}|time`)}" ${teacherId && date ? "" : "disabled"}>${availableTimeOptions(lead, kind, teacherId, date, time)}</select>
+      <div class="crm-readonly-grid">
+        <span>Teacher</span><b>${escapeHtml(teacherNameById(teacherId) || "—")}</b>
+        <span>Date</span><b>${escapeHtml(date ? dateLabel(date) : "—")}</b>
+        <span>Time</span><b>${escapeHtml(time ? timeLabel(time) : "—")}</b>
+      </div>
     </div>`;
+  }
+
+  function sessionEditor(lead, kind, options = {}) {
+    const config = CRM_SESSION[kind];
+    const mode = options.forceActive ? "active" : getLeadSchedulingState(lead)[kind];
+    if (mode !== "active") return readonlySessionDisplay(lead, kind);
+    const teacherId = lead[config.teacher] || (kind === "trial2" ? lead.trialTeacherId || "" : "");
+    const date = lead[config.date] || "";
+    const time = lead[config.time] || "";
+    const timeChoices = availableTimeOptions(lead, kind, teacherId, date, time);
+    const timeDisabled = !teacherId || !date || (!time && timeChoices.includes("No available slots"));
+    return `<div class="crm-session-editor active" data-lead-id="${escapeHtml(lead.id || "")}" data-schedule-type="${escapeHtml(kind)}">
+      <strong>${escapeHtml(config.title)}</strong>
+      <select data-crm-session="${escapeHtml(`${lead.id}|${kind}|teacher`)}" data-lead-id="${escapeHtml(lead.id || "")}" data-schedule-type="${escapeHtml(kind)}" data-field="teacher">${teacherOptions(teacherId)}</select>
+      <input type="date" value="${escapeHtml(date)}" data-crm-session="${escapeHtml(`${lead.id}|${kind}|date`)}" data-lead-id="${escapeHtml(lead.id || "")}" data-schedule-type="${escapeHtml(kind)}" data-field="date" ${teacherId ? "" : "disabled"}>
+      <select data-crm-session="${escapeHtml(`${lead.id}|${kind}|time`)}" data-lead-id="${escapeHtml(lead.id || "")}" data-schedule-type="${escapeHtml(kind)}" data-field="time" ${timeDisabled ? "disabled" : ""}>${timeChoices}</select>
+    </div>`;
+  }
+
+  function scheduleCellHtml(lead, kind) {
+    if (kind === "trial") return `${sessionEditor(lead, "trial1")}${sessionEditor(lead, "trial2")}`;
+    return sessionEditor(lead, kind);
+  }
+
+  function updateLeadSchedulingState(leadId) {
+    const lead = leadById(leadId);
+    const row = document.querySelector(`[data-lead-row="${cssEscape(leadId)}"]`);
+    if (!lead || !row) return;
+    const assessment = row.querySelector('[data-crm-col="assessment"]');
+    const trial = row.querySelector('[data-crm-col="trial"]');
+    if (assessment) assessment.innerHTML = scheduleCellHtml(lead, "assessment");
+    if (trial) trial.innerHTML = scheduleCellHtml(lead, "trial");
+  }
+
+  function updateProfileScheduling(lead) {
+    const panel = $("leadProfileScheduling");
+    if (!panel) return;
+    if (!lead?.id) {
+      panel.innerHTML = `<div class="subtle">Save the lead first before scheduling assessment or trial classes.</div>`;
+      return;
+    }
+    panel.innerHTML = `
+      <label>Assessment / Trial Scheduling</label>
+      <div class="crm-profile-scheduling-grid">
+        ${sessionEditor(lead, "assessment", { forceActive: true })}
+        ${sessionEditor(lead, "trial1", { forceActive: true })}
+        ${sessionEditor(lead, "trial2", { forceActive: true })}
+      </div>
+      <div class="subtle">Full Profile can edit all scheduling sections. Lead List quick editing follows the current lead status.</div>`;
+  }
+
+  function syncProfileScheduleDateInputs(lead) {
+    if (!$("leadProfileModal") || $("leadProfileModal").classList.contains("hide")) return;
+    if ($("leadId")?.value && String($("leadId").value) !== String(lead?.id || "")) return;
+    if ($("leadAssessmentDate")) $("leadAssessmentDate").value = lead?.assessmentDate || "";
+    if ($("leadTrialDate")) $("leadTrialDate").value = lead?.trialDate || "";
+    if ($("leadTrialDate2")) $("leadTrialDate2").value = lead?.trialDate2 || "";
   }
 
   function cellHtml(key, lead) {
@@ -699,8 +783,8 @@
       remarks: `<td data-crm-col="remarks" style="min-width:220px;"><textarea data-lead-quick="${id}|notes" placeholder="Notes">${escapeHtml(lead.notes || "")}</textarea></td>`,
       subjects: `<td data-crm-col="subjects"><input value="${escapeHtml((lead.subjects || []).join(", "))}" data-lead-quick="${id}|subjects" placeholder="BC, BM"></td>`,
       urgency: `<td data-crm-col="urgency"><select data-lead-quick="${id}|urgency">${selectOptions(URGENCIES, lead.urgency || "warm")}</select></td>`,
-      assessment: `<td data-crm-col="assessment">${sessionEditor(lead, "assessment")}</td>`,
-      trial: `<td data-crm-col="trial">${sessionEditor(lead, "trial1")}${sessionEditor(lead, "trial2")}</td>`,
+      assessment: `<td data-crm-col="assessment">${scheduleCellHtml(lead, "assessment")}</td>`,
+      trial: `<td data-crm-col="trial">${scheduleCellHtml(lead, "trial")}</td>`,
       package: `<td data-crm-col="package"><input value="${escapeHtml(lead.packageInterested || "")}" data-lead-quick="${id}|packageInterested" placeholder="Package"></td>`,
       actions: `<td data-crm-col="actions"><div class="row"><button class="btn small ghost" data-edit-lead="${id}">Full Profile</button><button class="btn small ghost" data-archive-lead="${id}">Archive</button></div></td>`
     };
@@ -816,11 +900,18 @@
     const lead = leadById(leadId);
     const config = CRM_SESSION[kind];
     if (!lead || !config) return;
+    const inProfile = Boolean(control.closest("#leadProfileModal"));
+    if (!inProfile && getLeadSchedulingState(lead)[kind] !== "active") return;
     const value = String(control.value || "");
-    const selection = {
+    const previous = {
       teacherId: lead[config.teacher] || (kind === "trial2" ? lead.trialTeacherId || "" : ""),
       date: lead[config.date] || "",
       time: lead[config.time] || ""
+    };
+    const selection = {
+      teacherId: previous.teacherId,
+      date: previous.date,
+      time: previous.time
     };
     if (field === "teacher") {
       selection.teacherId = value;
@@ -828,17 +919,20 @@
     }
     if (field === "date") selection.date = value;
     if (field === "time") selection.time = value;
+    const currentBookingId = lead[config.booking] || "";
+    if (field === "time" && selection.teacherId && selection.date && selection.time && !slotOpenForTeacher(selection.teacherId, selection.date, selection.time, currentBookingId)) {
+      control.value = previous.time || "";
+      setStatus("This selected slot is not open for the chosen teacher.", "error");
+      return;
+    }
+    if (field !== "time" && selection.teacherId && selection.date && selection.time && !slotOpenForTeacher(selection.teacherId, selection.date, selection.time, currentBookingId)) {
+      selection.time = "";
+    }
     lead[config.teacher] = selection.teacherId;
     lead[config.date] = selection.date;
     lead[config.time] = selection.time;
     if (selection.teacherId && selection.date && selection.time) {
-      const bookingId = lead[config.booking] || uid("crm_booking");
-      if (!slotOpenForTeacher(selection.teacherId, selection.date, selection.time, bookingId)) {
-        control.value = lead[config.time] || "";
-        alert("This selected slot is not open for the chosen teacher.");
-        renderLeads();
-        return;
-      }
+      const bookingId = currentBookingId || uid("crm_booking");
       const teacher = (state.teachers || []).find(item => String(item.id) === String(selection.teacherId));
       let booking = (state.bookings || []).find(item => String(item.id) === String(bookingId));
       if (!booking) {
@@ -869,7 +963,13 @@
     lead.updatedBy = currentUser()?.email || "crm";
     markLeadDirty(lead);
     queueSave(true);
-    renderLeads();
+    if (inProfile) {
+      syncProfileScheduleDateInputs(lead);
+      updateProfileScheduling(lead);
+      updateLeadSchedulingState(lead.id);
+    } else if (field !== "time") {
+      updateLeadSchedulingState(lead.id);
+    }
   }
 
   function openLeadModal(lead = null) {
@@ -894,6 +994,7 @@
     $("leadNotes").value = lead?.notes || "";
     const subjects = new Set(lead?.subjects || []);
     $("leadSubjectChecks").innerHTML = LEAD_SUBJECTS.map(subject => `<label class="chip"><input type="checkbox" value="${escapeHtml(subject)}" ${subjects.has(subject) ? "checked" : ""}> ${escapeHtml(subject)}</label>`).join("");
+    updateProfileScheduling(lead);
     $("leadProfileModal").classList.remove("hide");
   }
 
@@ -1056,6 +1157,7 @@
         logAction("CRM Lead Table Updated", lead.childName || lead.parentName || lead.parentPhone || "Lead", `Changed ${field}.`);
         renderSummary();
         renderReminders();
+        if (field === "status") updateLeadSchedulingState(lead.id);
         queueSave();
         return;
       }
