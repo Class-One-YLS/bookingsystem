@@ -377,141 +377,58 @@
     body.teacher-calendar-weekly #monthlyCalendarViewSection {
       display: none;
     }
-    body.teacher-calendar-weekly #monthlyScheduleViewSection,
-    body.teacher-calendar-monthly #monthlyScheduleViewSection,
-    body.teacher-calendar-schedule #dailyNavigatorSection,
-    body.teacher-calendar-schedule #monthCalendarSection,
-    body.teacher-calendar-schedule #monthlySection,
-    body.teacher-calendar-schedule #monthlyCalendarViewSection {
+    body.teacher-calendar-weekly #expandedMonthViewSection,
+    body.teacher-calendar-monthly #expandedMonthViewSection,
+    body.teacher-calendar-expanded #dailyNavigatorSection,
+    body.teacher-calendar-expanded #monthCalendarSection,
+    body.teacher-calendar-expanded #monthlySection,
+    body.teacher-calendar-expanded #monthlyCalendarViewSection {
       display: none;
     }
-    .monthly-schedule-controls {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin: 0 0 12px;
-    }
-    .monthly-schedule-list {
+    .expanded-month-weeks {
       display: grid;
-      gap: 12px;
+      gap: 18px;
     }
-    .monthly-schedule-week {
+    .expanded-month-week {
+      display: grid;
+      gap: 8px;
       border: 1px solid var(--line);
       border-radius: 8px;
       overflow: hidden;
       background: #fff;
+      animation: week-in .18s ease;
     }
-    .monthly-schedule-week.is-current-week {
+    .expanded-month-week.is-current-week {
       border-color: var(--mint);
       box-shadow: 0 0 0 2px rgba(114, 208, 161, .18);
     }
-    .monthly-schedule-week-header {
-      width: 100%;
+    .expanded-month-week-header {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto auto;
+      grid-template-columns: minmax(0, 1fr) auto;
       gap: 10px;
       align-items: center;
       padding: 11px 12px;
       background: #f8fffb;
       color: var(--ink);
-      text-align: left;
       border-bottom: 1px solid var(--line);
     }
-    .monthly-schedule-week-header strong {
+    .expanded-month-week-header strong {
       display: block;
       font-size: 15px;
       line-height: 1.2;
     }
-    .monthly-schedule-week-header span {
+    .expanded-month-week-header span {
       display: block;
       margin-top: 2px;
       color: var(--muted);
       font-size: 12px;
       font-weight: 800;
     }
-    .monthly-schedule-week-header .pill {
+    .expanded-month-week-header .pill {
       justify-self: end;
       white-space: nowrap;
     }
-    .monthly-schedule-week-header .chevron {
-      min-width: 78px;
-      min-height: 28px;
-      display: inline-grid;
-      place-items: center;
-      border-radius: 999px;
-      background: #edf4f0;
-      color: var(--ink);
-      font-size: 12px;
-      font-weight: 900;
-    }
-    .monthly-schedule-days {
-      display: grid;
-      gap: 0;
-    }
-    .monthly-schedule-day {
-      display: grid;
-      grid-template-columns: minmax(170px, .28fr) minmax(0, 1fr);
-      gap: 12px;
-      padding: 12px;
-      border-top: 1px solid var(--line);
-    }
-    .monthly-schedule-day:first-child { border-top: 0; }
-    .monthly-schedule-day.outside-month {
-      background: #f8faf9;
-    }
-    .monthly-schedule-day-head strong {
-      display: block;
-      font-size: 14px;
-    }
-    .monthly-schedule-day-head span {
-      display: block;
-      margin-top: 3px;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 800;
-    }
-    .monthly-schedule-classes {
-      display: grid;
-      gap: 7px;
-    }
-    .monthly-schedule-class {
-      display: grid;
-      grid-template-columns: 78px minmax(0, 1fr) auto;
-      gap: 10px;
-      align-items: center;
-      padding: 8px 9px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--class-regular-bg);
-    }
-    .monthly-schedule-time {
-      color: var(--mint-dark);
-      font-size: 14px;
-      font-weight: 950;
-      white-space: nowrap;
-    }
-    .monthly-schedule-main strong {
-      display: block;
-      font-size: 15px;
-      line-height: 1.15;
-      overflow-wrap: anywhere;
-    }
-    .monthly-schedule-main span {
-      display: block;
-      margin-top: 2px;
-      color: inherit;
-      font-size: 12px;
-      font-weight: 750;
-    }
-    .monthly-schedule-empty {
-      padding: 12px;
-      border: 1px dashed var(--line);
-      border-radius: 8px;
-      background: #fbfefd;
-      color: var(--muted);
-      font-weight: 800;
-    }
+    .expanded-month-week .timetable-wrap { border: 0; border-radius: 0; }
     .month-week {
       display: grid;
       gap: 8px;
@@ -854,7 +771,6 @@
       .monthly-calendar-day { min-height: 94px; padding: 7px; }
       .monthly-preview-item { display: none; }
       .monthly-preview-more { display: block; }
-      .monthly-schedule-day { grid-template-columns: 1fr; gap: 8px; }
     }
     @media (max-width: 560px) {
       .toolbar, .metrics { grid-template-columns: 1fr; }
@@ -871,9 +787,8 @@
       .monthly-calendar-day { min-height: 70px; padding: 5px; gap: 3px; }
       .monthly-date-number { font-size: 13px; }
       .monthly-class-count { font-size: 10px; }
-      .monthly-schedule-week-header { grid-template-columns: minmax(0, 1fr); }
-      .monthly-schedule-week-header .pill { justify-self: start; }
-      .monthly-schedule-class { grid-template-columns: 1fr; gap: 4px; }
+      .expanded-month-week-header { grid-template-columns: minmax(0, 1fr); }
+      .expanded-month-week-header .pill { justify-self: start; }
     }
   </style>
 </head>
@@ -916,8 +831,8 @@
     <div class="calendar-mode-bar" aria-label="Calendar view mode">
       <div class="calendar-mode-switch" role="group" aria-label="Calendar view mode">
         <button type="button" class="calendar-mode-btn active" id="weeklyCalendarModeBtn" data-calendar-mode="weekly" aria-pressed="true">Weekly</button>
-        <button type="button" class="calendar-mode-btn" id="monthlyCalendarModeBtn" data-calendar-mode="monthly" aria-pressed="false">Monthly Calendar</button>
-        <button type="button" class="calendar-mode-btn" id="monthlyScheduleModeBtn" data-calendar-mode="monthly-schedule" aria-pressed="false">Monthly Schedule</button>
+        <button type="button" class="calendar-mode-btn" id="monthlyCalendarModeBtn" data-calendar-mode="monthly" aria-pressed="false">Monthly</button>
+        <button type="button" class="calendar-mode-btn" id="expandedMonthModeBtn" data-calendar-mode="expanded" aria-pressed="false">Expanded Month</button>
       </div>
     </div>
 
@@ -980,18 +895,14 @@
       </div>
     </section>
 
-    <section id="monthlyScheduleViewSection">
-      <div class="monthly-view-toolbar" aria-label="Monthly schedule navigation">
-        <button class="btn ghost" id="schedulePreviousMonthBtn" title="Previous month" aria-label="Previous month">&lsaquo;</button>
-        <div class="monthly-view-title"><strong id="monthlyScheduleTitle">Month Year</strong><span id="monthlyScheduleContext">Monthly Schedule</span></div>
-        <button class="btn ghost" id="scheduleTodayBtn" title="Today" aria-label="Today">Today</button>
-        <button class="btn ghost" id="scheduleNextMonthBtn" title="Next month" aria-label="Next month">&rsaquo;</button>
+    <section id="expandedMonthViewSection">
+      <div class="monthly-view-toolbar" aria-label="Expanded month navigation">
+        <button class="btn ghost" id="expandedPreviousMonthBtn" title="Previous month" aria-label="Previous month">&lsaquo;</button>
+        <div class="monthly-view-title"><strong id="expandedMonthTitle">Month Year</strong><span id="expandedMonthContext">Expanded Month</span></div>
+        <button class="btn ghost" id="expandedTodayBtn" title="Today" aria-label="Today">Today</button>
+        <button class="btn ghost" id="expandedNextMonthBtn" title="Next month" aria-label="Next month">&rsaquo;</button>
       </div>
-      <div class="monthly-schedule-controls">
-        <button class="btn ghost" id="expandAllScheduleWeeksBtn" type="button" aria-label="Expand all schedule weeks">Expand All</button>
-        <button class="btn ghost" id="collapseAllScheduleWeeksBtn" type="button" aria-label="Collapse all schedule weeks">Collapse All</button>
-      </div>
-      <div id="monthlyScheduleList" class="monthly-schedule-list"></div>
+      <div id="expandedMonthWeeks" class="expanded-month-weeks"></div>
     </section>
 
     <section id="monthlySection">
@@ -1133,8 +1044,6 @@
     let dailySwipeStart = null;
     let dailySlideDirection = "still";
     let calendarMode = "weekly";
-    let expandedScheduleWeeks = new Set();
-    let collapsedScheduleWeeks = new Set();
     let monthTimetableCache = new Map();
     let studentSaveTimer = null;
     let teacherStudentPage = 1;
@@ -1212,6 +1121,11 @@
     function dateLabel(value) {
       const date = parseISODate(value);
       return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+    }
+
+    function normalizeCalendarMode(value) {
+      if (value === "monthly-schedule") return "expanded";
+      return ["weekly", "monthly", "expanded"].includes(value) ? value : "weekly";
     }
 
     function rawTimePart(value) {
@@ -2533,143 +2447,60 @@
       renderMonthlySelectedDay(grouped);
     }
 
-    function scheduleWeekKey(startISO) {
-      return `${params.get("teacherId") || params.get("teacher") || ""}|${startISO}`;
-    }
-
-    function scheduleWeekLabel(startISO, index, year) {
+    function expandedWeekLabel(startISO, index, year) {
       const start = parseISODate(startISO);
       const endISO = dateOffsetISO(startISO, 6);
       const end = parseISODate(endISO);
       const startText = start.getMonth() === end.getMonth()
         ? String(start.getDate())
         : start.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-      const endText = end.toLocaleDateString("en-GB", {
-        day: "numeric",
-        month: "short",
-        year: end.getFullYear() === year ? undefined : "numeric"
-      });
+      const endOptions = { day: "numeric", month: "short" };
+      if (end.getFullYear() !== year) endOptions.year = "numeric";
+      const endText = end.toLocaleDateString("en-GB", endOptions);
       return `Week ${index + 1} · ${startText}–${endText}`;
     }
 
-    function scheduleClassRowHtml(entry) {
-      const meta = entryMeta(entry);
-      const displayStatus = meta.status || "booked";
-      const statusBadge = displayStatus === "completed"
-        ? `<span class="completed-badge">Completed</span>`
-        : `<span class="status-badge ${statusClass(displayStatus)}">${escapeHtml(statusLabel(displayStatus))}</span>`;
-      const details = `${meta.type || "class"}${meta.subject ? ` | ${meta.subject}` : ""}`;
-      const endTime = entry.cell?.endTime || entry.cell?.toTime || entry.booking?.endTime || "";
-      return `<div class="monthly-schedule-class ${typeClass(meta.type)} ${statusClass(displayStatus)}">
-        <div class="monthly-schedule-time">${escapeHtml(timeLabel(entry.time))}${endTime ? `–${escapeHtml(timeLabel(endTime))}` : ""}</div>
-        <div class="monthly-schedule-main">
-          <strong>${escapeHtml(meta.studentName || "Class")}</strong>
-          <span>${escapeHtml(details)}${meta.remark ? ` · ${meta.remark}` : ""}</span>
-        </div>
-        ${statusBadge}
-      </div>`;
-    }
-
-    function renderScheduleDayHtml(date, entries, month, isCurrentWeek) {
-      const dateISO = localISO(date);
-      if (!entries.length && !isCurrentWeek) return "";
-      const inMonth = date.getMonth() === month;
-      const dateText = date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
-      return `<div class="monthly-schedule-day${inMonth ? "" : " outside-month"}" data-monthly-schedule-date="${dateISO}">
-        <div class="monthly-schedule-day-head">
-          <strong>${escapeHtml(DAYS[(date.getDay() + 6) % 7])}</strong>
-          <span>${escapeHtml(dateText)} · ${entries.length ? `${entries.length} class${entries.length === 1 ? "" : "es"}` : "No classes"}</span>
-        </div>
-        <div class="monthly-schedule-classes">
-          ${entries.length ? entries.map(scheduleClassRowHtml).join("") : `<div class="monthly-schedule-empty">No classes</div>`}
-        </div>
-      </div>`;
-    }
-
-    function defaultScheduleWeekExpanded(startISO, entries) {
-      const currentWeekStart = localISO(mondayOf(new Date()));
-      if (startISO === currentWeekStart) return true;
-      return entries.length > 0;
-    }
-
-    function renderMonthlyScheduleView({ focusSelectedWeek = false } = {}) {
-      if (!timetableData || !$("monthlyScheduleList")) return;
+    function renderExpandedMonthView({ focusSelectedWeek = false } = {}) {
+      if (!timetableData || !$("expandedMonthWeeks")) return;
       const month = Number($("monthSelect").value);
       const year = Number($("yearSelect").value);
       ensureMonthlySelectedDate();
       const monthStartISO = localISO(new Date(year, month, 1));
       const monthEndISO = localISO(new Date(year, month + 1, 0));
       const activeMonthEntries = classEntries(monthStartISO, monthEndISO);
-      $("monthlyScheduleTitle").textContent = `${MONTHS[month]} ${year}`;
-      $("monthlyScheduleContext").textContent = `${activeMonthEntries.length} class${activeMonthEntries.length === 1 ? "" : "es"} in selected month`;
-      if (!activeMonthEntries.length) {
-        $("monthlyScheduleList").innerHTML = `<div class="daily-empty"><strong>No classes scheduled for this month.</strong><span>${escapeHtml(MONTHS[month])} ${year}</span></div>`;
-        return;
-      }
-      const dates = selectedMonthCalendarDates(year, month);
-      const grouped = groupedEntriesByDate(localISO(dates[0]), localISO(dates[dates.length - 1]));
-      const selectedWeek = localISO(mondayOf(parseISODate(selectedDailyDateISO)));
       const weekStarts = weeksForMonth(year, month);
-      $("monthlyScheduleList").innerHTML = weekStarts.map((startISO, index) => {
+      const selectedWeek = selectedWeekStartISO && weekIntersectsMonth(selectedWeekStartISO, year, month)
+        ? selectedWeekStartISO
+        : localISO(mondayOf(parseISODate(selectedDailyDateISO)));
+      const expandedEntries = weekStarts.length
+        ? classEntries(weekStarts[0], dateOffsetISO(weekStarts[weekStarts.length - 1], 6))
+        : [];
+      $("expandedMonthTitle").textContent = `${MONTHS[month]} ${year}`;
+      $("expandedMonthContext").textContent = `${weekStarts.length} week${weekStarts.length === 1 ? "" : "s"} · ${activeMonthEntries.length} class${activeMonthEntries.length === 1 ? "" : "es"} in selected month`;
+      $("expandedMonthWeeks").innerHTML = weekStarts.map((startISO, index) => {
         const datesInWeek = weekDates(startISO);
-        const weekEntries = datesInWeek.flatMap(date => grouped.get(localISO(date)) || []);
-        const weekKey = scheduleWeekKey(startISO);
-        const expanded = expandedScheduleWeeks.has(weekKey)
-          ? true
-          : collapsedScheduleWeeks.has(weekKey)
-            ? false
-            : defaultScheduleWeekExpanded(startISO, weekEntries);
+        const endISO = localISO(datesInWeek[6]);
+        const weekEntries = expandedEntries.filter(entry => entry.date >= startISO && entry.date <= endISO);
         const current = startISO === localISO(mondayOf(new Date()));
-        const selected = startISO === selectedWeek;
-        const daysHtml = datesInWeek.map(date => renderScheduleDayHtml(date, grouped.get(localISO(date)) || [], month, current || selected)).join("");
-        return `<article class="monthly-schedule-week${current ? " is-current-week" : ""}" data-schedule-week="${escapeHtml(startISO)}">
-          <button class="monthly-schedule-week-header" type="button" data-toggle-schedule-week="${escapeHtml(startISO)}" aria-expanded="${expanded ? "true" : "false"}" aria-label="${expanded ? "Collapse" : "Expand"} ${escapeHtml(scheduleWeekLabel(startISO, index, year))}, ${weekEntries.length} classes">
-            <span><strong>${escapeHtml(scheduleWeekLabel(startISO, index, year))}</strong><span>${escapeHtml(dateLabel(startISO))} - ${escapeHtml(dateLabel(dateOffsetISO(startISO, 6)))}</span></span>
+        return `<article class="expanded-month-week${current ? " is-current-week" : ""}" data-expanded-week="${escapeHtml(startISO)}">
+          <div class="expanded-month-week-header">
+            <span><strong>${escapeHtml(expandedWeekLabel(startISO, index, year))}</strong><span>${escapeHtml(dateLabel(startISO))} - ${escapeHtml(dateLabel(dateOffsetISO(startISO, 6)))}</span></span>
             <span class="pill">${weekEntries.length} class${weekEntries.length === 1 ? "" : "es"}</span>
-            <span class="chevron">${expanded ? "Collapse" : "Expand"}</span>
-          </button>
-          <div class="monthly-schedule-days${expanded ? "" : " hide"}">${daysHtml || `<div class="monthly-schedule-empty" style="margin:12px;">No classes this week.</div>`}</div>
+          </div>
+          <div class="timetable-wrap">${weekTableHtml(datesInWeek, { month })}</div>
         </article>`;
       }).join("");
       if (focusSelectedWeek) {
         requestAnimationFrame(() => {
-          const selectedNode = document.querySelector(`[data-schedule-week="${selectedWeek}"]`);
+          const selectedNode = document.querySelector(`[data-expanded-week="${selectedWeek}"]`);
           selectedNode?.scrollIntoView({ block: "start", behavior: "smooth" });
         });
       }
     }
 
-    function setAllScheduleWeeks(expanded) {
-      const month = Number($("monthSelect").value);
-      const year = Number($("yearSelect").value);
-      weeksForMonth(year, month).forEach(startISO => {
-        const key = scheduleWeekKey(startISO);
-        if (expanded) {
-          expandedScheduleWeeks.add(key);
-          collapsedScheduleWeeks.delete(key);
-        } else {
-          collapsedScheduleWeeks.add(key);
-          expandedScheduleWeeks.delete(key);
-        }
-      });
-      renderMonthlyScheduleView();
-    }
-
-    function toggleScheduleWeek(startISO) {
-      const key = scheduleWeekKey(startISO);
-      if (expandedScheduleWeeks.has(key)) {
-        expandedScheduleWeeks.delete(key);
-        collapsedScheduleWeeks.add(key);
-      } else {
-        collapsedScheduleWeeks.delete(key);
-        expandedScheduleWeeks.add(key);
-      }
-      renderMonthlyScheduleView();
-    }
-
     function updateCalendarModeButtons() {
       document.body.classList.toggle("teacher-calendar-monthly", calendarMode === "monthly");
-      document.body.classList.toggle("teacher-calendar-schedule", calendarMode === "monthly-schedule");
+      document.body.classList.toggle("teacher-calendar-expanded", calendarMode === "expanded");
       document.body.classList.toggle("teacher-calendar-weekly", calendarMode === "weekly");
       document.querySelectorAll("[data-calendar-mode]").forEach(button => {
         const active = button.dataset.calendarMode === calendarMode;
@@ -2679,18 +2510,19 @@
     }
 
     function setCalendarMode(mode, { render = true } = {}) {
-      calendarMode = ["weekly", "monthly", "monthly-schedule"].includes(mode) ? mode : "weekly";
+      const previousMode = calendarMode;
+      calendarMode = normalizeCalendarMode(mode);
       teacherViewLocalSet("teacherViewCalendarMode", calendarMode);
       ensureDailyDateForSelectedMonth(true);
-      if (selectedDailyDateISO) selectedWeekStartISO = localISO(mondayOf(parseISODate(selectedDailyDateISO)));
+      const month = Number($("monthSelect").value);
+      const year = Number($("yearSelect").value);
+      if (!selectedWeekStartISO || !weekIntersectsMonth(selectedWeekStartISO, year, month) || previousMode !== "weekly") {
+        if (selectedDailyDateISO) selectedWeekStartISO = localISO(mondayOf(parseISODate(selectedDailyDateISO)));
+      }
       updateCalendarModeButtons();
       if (!render || !timetableData) return;
       if (calendarMode === "monthly") renderMonthlyCalendarView();
-      else if (calendarMode === "monthly-schedule") {
-        expandedScheduleWeeks.add(scheduleWeekKey(selectedWeekStartISO));
-        collapsedScheduleWeeks.delete(scheduleWeekKey(selectedWeekStartISO));
-        renderMonthlyScheduleView({ focusSelectedWeek: true });
-      }
+      else if (calendarMode === "expanded") renderExpandedMonthView({ focusSelectedWeek: true });
       else {
         renderMonthCalendar();
         renderDailyNavigator();
@@ -2724,7 +2556,7 @@
       selectedWeekStartISO = localISO(mondayOf(now));
       persistTeacherViewSelection();
       await loadTimetable();
-      if (calendarMode === "monthly-schedule") renderMonthlyScheduleView({ focusSelectedWeek: true });
+      if (calendarMode === "expanded") renderExpandedMonthView({ focusSelectedWeek: true });
     }
 
     async function selectMonthlyDate(dateISO) {
@@ -2813,13 +2645,14 @@
       $("monthCalendarSection").classList.remove("hide");
       $("monthlySection").classList.remove("hide");
       $("monthlyCalendarViewSection").classList.remove("hide");
+      $("expandedMonthViewSection").classList.remove("hide");
     }
 
 	    function renderAll() {
 	      if (!timetableData) return;
 	      renderMonthCalendar();
 	      renderMonthlyCalendarView();
-	      renderMonthlyScheduleView();
+	      renderExpandedMonthView();
 	      renderDailyNavigator();
       renderMonthList();
       renderLeaveList();
@@ -2862,24 +2695,9 @@
       if (!button) return;
       selectMonthlyDate(button.dataset.monthlyDate).catch(error => showTimetableLoadFailure(error));
     });
-    $("schedulePreviousMonthBtn").addEventListener("click", () => navigateMonth(-1).catch(error => showTimetableLoadFailure(error)));
-    $("scheduleNextMonthBtn").addEventListener("click", () => navigateMonth(1).catch(error => showTimetableLoadFailure(error)));
-    $("scheduleTodayBtn").addEventListener("click", () => goToTodayMonth().catch(error => showTimetableLoadFailure(error)));
-    $("expandAllScheduleWeeksBtn").addEventListener("click", () => setAllScheduleWeeks(true));
-    $("collapseAllScheduleWeeksBtn").addEventListener("click", () => setAllScheduleWeeks(false));
-    $("monthlyScheduleList").addEventListener("click", event => {
-      const weekButton = event.target.closest("[data-toggle-schedule-week]");
-      if (weekButton) {
-        toggleScheduleWeek(weekButton.dataset.toggleScheduleWeek);
-        return;
-      }
-      const day = event.target.closest("[data-monthly-schedule-date]");
-      if (day) {
-        selectedDailyDateISO = day.dataset.monthlyScheduleDate;
-        selectedWeekStartISO = localISO(mondayOf(parseISODate(selectedDailyDateISO)));
-        persistTeacherViewSelection();
-      }
-    });
+    $("expandedPreviousMonthBtn").addEventListener("click", () => navigateMonth(-1).catch(error => showTimetableLoadFailure(error)));
+    $("expandedNextMonthBtn").addEventListener("click", () => navigateMonth(1).catch(error => showTimetableLoadFailure(error)));
+    $("expandedTodayBtn").addEventListener("click", () => goToTodayMonth().catch(error => showTimetableLoadFailure(error)));
 	    $("previousWeekBtn").addEventListener("click", () => navigateWeek(-1).catch(error => showTimetableLoadFailure(error)));
 	    $("nextWeekBtn").addEventListener("click", () => navigateWeek(1).catch(error => showTimetableLoadFailure(error)));
 	    $("previousDayBtn").addEventListener("click", () => navigateDaily(-1).catch(error => showTimetableLoadFailure(error)));
@@ -3003,7 +2821,7 @@
     fillControls();
     {
       const savedMode = teacherViewLocalGet("teacherViewCalendarMode", "weekly");
-      calendarMode = ["weekly", "monthly", "monthly-schedule"].includes(savedMode) ? savedMode : "weekly";
+      calendarMode = normalizeCalendarMode(savedMode);
     }
     updateCalendarModeButtons();
     persistTeacherViewSelection();
