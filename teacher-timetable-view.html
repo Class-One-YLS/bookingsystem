@@ -1112,6 +1112,10 @@
       return new Date(year || new Date().getFullYear(), (month || 1) - 1, day || 1);
     }
 
+    function dateOnly(value) {
+      return String(value || "").split("T")[0].split(" ")[0];
+    }
+
     function dateOffsetISO(value, days) {
       const date = parseISODate(value);
       date.setDate(date.getDate() + days);
@@ -1201,8 +1205,7 @@
 
     function statusForDisplay(booking) {
       if (!booking) return "";
-      if ((booking.status || "booked") === "booked" && slotHasPassed(booking.date, booking.time)) return "completed";
-      return booking.status || "booked";
+      return resolvedClassStatus(booking);
     }
 
     function statusClass(status) {
@@ -1214,11 +1217,38 @@
     }
 
     function slotDateTime(date, time) {
-      return new Date(`${date}T${normalizeTime(time) || time || "00:00"}:00`);
+      const dateISO = dateOnly(date);
+      const dateMatch = dateISO.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      const normalizedTime = normalizeTime(time) || "00:00";
+      const [hour, minute] = normalizedTime.split(":").map(Number);
+      if (!dateMatch || Number.isNaN(hour) || Number.isNaN(minute)) return new Date(NaN);
+      return new Date(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3]), hour, minute, 0, 0);
     }
 
-    function slotHasPassed(date, time) {
-      return slotDateTime(date, time) < new Date();
+    function classDurationMinutes(record = {}) {
+      const value = Number(record.minutes || record.duration || record.classMinutes || 25);
+      return Number.isFinite(value) && value > 0 ? value : 25;
+    }
+
+    function slotEndDateTime(record = {}) {
+      const start = slotDateTime(record.date, record.time);
+      if (Number.isNaN(start.getTime())) return start;
+      return new Date(start.getTime() + classDurationMinutes(record) * 60 * 1000);
+    }
+
+    function slotHasPassed(date, time, record = {}) {
+      const end = slotEndDateTime({ ...record, date, time });
+      return !Number.isNaN(end.getTime()) && end <= new Date();
+    }
+
+    function resolvedClassStatus(record = {}, reference = new Date()) {
+      const status = record.status || "booked";
+      if (status !== "booked" && status !== "completed") return status;
+      const start = slotDateTime(record.date, record.time);
+      if (Number.isNaN(start.getTime()) || start > reference) return "booked";
+      if (status === "completed") return "completed";
+      const end = slotEndDateTime(record);
+      return !Number.isNaN(end.getTime()) && end <= reference ? "completed" : "booked";
     }
 
     function setStatus(message, type = "") {
@@ -1619,7 +1649,7 @@
         if (cell.kind === "open") {
           return `<td class="cell-open${outsideClass}"><span class="cell-small">${escapeHtml(cell.subject || "Open")}</span></td>`;
         }
-        const displayStatus = (cell.status || "booked") === "booked" && slotHasPassed(cell.date, cell.time) ? "completed" : (cell.status || "booked");
+        const displayStatus = resolvedClassStatus(cell);
         const statusBadge = displayStatus === "completed"
           ? `<span class="completed-badge">Completed</span>`
           : `<span class="status-badge ${statusClass(displayStatus)}">${escapeHtml(statusLabel(displayStatus))}</span>`;
@@ -1751,7 +1781,7 @@
         ? entries.map(classCardHtml).join("")
         : `<div class="daily-empty"><div style="font-size:30px;">🌙</div><strong>No classes scheduled.</strong><span>Enjoy your day.</span></div>`;
       const todayEntries = entriesForDay(todayISO()).filter(entry => !CANCELLED.includes(entryMeta(entry).status));
-      const remaining = todayEntries.filter(entry => entryMeta(entry).status !== "completed" && !slotHasPassed(entry.date, entry.time));
+      const remaining = todayEntries.filter(entry => entryMeta(entry).status !== "completed");
       $("metricUpcoming").textContent = remaining.length;
       window.setTimeout(() => {
         if (list) list.classList.remove("slide-next", "slide-prev", "slide-still");
@@ -1806,7 +1836,7 @@
       const teacherRate = Number(timetableData?.teacher?.rate || 0);
       const defaultPay = (value) => Number(value || 0) || teacherRate;
       if (entry.kind === "cell") {
-        const status = (entry.cell.status || "booked") === "booked" && slotHasPassed(entry.date, entry.time) ? "completed" : (entry.cell.status || "booked");
+        const status = resolvedClassStatus({ ...entry.cell, date: entry.date, time: entry.time });
         return {
           studentName: entry.cell.studentName || "Class",
           subject: entry.cell.subject || "",
@@ -1831,7 +1861,7 @@
         studentName: entry.slot.studentName || "Fixed Regular",
         subject: entry.slot.subject || "",
         type: "regular class",
-        status: slotHasPassed(entry.date, entry.time) ? "completed" : "booked",
+        status: resolvedClassStatus({ ...entry.slot, date: entry.date, time: entry.time, status: "booked" }),
         remark: "",
         estimatedPay: defaultPay(entry.slot.estimatedPay)
       };
