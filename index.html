@@ -6553,6 +6553,7 @@
 
     function calendarCellPriority(cell) {
       if (!cell) return 0;
+      if (cell.status === "public_holiday" || cell.publicHolidayId) return 95;
       if (cell.kind === "open" || cell.status === "available" || cell.available) return 10;
       if (cell.kind === "off" || cell.status === "off" || cell.unavailable) return 50;
       if (cell.kind === "reserved") return 70;
@@ -6575,6 +6576,10 @@
 
     function shouldUseCalendarCell(candidate, existing) {
       if (!existing) return true;
+      const candidateIsPublicHoliday = candidate.status === "public_holiday" || candidate.publicHolidayId;
+      const existingIsPublicHoliday = existing.status === "public_holiday" || existing.publicHolidayId;
+      if (candidateIsPublicHoliday && !existingIsPublicHoliday) return true;
+      if (!candidateIsPublicHoliday && existingIsPublicHoliday) return false;
       if (isResolvedBookingCell(candidate) && isGeneratedAvailabilityCell(existing)) return true;
       if (isGeneratedAvailabilityCell(candidate) && isResolvedBookingCell(existing)) return false;
       const candidateTime = bookingAmendmentTime(candidate.booking || candidate.slot || candidate);
@@ -6813,16 +6818,17 @@
         const cellKey = teacherDateTimeKey(teacher.id, dateISO, targetTime);
         const existing = existingByKey.get(cellKey);
         const booking = canonicalBookingForSlot(teacher.id, dateISO, targetTime);
+        const holidayResolveFallback = cell => resolvePublicHolidayCell(cell, teacher);
         if (isDisplayableBookingRecord(booking)) {
           const existingIsBookingOrOff = existing && (existing.kind === "booking" || existing.bookingId || existing.kind === "off" || existing.unavailable);
           const bookingIsNewer = !existing || bookingAmendmentTime(booking) >= bookingAmendmentTime(existing.booking || existing.slot || existing);
-          if (!existingIsBookingOrOff || bookingIsNewer) fallbackCells.push(calendarCellFromBooking(booking, teacher, existing?.slot || null));
+          if (!existingIsBookingOrOff || bookingIsNewer) fallbackCells.push(holidayResolveFallback(calendarCellFromBooking(booking, teacher, existing?.slot || null)));
           return;
         }
         if (existing) return;
         const slot = directRecurringSlotForCell(teacher, dateISO, targetTime);
         if (slot && (slot.locked || slot.reserved || normalizeAvailabilityStatus(slot) === "off" || slot.studentName)) {
-          fallbackCells.push(calendarCellFromSlot(slot, teacher));
+          fallbackCells.push(holidayResolveFallback(calendarCellFromSlot(slot, teacher)));
         }
       });
       if (SYNC_DEBUG && fallbackCells.length) {
@@ -12497,9 +12503,9 @@
       if (cell.status === "teacher_leave" || cell.teacherLeaveId) return false;
       if (cell.kind === "off" || cell.status === "off" || cell.unavailable) return false;
       if (cell.kind === "open" || cell.available) return true;
-      if (cell.kind === "fixed" || cell.locked || cell.studentName) {
+      if (cell.kind === "fixed" || cell.kind === "booking" || cell.locked || cell.studentName) {
         const status = normalizeClassStatus(cell.status) || cell.status || "";
-        if (["cancelled", "student_not_show", "completed", "teacher_leave"].includes(status)) return false;
+        if (["cancelled", "student_not_show", "teacher_leave"].includes(status)) return false;
         return isRegularClassType(cell.type);
       }
       return false;
