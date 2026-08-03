@@ -2279,13 +2279,35 @@
   <div id="publicHolidayModal" class="modal hide">
     <div class="modal-card">
       <div class="row spread"><h2>Add Public Holiday</h2><button class="btn ghost small" data-close>Close</button></div>
+      <input id="holidayId" type="hidden">
       <div class="grid two" style="margin-top:14px;">
         <div><label>Start Date</label><input id="holidayStartDate" type="date"></div>
         <div><label>End Date</label><input id="holidayEndDate" type="date"></div>
         <div><label>Name</label><input id="holidayName" placeholder="Public holiday name"></div>
         <div><label>Replacement Default</label><select id="holidayReplacementDefault"><option value="yes">Replacement needed</option><option value="no">No replacement needed</option></select></div>
       </div>
+      <div style="margin-top:14px;">
+        <label>Teachers Teaching as Usual</label>
+        <div class="subtle">Selected teachers are exempt from this public holiday rule.</div>
+        <div id="holidayTeachingTeachers" class="list" style="max-height:190px; overflow:auto; margin-top:8px;"></div>
+      </div>
       <div class="row" style="margin-top:14px;"><button class="btn mint" id="savePublicHolidayBtn">Save Holiday</button></div>
+    </div>
+  </div>
+
+  <div id="publicHolidayAffectedModal" class="modal hide">
+    <div class="modal-card">
+      <div class="row spread"><h2>Public Holiday Affected Students</h2><button class="btn ghost small" data-close>Close</button></div>
+      <div id="publicHolidayAffectedSummary" class="subtle" style="margin-top:8px;"></div>
+      <div class="row" style="margin-top:12px;">
+        <button class="btn ghost small" id="selectAllHolidayCreditsBtn">Select All</button>
+        <button class="btn ghost small" id="clearHolidayCreditsBtn">Clear All</button>
+      </div>
+      <div id="publicHolidayAffectedList" class="list" style="max-height:420px; overflow:auto; margin-top:12px;"></div>
+      <div class="row" style="margin-top:14px;">
+        <button class="btn mint" id="confirmPublicHolidayBtn">Confirm Public Holiday</button>
+        <button class="btn ghost" id="cancelPublicHolidayAffectedBtn">Cancel</button>
+      </div>
     </div>
   </div>
 
@@ -2593,6 +2615,7 @@
     let replacementCreditPage = 1;
     let studentNoShowPage = 1;
     let selectedReplacementIds = new Set();
+    let pendingPublicHolidayDraft = null;
     let activityPage = 1;
     let slotListPage = 1;
     let allTeacherPayoutPage = 1;
@@ -6639,7 +6662,7 @@
       console.groupEnd();
     }
 
-    function resolveTeacherCalendar(_state, { teacherId, from, to } = {}) {
+    function resolveTeacherCalendar(_state, { teacherId, from, to, publicHolidayDraft = null } = {}) {
       const teacher = teacherById(teacherId);
       if (!teacher || !from || !to) return { teacherId, from, to, generatedAt: new Date().toISOString(), stateVersion: Number(state.settings?.neonVersion || 0), cells: [] };
       const cells = [];
@@ -6689,71 +6712,46 @@
             traceStages.push(weeklyTraceRecord("Stage 8 Candidate slot before render", slot));
           }
           let finalCell = null;
-          if (normalizeAvailabilityStatus(slot) === "off" && (!booking || bookingAmendmentTime(slot) >= bookingAmendmentTime(booking))) {
-            finalCell = calendarCellFromSlot(slot, teacher);
-            cells.push(finalCell);
+          const pushResolvedCell = (cell) => {
+            finalCell = resolvePublicHolidayCell(cell, teacher, publicHolidayDraft);
+            if (finalCell) cells.push(finalCell);
             if (traceStages.length) {
               traceStages.push(weeklyTraceRecord("Stage 9 Render Weekly Timetable", finalCell));
               logWeeklyResolutionTrace({ teacher, dateISO, time, stages: traceStages });
             }
+          };
+          if (normalizeAvailabilityStatus(slot) === "off" && (!booking || bookingAmendmentTime(slot) >= bookingAmendmentTime(booking))) {
+            pushResolvedCell(calendarCellFromSlot(slot, teacher));
             return;
           }
           if (booking && inactiveBookingCanYieldToActiveSlot(booking) && slotIsActiveOccurrence(slot)) {
-            finalCell = calendarCellFromSlot(slot, teacher);
-            cells.push(finalCell);
-            if (traceStages.length) {
-              traceStages.push(weeklyTraceRecord("Stage 9 Render Weekly Timetable", finalCell));
-              logWeeklyResolutionTrace({ teacher, dateISO, time, stages: traceStages });
-            }
+            pushResolvedCell(calendarCellFromSlot(slot, teacher));
             return;
           }
           if (booking) {
             if (isDeletedBookingRecord(booking)) {
               if (isDisplayableBookingRecord(booking)) {
-                finalCell = calendarCellFromBooking(booking, teacher, slot);
-                cells.push(finalCell);
-                if (traceStages.length) {
-                  traceStages.push(weeklyTraceRecord("Stage 9 Render Weekly Timetable", finalCell));
-                  logWeeklyResolutionTrace({ teacher, dateISO, time, stages: traceStages });
-                }
+                pushResolvedCell(calendarCellFromBooking(booking, teacher, slot));
                 return;
               }
               if (slot && (!slot.locked || normalizeAvailabilityStatus(slot) === "off") && !slot.reserved) {
                 finalCell = calendarCellFromSlot(slot, teacher);
-                cells.push(finalCell);
               }
-              if (traceStages.length) {
-                traceStages.push(weeklyTraceRecord("Stage 9 Render Weekly Timetable", finalCell));
-                logWeeklyResolutionTrace({ teacher, dateISO, time, stages: traceStages });
-              }
+              pushResolvedCell(finalCell);
               return;
             }
-            finalCell = calendarCellFromBooking(booking, teacher, slot);
-            cells.push(finalCell);
-            if (traceStages.length) {
-              traceStages.push(weeklyTraceRecord("Stage 9 Render Weekly Timetable", finalCell));
-              logWeeklyResolutionTrace({ teacher, dateISO, time, stages: traceStages });
-            }
+            pushResolvedCell(calendarCellFromBooking(booking, teacher, slot));
             return;
           }
           const leave = slot ? teacherLeaveForSlot(teacherId, dateISO, time) : null;
           if (leave && slot) {
-            finalCell = calendarCellFromSlot(teacherLeaveOffSlotFromCell(slot, leave, leave.updatedAt || leave.createdAt || new Date().toISOString()), teacher);
-            cells.push(finalCell);
-            if (traceStages.length) {
-              traceStages.push(weeklyTraceRecord("Stage 9 Render Weekly Timetable", finalCell));
-              logWeeklyResolutionTrace({ teacher, dateISO, time, stages: traceStages });
-            }
+            pushResolvedCell(calendarCellFromSlot(teacherLeaveOffSlotFromCell(slot, leave, leave.updatedAt || leave.createdAt || new Date().toISOString()), teacher));
             return;
           }
           if (slot) {
             finalCell = calendarCellFromSlot(slot, teacher);
-            cells.push(finalCell);
           }
-          if (traceStages.length) {
-            traceStages.push(weeklyTraceRecord("Stage 9 Render Weekly Timetable", finalCell));
-            logWeeklyResolutionTrace({ teacher, dateISO, time, stages: traceStages });
-          }
+          pushResolvedCell(finalCell);
         });
       });
       return {
@@ -7135,6 +7133,15 @@
 
     function canonicalCellAvailabilityResult(cell, options = {}) {
       if (!cell) return null;
+      const requestedType = options.classType || options.type || "";
+      if (cell.status === "public_holiday" || cell.publicHolidayId) {
+        if (!isRegularClassType(requestedType)) return { kind: "open", publicHoliday: cell };
+        return {
+          kind: "conflict",
+          reason: "This teacher is not teaching on this Public Holiday. To proceed, add the teacher to Teachers Teaching as Usual.",
+          cell
+        };
+      }
       if (cell.kind === "off" || cell.status === "off" || cell.unavailable) {
         return { kind: "off", reason: `${cell.teacherName || "Teacher"} is OFF on ${formatClassDateTime(cell.date, cell.time)}.`, cell };
       }
@@ -7249,8 +7256,8 @@
       };
     }
 
-    function validateScheduleTargets({ teacherId, dates = [], time, excludeBookingId = "", excludeBookingIds = [], excludeSlotId = "", reuseCancelledBookingId = "" }) {
-      const results = dates.map(date => ({ date, ...slotAvailabilityCheck(teacherId, date, time, { excludeBookingId, excludeBookingIds, excludeSlotId, reuseCancelledBookingId }) }));
+    function validateScheduleTargets({ teacherId, dates = [], time, excludeBookingId = "", excludeBookingIds = [], excludeSlotId = "", reuseCancelledBookingId = "", classType = "" }) {
+      const results = dates.map(date => ({ date, ...slotAvailabilityCheck(teacherId, date, time, { excludeBookingId, excludeBookingIds, excludeSlotId, reuseCancelledBookingId, classType }) }));
       return {
         conflicts: results.filter(item => item.kind === "conflict"),
         off: results.filter(item => item.kind === "off"),
@@ -7396,7 +7403,7 @@
             .filter(cell => teacherFilter === "all" || cell.teacherId === teacherFilter)
             .filter(cell => subjectFilter === "all" || cell.subject === subjectFilter || (teacherById(cell.teacherId)?.subjects || []).includes(subjectFilter))
             .filter(cell => slotMatchesTimeRange({ time: cell.time }, timeFrom, timeTo))
-            .map(cell => ({ cell, slot: cell.slot || { id: cell.slotId, teacherId: cell.teacherId, date: cell.date, day: cell.day, time: cell.time, subject: cell.subject, locked: cell.kind === "fixed", reserved: cell.kind === "reserved", studentName: cell.studentName, source: cell.source, cellKey: cell.cellKey, occurrenceId: cell.occurrenceId, occurrenceKey: cell.occurrenceKey }, booking: cell.booking || (cell.kind === "booking" ? cell : null) }));
+            .map(cell => ({ cell, slot: cell.slot || { id: cell.slotId, teacherId: cell.teacherId, date: cell.date, day: cell.day, time: cell.time, subject: cell.subject, type: cell.type, status: cell.status, locked: cell.kind === "fixed", reserved: cell.kind === "reserved", unavailable: cell.unavailable, available: cell.available, studentId: cell.studentId, studentName: cell.studentName, source: cell.source, publicHolidayId: cell.publicHolidayId, holidayName: cell.holidayName, teacherLeaveId: cell.teacherLeaveId, remark: cell.remark, cellKey: cell.cellKey, occurrenceId: cell.occurrenceId, occurrenceKey: cell.occurrenceKey }, booking: cell.booking || (cell.kind === "booking" ? cell : null) }));
           let filtered = items.filter(x => {
             const isBooked = Boolean(x.booking || x.slot.locked || x.slot.reserved);
             const isOff = x.cell.kind === "off" || x.cell.status === "off" || normalizeAvailabilityStatus(x.slot) === "off";
@@ -9484,6 +9491,9 @@
       const occurrenceId = booking ? occurrenceIdForBooking(booking) : (slot.occurrenceId || occurrenceIdForSlot(slot, slot.date));
       const occurrenceAttr = occurrenceId ? ` data-occurrence-id="${escapeHtml(occurrenceId)}"` : "";
       if (normalizeAvailabilityStatus(slot) === "off") {
+        if (slot.status === "public_holiday" || slot.publicHolidayId || slot.source === "public_holiday") {
+          return `<button class="slot unavailable status-public-holiday"${cellAttr}${occurrenceAttr} disabled>${escapeHtml(teacher.name)}<small>Public Holiday${slot.remark ? ` | ${escapeHtml(slot.remark)}` : ""}</small></button>`;
+        }
         if (slot.status === "teacher_leave" || slot.teacherLeaveId || slot.source === "teacher_leave") {
           const leaveData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, teacherLeaveId: slot.teacherLeaveId || "", date: slot.date, time: slot.time }));
           return `<button class="slot unavailable status-teacher-leave"${cellAttr}${occurrenceAttr} data-view-teacher-leave="${leaveData}">${escapeHtml(teacher.name)}<small>Teacher Leave${slot.remark ? ` | ${escapeHtml(slot.remark)}` : ""}</small></button>`;
@@ -9515,6 +9525,14 @@
       }
       if (slot.locked) {
         const fixedData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, studentId: slot.studentId || "", studentName: slot.studentName || "Fixed regular class", slotId: slot.id, occurrenceId, occurrenceKey: occurrenceKeyForSlot(slot, slot.date), reserved: Boolean(slot.reserved) }));
+        if (slot.status === "public_holiday" || slot.publicHolidayId || slot.source === "public_holiday") {
+          return `<button class="slot fixed status-public-holiday"${cellAttr}${occurrenceAttr} disabled>
+            <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
+            <span class="status-badge status-public-holiday">Public Holiday</span>
+            <span class="slot-student">${escapeHtml(slot.studentName || "Regular class")}</span>
+            <span class="slot-details">${escapeHtml(slot.type || "regular class")} | ${escapeHtml(subject || "-")}</span>
+          </button>`;
+        }
         if (slot.reserved) return `<button class="slot reserve" title="Reserved slot"${cellAttr}${occurrenceAttr} data-fixed-slot="${fixedData}">${escapeHtml(teacher.name)}<small>${escapeHtml(reservationLabel(slot))} | ${escapeHtml(subject)}</small></button>`;
         return `<button class="slot fixed" draggable="true" title="Drag to an open slot to move this fixed regular class" data-drag-fixed-slot="${fixedData}" data-fixed-slot="${fixedData}"${cellAttr}${occurrenceAttr}>
           <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
@@ -11324,7 +11342,7 @@
       if (!teacher) throw new Error("Choose a valid teacher first.");
       if (!lead.childName?.trim()) throw new Error("Add the child's name before booking an assessment or trial class.");
       const existing = lead[config.booking] ? state.bookings.find(booking => booking.id === lead[config.booking]) : null;
-      const availability = slotAvailabilityCheck(selection.teacherId, selection.date, selection.time, { excludeBookingId: existing?.id || "" });
+      const availability = slotAvailabilityCheck(selection.teacherId, selection.date, selection.time, { excludeBookingId: existing?.id || "", classType: config.type });
       if (availability.kind !== "open") throw new Error(availability.reason || "This teacher slot is not available.");
       const now = new Date().toISOString();
       const before = existing ? bookingLogSummary(existing) : "";
@@ -11374,7 +11392,7 @@
         return;
       }
       if (selection.teacherId && selection.date && selection.time) {
-        const availability = slotAvailabilityCheck(selection.teacherId, selection.date, selection.time, { excludeBookingId: existingBooking?.id || "" });
+        const availability = slotAvailabilityCheck(selection.teacherId, selection.date, selection.time, { excludeBookingId: existingBooking?.id || "", classType: config.type });
         if (availability.kind !== "open") {
           renderLeads();
           alert(availability.reason || "This teacher slot is not available.");
@@ -11997,7 +12015,7 @@
         .reduce((sum, item) => sum + Number(item.amount || 0) - Number(item.used || 0), 0);
     }
 
-    function addReplacementCredit({ studentId = "", studentName = "", amount = 1, reason = "", remark = "", sourceBookingId = "", sourceOccurrenceKey = "", teacherLeaveId = "" }) {
+    function addReplacementCredit({ studentId = "", studentName = "", amount = 1, reason = "", remark = "", sourceBookingId = "", sourceOccurrenceKey = "", teacherLeaveId = "", publicHolidayId = "" }) {
       const now = new Date().toISOString();
       const student = studentById(studentId) || (state.students || []).find(s => cleanStudentName(s.name).toLowerCase() === cleanStudentName(studentName).toLowerCase());
       const credit = {
@@ -12011,6 +12029,8 @@
         sourceBookingId,
         sourceOccurrenceKey,
         teacherLeaveId,
+        publicHolidayId,
+        source: publicHolidayId ? "public_holiday" : "",
         status: "active",
         createdAt: now,
         updatedAt: now
@@ -12313,7 +12333,9 @@
 
     function renderPublicHolidayCalendar() {
       const year = Number($("publicHolidayYear")?.value || new Date().getFullYear());
-      const holidays = (state.publicHolidays || []).filter(item => holidayTouchesYear(item, year));
+      const holidays = (state.publicHolidays || [])
+        .filter(item => !["deleted", "removed", "archived"].includes(String(item.status || "").toLowerCase()) && item.deleted !== true)
+        .filter(item => holidayTouchesYear(item, year));
       $("publicHolidayCalendar").className = "holiday-calendar-grid";
       $("publicHolidayCalendar").innerHTML = Array.from({ length: 12 }, (_, month) => {
         const monthName = new Date(year, month, 1).toLocaleString("en", { month: "long" });
@@ -12325,8 +12347,13 @@
             ${monthHolidays.map(item => `
               <div class="overview-item">
                 <strong>${escapeHtml(holidayRangeLabel(item))}</strong>
-                <div class="subtle">${escapeHtml(item.name || "Public Holiday")} | ${item.replacementDefault === "yes" ? "Replacement needed" : "No replacement"}</div>
-                <div class="row" style="margin-top:6px;"><button class="btn small danger" data-delete-holiday="${item.id}">Remove</button></div>
+                <div class="subtle">${escapeHtml(item.name || "Public Holiday")} | Regular classes cancelled | Special sessions continue</div>
+                <div class="subtle">Teaching as usual: ${escapeHtml([...publicHolidayTeacherIds(item)].map(id => teacherById(id)?.name || "").filter(Boolean).join(", ") || "None")}</div>
+                <div class="subtle">Replacement credits selected: ${(item.replacementCreditStudentSelections || []).length}</div>
+                <div class="row" style="margin-top:6px;">
+                  <button class="btn small ghost" data-edit-holiday="${escapeHtml(item.id)}">Edit</button>
+                  <button class="btn small danger" data-delete-holiday="${escapeHtml(item.id)}">Remove</button>
+                </div>
               </div>
             `).join("") || `<div class="subtle" style="margin-top:8px;">No public holidays.</div>`}
           </div>
@@ -12437,21 +12464,362 @@
       return target && target >= holidayStartDate(holiday) && target <= holidayEndDate(holiday);
     }
 
-    function applyPublicHolidayToBookings(holiday) {
-      let changed = 0;
-      scheduleBookings().forEach(booking => {
-        if (!dateIsWithinHoliday(booking.date, holiday) || !classCanBeAutoHolidayCancelled(booking)) return;
-        const before = bookingLogSummary(booking);
-        const now = new Date().toISOString();
-        stampBookingStatus(booking, "public_holiday", now);
-        booking.archived = true;
-        booking.publicHolidayId = holiday.id;
-        booking.remark = [booking.remark, holiday.name].filter(Boolean).join("\n");
-        handleReplacementForOutcome(booking, holiday.replacementDefault || "yes");
-        logAction("Public Holiday Applied", booking.studentName || booking.id, before, bookingLogSummary(booking), holiday.name || "");
-        changed += 1;
+    function publicHolidayTeacherIds(holiday) {
+      return new Set([
+        ...(holiday?.teachingAsUsualTeacherIds || []),
+        ...(holiday?.workingTeacherIds || []),
+        ...(holiday?.teacherExceptions || [])
+      ].filter(Boolean));
+    }
+
+    function publicHolidayCreditSelections(holiday) {
+      const selections = holiday?.replacementCreditStudentSelections || holiday?.replacementSelections || [];
+      return new Set(Array.isArray(selections) ? selections.filter(Boolean) : []);
+    }
+
+    function activePublicHolidayForTeacherDate(teacherId, date, extraHoliday = null) {
+      const dateISO = dateOnly(date);
+      if (!dateISO) return null;
+      return [...(state.publicHolidays || []), extraHoliday].filter(Boolean)
+        .filter(holiday => !["deleted", "removed", "archived"].includes(String(holiday.status || "").toLowerCase()))
+        .filter(holiday => dateIsWithinHoliday(dateISO, holiday))
+        .filter(holiday => !publicHolidayTeacherIds(holiday).has(teacherId))
+        .sort((a, b) => bookingAmendmentTime(b) - bookingAmendmentTime(a))[0] || null;
+    }
+
+    function isRegularClassType(type) {
+      const normalized = String(type || "regular class").trim().toLowerCase().replace(/[_-]+/g, " ");
+      return !normalized || normalized === "regular class" || normalized === "fixed regular" || normalized === "fixed regular class";
+    }
+
+    function publicHolidayAffectsCell(cell, holiday) {
+      if (!cell || !holiday || publicHolidayTeacherIds(holiday).has(cell.teacherId)) return false;
+      if (cell.status === "teacher_leave" || cell.teacherLeaveId) return false;
+      if (cell.kind === "off" || cell.status === "off" || cell.unavailable) return false;
+      if (cell.kind === "open" || cell.available) return true;
+      if (cell.kind === "fixed" || cell.locked || cell.studentName) {
+        const status = normalizeClassStatus(cell.status) || cell.status || "";
+        if (["cancelled", "student_not_show", "completed", "teacher_leave"].includes(status)) return false;
+        return isRegularClassType(cell.type);
+      }
+      return false;
+    }
+
+    function publicHolidayCellFromCell(cell, holiday, teacher) {
+      if (!publicHolidayAffectsCell(cell, holiday)) return cell;
+      const base = {
+        ...cell,
+        status: "public_holiday",
+        publicHolidayId: holiday.id,
+        holidayName: holiday.name || "Public Holiday",
+        remark: [cell.remark, holiday.name || "Public Holiday"].filter(Boolean).join("\n"),
+        source: cell.source || "public_holiday_rule",
+        updatedAt: holiday.updatedAt || holiday.createdAt || cell.updatedAt || "",
+        resolvedAt: new Date().toISOString()
+      };
+      if (cell.kind === "open" || cell.available) {
+        return {
+          ...base,
+          kind: "off",
+          type: "public holiday",
+          studentId: "",
+          studentName: "",
+          locked: true,
+          unavailable: true,
+          available: false,
+          estimatedPay: 0,
+          source: "public_holiday"
+        };
+      }
+      return {
+        ...base,
+        kind: cell.kind === "booking" ? "booking" : "fixed",
+        type: cell.type || "regular class",
+        locked: true,
+        unavailable: false,
+        available: false,
+        estimatedPay: 0,
+        booking: cell.booking || null,
+        slot: cell.slot || null,
+        teacherName: cell.teacherName || teacher?.name || ""
+      };
+    }
+
+    function resolvePublicHolidayCell(cell, teacher, extraHoliday = null) {
+      if (!cell) return cell;
+      const holiday = activePublicHolidayForTeacherDate(cell.teacherId || teacher?.id || "", cell.date, extraHoliday);
+      return publicHolidayCellFromCell(cell, holiday, teacher);
+    }
+
+    function publicHolidayAffectedOccurrences(holiday) {
+      const affected = [];
+      if (!holiday) return affected;
+      const seen = new Set();
+      const teacherIds = publicHolidayTeacherIds(holiday);
+      datesBetween(parseISODate(holidayStartDate(holiday)), parseISODate(holidayEndDate(holiday))).map(localISO).forEach(dateISO => {
+        timetableTeachers()
+          .filter(teacher => !teacherIds.has(teacher.id))
+          .forEach(teacher => {
+            resolveTeacherCalendar(state, { teacherId: teacher.id, from: dateISO, to: dateISO, publicHolidayDraft: holiday }).cells
+              .filter(cell => cell.publicHolidayId === holiday.id && cell.studentName && isRegularClassType(cell.type))
+              .forEach(cell => {
+                const sourceOccurrenceKey = cell.occurrenceKey || `${cell.recurringScheduleId || cell.slotId || cell.bookingId || cell.recordId}|${dateISO}`;
+                const key = `${holiday.id}|${sourceOccurrenceKey}|${cell.studentId || studentNameKey(cell.studentName)}|${cell.teacherId}|${cell.time}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+                affected.push({ ...cell, sourceOccurrenceKey, selectionKey: key });
+              });
+          });
       });
-      return changed;
+      return affected.sort((a, b) => `${a.date || ""} ${a.time || ""} ${a.teacherName || ""}`.localeCompare(`${b.date || ""} ${b.time || ""} ${b.teacherName || ""}`));
+    }
+
+    function renderHolidayTeacherOptions(selectedIds = []) {
+      const selected = new Set(selectedIds || []);
+      const target = $("holidayTeachingTeachers");
+      if (!target) return;
+      target.innerHTML = activeTeachers().sort(byName).map(teacher => `
+        <label class="row" style="justify-content:flex-start; gap:10px; padding:6px 4px;">
+          <input type="checkbox" data-holiday-teacher-id="${escapeHtml(teacher.id)}" ${selected.has(teacher.id) ? "checked" : ""}>
+          <span>${escapeHtml(teacher.name || "")}</span>
+          <span class="subtle">${escapeHtml((teacher.subjects || []).join(", "))}</span>
+        </label>
+      `).join("") || `<div class="empty">No teachers found.</div>`;
+    }
+
+    function holidayFormDraft() {
+      const startDate = $("holidayStartDate").value;
+      const endDate = $("holidayEndDate").value || startDate;
+      if (!startDate) throw new Error("Choose public holiday start date.");
+      if (endDate < startDate) throw new Error("End date cannot be before start date.");
+      const now = new Date().toISOString();
+      const selectedTeachers = [...document.querySelectorAll("[data-holiday-teacher-id]:checked")].map(input => input.dataset.holidayTeacherId).filter(Boolean);
+      const existing = $("holidayId").value ? (state.publicHolidays || []).find(item => item.id === $("holidayId").value) : null;
+      const duplicate = (state.publicHolidays || []).find(item =>
+        item.id !== existing?.id &&
+        !["deleted", "removed", "archived"].includes(String(item.status || "").toLowerCase()) &&
+        item.deleted !== true &&
+        holidayStartDate(item) <= endDate &&
+        holidayEndDate(item) >= startDate
+      );
+      if (duplicate) throw new Error(`A public holiday already exists for ${holidayRangeLabel(duplicate)}. Edit that holiday instead.`);
+      return {
+        ...(existing || {}),
+        id: existing?.id || uid("holiday"),
+        startDate,
+        endDate,
+        date: startDate,
+        name: $("holidayName").value.trim() || "Public Holiday",
+        status: "active",
+        replacementDefault: $("holidayReplacementDefault").value || activePolicyRule(startDate).publicHolidayReplacementDefault || "yes",
+        teachingAsUsualTeacherIds: selectedTeachers,
+        replacementCreditStudentSelections: existing?.replacementCreditStudentSelections || [],
+        createdAt: existing?.createdAt || now,
+        createdBy: existing?.createdBy || currentUserEmail(),
+        updatedAt: now,
+        updatedBy: currentUserEmail(),
+        deviceId: currentDeviceId()
+      };
+    }
+
+    function renderPublicHolidayAffectedModal(holiday) {
+      const affected = publicHolidayAffectedOccurrences(holiday);
+      const selected = publicHolidayCreditSelections(holiday);
+      const defaultSelect = (holiday.replacementDefault || "yes") === "yes" && !holiday.id?.startsWith("existing_") && !selected.size;
+      $("publicHolidayAffectedSummary").textContent = `${holidayRangeLabel(holiday)} - ${holiday.name || "Public Holiday"} | ${affected.length} regular class${affected.length === 1 ? "" : "es"} affected. Tick students who should receive replacement credits.`;
+      $("publicHolidayAffectedList").innerHTML = affected.length ? affected.map(cell => {
+        const checked = selected.has(cell.selectionKey) || defaultSelect;
+        return `<label class="overview-item row" style="justify-content:flex-start; gap:10px;">
+          <input type="checkbox" data-holiday-credit-key="${escapeHtml(cell.selectionKey)}" ${checked ? "checked" : ""}>
+          <span><strong>${escapeHtml(cell.studentName || "")}</strong><div class="subtle">${escapeHtml(formatDateFromAny(cell.date))} ${escapeHtml(timeLabel(cell.time))} | ${escapeHtml(cell.teacherName || "")} | ${escapeHtml(cell.subject || "-")}</div></span>
+        </label>`;
+      }).join("") : `<div class="empty">No regular classes are affected. Special sessions continue as scheduled.</div>`;
+      $("publicHolidayAffectedModal").classList.remove("hide");
+    }
+
+    function upsertPublicHolidayReplacementForCell(holiday, cell, now) {
+      const sourceOccurrenceKey = cell.sourceOccurrenceKey || cell.occurrenceKey || `${cell.recurringScheduleId || cell.slotId || cell.bookingId || cell.recordId}|${cell.date}`;
+      const existing = (state.replacements || []).find(item =>
+        item.publicHolidayId === holiday.id &&
+        item.sourceOccurrenceKey === sourceOccurrenceKey &&
+        (item.studentId === (cell.studentId || "") || studentNameKey(item.studentName || "") === studentNameKey(cell.studentName || ""))
+      );
+      const teacher = teacherById(cell.teacherId);
+      const base = {
+        bookingId: cell.bookingId || "",
+        sourceBookingId: cell.bookingId || "",
+        sourceOccurrenceKey,
+        sourceRecurringScheduleId: cell.recurringScheduleId || cell.slotId || "",
+        publicHolidayId: holiday.id,
+        source: "public_holiday",
+        reason: "Public Holiday",
+        replacementNeeded: true,
+        studentId: cell.studentId || "",
+        studentName: cell.studentName || "",
+        subject: cell.subject || "",
+        originalTeacherId: cell.teacherId,
+        originalTeacherName: teacher ? teacher.name : cell.teacherName || "",
+        originalDate: dateOnly(cell.date),
+        originalTime: timePart(cell.time),
+        minutes: Number(cell.minutes || 25),
+        notes: holiday.name || "",
+        latestAction: "Public holiday replacement credit selected",
+        lastActionAt: now,
+        updatedAt: now,
+        updatedBy: currentUserEmail()
+      };
+      state.replacements ||= [];
+      let replacement = existing;
+      if (replacement) {
+        Object.assign(replacement, base, { archived: false });
+        if (replacement.status === "No Replacement Needed" || replacement.status === "Cancellation Withdrawn") replacement.status = "Action Needed";
+      } else {
+        replacement = {
+          id: uid("replacement"),
+          ...base,
+          status: "Action Needed",
+          replacementTeacherId: "",
+          replacementTeacherName: "",
+          replacementDate: "",
+          replacementTime: "",
+          replacementBookingId: "",
+          createdAt: now,
+          createdBy: currentUserEmail()
+        };
+        state.replacements.push(replacement);
+      }
+      state.replacementCredits ||= [];
+      let credit = state.replacementCredits.find(item =>
+        item.status !== "void" &&
+        item.publicHolidayId === holiday.id &&
+        item.sourceOccurrenceKey === sourceOccurrenceKey &&
+        (item.studentId === (cell.studentId || "") || studentNameKey(item.studentName || "") === studentNameKey(cell.studentName || ""))
+      );
+      if (!credit) {
+        credit = addReplacementCredit({
+          studentId: cell.studentId || "",
+          studentName: cell.studentName || "",
+          amount: 1,
+          reason: "Public Holiday",
+          remark: holiday.name || "Public holiday replacement credit.",
+          sourceBookingId: cell.bookingId || "",
+          sourceOccurrenceKey,
+          publicHolidayId: holiday.id
+        });
+      }
+      Object.assign(credit, {
+        publicHolidayId: holiday.id,
+        source: "public_holiday",
+        sourceOccurrenceKey,
+        replacementId: replacement.id,
+        subject: cell.subject || credit.subject || "",
+        teacherId: cell.teacherId || credit.teacherId || "",
+        originalDate: dateOnly(cell.date),
+        originalTime: timePart(cell.time),
+        updatedAt: now
+      });
+      return { replacement, credit };
+    }
+
+    function reconcilePublicHolidayCredits(holiday, affectedCells, selectedKeys, now) {
+      const affectedByKey = new Map(affectedCells.map(cell => [cell.selectionKey, cell]));
+      let creditsCreated = 0;
+      selectedKeys.forEach(key => {
+        const cell = affectedByKey.get(key);
+        if (!cell) return;
+        const beforeCount = (state.replacementCredits || []).length;
+        upsertPublicHolidayReplacementForCell(holiday, cell, now);
+        if ((state.replacementCredits || []).length > beforeCount) creditsCreated += 1;
+      });
+      const selectedOccurrenceKeys = new Set([...selectedKeys].map(key => affectedByKey.get(key)?.sourceOccurrenceKey).filter(Boolean));
+      let creditsVoided = 0;
+      (state.replacementCredits || []).forEach(credit => {
+        if (credit.publicHolidayId !== holiday.id || credit.status === "void") return;
+        if (selectedOccurrenceKeys.has(credit.sourceOccurrenceKey)) return;
+        if (Number(credit.used || 0) > 0) return;
+        credit.status = "void";
+        credit.voidedAt = now;
+        credit.updatedAt = now;
+        creditsVoided += 1;
+      });
+      (state.replacements || []).forEach(replacement => {
+        if (replacement.publicHolidayId !== holiday.id || selectedOccurrenceKeys.has(replacement.sourceOccurrenceKey)) return;
+        replacement.archived = true;
+        replacement.status = "No Replacement Needed";
+        replacement.updatedAt = now;
+      });
+      return { creditsCreated, creditsVoided };
+    }
+
+    async function confirmPublicHolidaySave() {
+      if (!pendingPublicHolidayDraft) return;
+      const latestLoaded = await autoLoadLatestNeonIfNeeded("saving public holiday");
+      if (!latestLoaded) return;
+      const now = new Date().toISOString();
+      const holiday = pendingPublicHolidayDraft;
+      holiday.replacementCreditStudentSelections = [...document.querySelectorAll("[data-holiday-credit-key]:checked")].map(input => input.dataset.holidayCreditKey).filter(Boolean);
+      holiday.updatedAt = now;
+      holiday.updatedBy = currentUserEmail();
+      holiday.deviceId = currentDeviceId();
+      state.publicHolidays ||= [];
+      const existingIndex = state.publicHolidays.findIndex(item => item.id === holiday.id);
+      const before = existingIndex >= 0 ? cloneForUndo(state.publicHolidays[existingIndex]) : null;
+      if (existingIndex >= 0) state.publicHolidays[existingIndex] = holiday;
+      else state.publicHolidays.push(holiday);
+      const affected = publicHolidayAffectedOccurrences(holiday);
+      const creditSummary = reconcilePublicHolidayCredits(holiday, affected, new Set(holiday.replacementCreditStudentSelections), now);
+      logAction(
+        before ? "Public Holiday Updated" : "Public Holiday Added",
+        holiday.name,
+        before ? holidayRangeLabel(before) : "",
+        `${holidayRangeLabel(holiday)} | ${affected.length} regular class${affected.length === 1 ? "" : "es"} affected`,
+        `Teachers teaching as usual: ${holiday.teachingAsUsualTeacherIds.length}. Replacement credits selected: ${holiday.replacementCreditStudentSelections.length}. Created: ${creditSummary.creditsCreated}. Voided: ${creditSummary.creditsVoided}.`
+      );
+      pendingPublicHolidayDraft = null;
+      $("publicHolidayAffectedModal").classList.add("hide");
+      $("publicHolidayModal").classList.add("hide");
+      save(false);
+      renderPublicHolidayCalendar();
+      renderSchedule();
+      renderReplacements();
+      renderActivityLog();
+      const synced = await autoPushIfConfigured(`Public holiday saved. ${affected.length} regular class${affected.length === 1 ? "" : "es"} affected.`);
+      setStatus(synced ? "Public holiday saved and synced to Teacher View." : "Public holiday saved locally. Not synced to Teacher View yet.", synced ? "success" : "warn");
+    }
+
+    function removePublicHoliday(holidayId) {
+      const holiday = (state.publicHolidays || []).find(item => item.id === holidayId);
+      if (!holiday) return;
+      const usedCredits = (state.replacementCredits || []).filter(credit => credit.publicHolidayId === holiday.id && credit.status !== "void" && Number(credit.used || 0) > 0);
+      const message = usedCredits.length
+        ? `Remove this public holiday?\n\n${usedCredits.length} linked replacement credit${usedCredits.length === 1 ? " has" : "s have"} already been used and will be kept for manual review.`
+        : "Remove this public holiday?";
+      if (!confirm(message)) return;
+      const now = new Date().toISOString();
+      const before = cloneForUndo(holiday);
+      holiday.status = "removed";
+      holiday.deleted = true;
+      holiday.deletedAt = now;
+      holiday.updatedAt = now;
+      holiday.updatedBy = currentUserEmail();
+      (state.replacementCredits || []).forEach(credit => {
+        if (credit.publicHolidayId !== holiday.id || credit.status === "void" || Number(credit.used || 0) > 0) return;
+        credit.status = "void";
+        credit.voidedAt = now;
+        credit.updatedAt = now;
+      });
+      (state.replacements || []).forEach(replacement => {
+        if (replacement.publicHolidayId !== holiday.id) return;
+        replacement.archived = true;
+        replacement.status = "No Replacement Needed";
+        replacement.updatedAt = now;
+      });
+      logAction("Public Holiday Removed", holiday.name || holiday.id, holidayRangeLabel(before), "", `${usedCredits.length} used linked credit${usedCredits.length === 1 ? "" : "s"} kept for review.`);
+      save(false);
+      renderPublicHolidayCalendar();
+      renderSchedule();
+      renderReplacements();
+      scheduleAutoPush();
     }
 
     function moveValidationMessage(booking, slot) {
@@ -16764,11 +17132,22 @@
         openUndoCancellationModal(undoCancellation.dataset.undoCancellation);
       }
       const deleteHoliday = e.target.closest("[data-delete-holiday]");
-      if (deleteHoliday && confirm("Remove this public holiday? Existing cancelled class records will remain until admin edits them.")) {
-        const holiday = (state.publicHolidays || []).find(item => item.id === deleteHoliday.dataset.deleteHoliday);
-        state.publicHolidays = (state.publicHolidays || []).filter(item => item.id !== deleteHoliday.dataset.deleteHoliday);
-        logAction("Public Holiday Removed", holiday?.name || deleteHoliday.dataset.deleteHoliday, holiday ? holidayRangeLabel(holiday) : "", "", "");
-        save();
+      if (deleteHoliday) {
+        removePublicHoliday(deleteHoliday.dataset.deleteHoliday);
+        return;
+      }
+      const editHoliday = e.target.closest("[data-edit-holiday]");
+      if (editHoliday) {
+        const holiday = (state.publicHolidays || []).find(item => item.id === editHoliday.dataset.editHoliday);
+        if (!holiday) return;
+        $("holidayId").value = holiday.id || "";
+        $("holidayStartDate").value = holidayStartDate(holiday);
+        $("holidayEndDate").value = holidayEndDate(holiday);
+        $("holidayName").value = holiday.name || "";
+        $("holidayReplacementDefault").value = holiday.replacementDefault || activePolicyRule(holidayStartDate(holiday)).publicHolidayReplacementDefault || "yes";
+        renderHolidayTeacherOptions([...publicHolidayTeacherIds(holiday)]);
+        $("publicHolidayModal").classList.remove("hide");
+        return;
       }
       const bookReplacement = e.target.closest("[data-book-replacement]");
       if (bookReplacement) {
@@ -17410,7 +17789,7 @@
       if (slot.reuseCancelledBookingId && (period.mode !== "one_date" || period.startDate !== slot.date)) return alert("A cancelled slot can only be rebooked for its original date and time.");
       if (period.mode === "permanent" && type !== "regular class") return alert("Ongoing bookings are only available for Regular Class. Choose particular date or temporary period for other class types.");
       if (type === "replacement class" && period.mode !== "one_date") return alert("Each replacement credit books one class. Choose Particular Date Only.");
-      const validation = validateScheduleTargets({ teacherId: slot.teacherId, dates: period.dates, time: slot.time, reuseCancelledBookingId: slot.reuseCancelledBookingId || "" });
+      const validation = validateScheduleTargets({ teacherId: slot.teacherId, dates: period.dates, time: slot.time, reuseCancelledBookingId: slot.reuseCancelledBookingId || "", classType: type });
       if (validation.conflicts.length) return alert(conflictListMessage(validation.conflicts, "book this class"));
       if (period.mode === "permanent") {
         const permanentConflict = permanentBookingConflict(slot.teacherId, period.day, slot.time, period.startDate);
@@ -17594,10 +17973,12 @@
       renderPublicHolidayCalendar();
     });
     $("addPublicHolidayBtn").onclick = () => {
+      $("holidayId").value = "";
       $("holidayStartDate").value = "";
       $("holidayEndDate").value = "";
       $("holidayName").value = "";
       $("holidayReplacementDefault").value = activePolicyRule(todayISO()).publicHolidayReplacementDefault || "yes";
+      renderHolidayTeacherOptions([]);
       $("publicHolidayModal").classList.remove("hide");
     };
     $("addTeacherLeaveBtn").onclick = openTeacherLeaveModal;
@@ -17623,29 +18004,27 @@
       alert(err.message);
     });
     $("savePublicHolidayBtn").onclick = async () => {
-      const startDate = $("holidayStartDate").value;
-      const endDate = $("holidayEndDate").value || startDate;
-      const holidayName = $("holidayName").value.trim() || "Public Holiday";
-      const replacementDefault = $("holidayReplacementDefault").value;
-      if (!startDate) return alert("Choose public holiday start date.");
-      if (endDate < startDate) return alert("End date cannot be before start date.");
-      const latestLoaded = await autoLoadLatestNeonIfNeeded("saving public holiday");
-      if (!latestLoaded) return;
-      const existing = (state.publicHolidays || []).find(item => holidayStartDate(item) === startDate && holidayEndDate(item) === endDate);
-      const holiday = existing || { id: uid("holiday"), createdAt: new Date().toISOString() };
-      holiday.startDate = startDate;
-      holiday.endDate = endDate;
-      holiday.date = startDate;
-      holiday.name = holidayName;
-      holiday.replacementDefault = replacementDefault;
-      holiday.updatedAt = new Date().toISOString();
-      if (!existing) state.publicHolidays.push(holiday);
-      const changed = applyPublicHolidayToBookings(holiday);
-      logAction(existing ? "Public Holiday Updated" : "Public Holiday Added", holiday.name, "", `${holidayRangeLabel(holiday)} | ${changed} class${changed === 1 ? "" : "es"} updated`, "");
-      $("publicHolidayModal").classList.add("hide");
-      save(false);
-      await autoPushIfConfigured(`Public holiday saved. ${changed} class${changed === 1 ? "" : "es"} updated.`);
+      try {
+        pendingPublicHolidayDraft = holidayFormDraft();
+        renderPublicHolidayAffectedModal(pendingPublicHolidayDraft);
+      } catch (err) {
+        alert(err.message);
+      }
     };
+    $("selectAllHolidayCreditsBtn").onclick = () => {
+      document.querySelectorAll("[data-holiday-credit-key]").forEach(input => { input.checked = true; });
+    };
+    $("clearHolidayCreditsBtn").onclick = () => {
+      document.querySelectorAll("[data-holiday-credit-key]").forEach(input => { input.checked = false; });
+    };
+    $("cancelPublicHolidayAffectedBtn").onclick = () => {
+      pendingPublicHolidayDraft = null;
+      $("publicHolidayAffectedModal").classList.add("hide");
+    };
+    $("confirmPublicHolidayBtn").onclick = () => animateClick($("confirmPublicHolidayBtn"), confirmPublicHolidaySave).catch(err => {
+      setStatus(`Public holiday save failed: ${err.message}`, "error");
+      alert(err.message);
+    });
     function renderScheduleAfterFilterChange(event) {
       if (["weekSelect", "teacherFilter"].includes(event?.target?.id)) scheduleSmartScrollPausedUntil = 0;
       renderSchedule();
