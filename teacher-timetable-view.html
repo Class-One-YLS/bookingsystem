@@ -1203,6 +1203,33 @@
       return STATUS_LABELS[status] || status || "Booked";
     }
 
+    function normalizeClassStatus(record) {
+      const values = typeof record === "string"
+        ? [record]
+        : [
+            record?.outcome,
+            record?.finalStatus,
+            record?.classOutcome,
+            record?.outcomeStatus,
+            record?.businessStatus,
+            record?.status
+          ];
+      for (const value of values) {
+        const normalized = String(value || "").trim().toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
+        if (!normalized) continue;
+        if (["cancel", "cancelled", "canceled"].includes(normalized)) return "cancelled";
+        if (["student_not_show", "student_no_show", "not_show", "no_show"].includes(normalized)) return "student_not_show";
+        if (["teacher_leave", "teacher_on_leave"].includes(normalized)) return "teacher_leave";
+        if (["public_holiday", "holiday"].includes(normalized)) return "public_holiday";
+        if (["completed", "complete", "passed", "finalized", "finished"].includes(normalized)) return "completed";
+        if (["booked", "booking"].includes(normalized)) return "booked";
+        if (["available"].includes(normalized)) return "available";
+        if (["off", "unavailable"].includes(normalized)) return "off";
+        if (["deleted", "removed"].includes(normalized)) return "deleted";
+      }
+      return "";
+    }
+
     function statusForDisplay(booking) {
       if (!booking) return "";
       return resolvedClassStatus(booking);
@@ -1242,10 +1269,11 @@
     }
 
     function resolvedClassStatus(record = {}, reference = new Date()) {
-      const status = record.status || "booked";
+      const status = normalizeClassStatus(record) || record.status || "booked";
       if (status !== "booked" && status !== "completed") return status;
       const start = slotDateTime(record.date, record.time);
-      if (Number.isNaN(start.getTime()) || start > reference) return "booked";
+      if (Number.isNaN(start.getTime())) return status === "completed" ? "completed" : "booked";
+      if (start > reference) return "booked";
       if (status === "completed") return "completed";
       const end = slotEndDateTime(record);
       return !Number.isNaN(end.getTime()) && end <= reference ? "completed" : "booked";

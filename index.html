@@ -14512,6 +14512,7 @@
         if (b.status === "booked" && slotHasPassed(b.date, b.time)) {
           const now = new Date().toISOString();
           stampBookingStatus(b, "completed", now);
+          b.finalizedAt = b.finalizedAt || now;
           b.archived = true;
           const replacement = (state.replacements || []).find(item => item.replacementBookingId === b.id);
           if (replacement && replacement.status === "Replacement Booked") {
@@ -14558,6 +14559,7 @@
             statusChangedAt: now,
             slotRevisionAt: now,
             completedAt: slotDateTime(slot.date, slot.time).toISOString(),
+            finalizedAt: now,
             source: "fixed_regular_snapshot"
           });
           changed = true;
@@ -14576,7 +14578,7 @@
     function archivePast(show = true) {
       const now = new Date();
       const start = new Date(now.getFullYear(), now.getMonth(), 1);
-      finalizePassedClassesForRange(start, now, show);
+      return finalizePassedClassesForRange(start, now, show);
     }
 
     async function fetchJsonWithTimeout(url, options = {}, label = "Google Apps Script", timeoutMs = SYNC_READ_TIMEOUT_MS) {
@@ -15825,7 +15827,10 @@
       booking.slotRevisionAt = now;
       if (classStatus === "student_not_show") booking.studentNotShowAt = now;
       if (isCancelledStatus(classStatus)) booking.cancelledAt = now;
-      if (classStatus === "completed") booking.completedAt = booking.completedAt || now;
+      if (classStatus === "completed") {
+        booking.completedAt = booking.completedAt || now;
+        booking.finalizedAt = booking.finalizedAt || now;
+      }
       if (classStatus === "deleted") booking.deletedAt = booking.deletedAt || now;
       return booking;
     }
@@ -17378,7 +17383,18 @@
       setStatus(`Save failed — Retry. ${err.message}`, "error");
       setRetrySaveVisible(true);
     });
-    $("archivePastBtn").onclick = () => { archivePast(); renderAll(); };
+    $("archivePastBtn").onclick = async () => {
+      const changed = archivePast();
+      renderAll();
+      if (!changed) return;
+      const savedLocally = save(false, { render: false, label: "finalize passed classes" });
+      if (!savedLocally) return;
+      try {
+        await autoPushIfConfigured("Passed classes finalized.");
+      } catch (err) {
+        setStatus(`Passed classes finalized locally. Neon sync failed: ${err.message}`, "error");
+      }
+    };
     $("saveTeacherBtn").onclick = () => saveTeacher().catch(err => {
       setStatus(`Teacher save sync failed: ${err.message}`, "error");
       alert(`Teacher saved locally, but sync failed: ${err.message}`);
