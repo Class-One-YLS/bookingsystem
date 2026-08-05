@@ -842,6 +842,7 @@
       <div class="metric"><span>Completed</span><strong id="metricCompleted">0</strong></div>
       <div class="metric"><span>Not Show</span><strong id="metricNotShow">0</strong></div>
       <div class="metric"><span>Cancelled</span><strong id="metricCancelled">0</strong></div>
+      <div class="metric"><span>Teacher Leave</span><strong id="metricTeacherLeave">0</strong><div class="subtle">leave dates</div></div>
       <div class="metric"><span>Income To Date</span><strong id="metricIncome">RM 0.00</strong></div>
     </div>
 
@@ -1369,6 +1370,12 @@
     function normalizeLoadedTimetable(data) {
       data.regularSlots = (data.regularSlots || []).map(slot => ({ ...slot, time: normalizeTime(slot.time) || slot.time }));
       data.overrideSlots = (data.overrideSlots || []).map(slot => ({ ...slot, time: normalizeTime(slot.time) || slot.time }));
+      data.teacherLeaves = (data.teacherLeaves || []).map(leave => ({
+        ...leave,
+        date: dateOnly(leave.date || leave.startDate || ""),
+        startDate: dateOnly(leave.startDate || leave.date || ""),
+        endDate: dateOnly(leave.endDate || leave.date || leave.startDate || "")
+      }));
       data.bookings = (data.bookings || []).map(booking => ({ ...booking, time: normalizeTime(booking.time) || booking.time }));
       const seenCellKeys = new Set();
       const duplicateCellKeys = new Set();
@@ -1926,6 +1933,32 @@
       return summary;
     }
 
+    function isActiveTeacherLeaveRecord(leave) {
+      if (!leave || leave.deleted || leave.archived) return false;
+      const status = String(leave.status || "active").trim().toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
+      return !["deleted", "removed", "archived", "cancelled", "canceled", "withdrawn", "inactive", "superseded", "undone"].includes(status);
+    }
+
+    function teacherLeaveDatesForMonth(month, year) {
+      const teacherId = String(timetableData?.teacher?.id || "");
+      const monthStart = localISO(new Date(year, month, 1));
+      const monthEnd = localISO(new Date(year, month + 1, 0));
+      const dates = new Set();
+      (timetableData?.teacherLeaves || [])
+        .filter(isActiveTeacherLeaveRecord)
+        .filter(leave => !teacherId || String(leave.teacherId || "") === teacherId)
+        .forEach(leave => {
+          const start = dateOnly(leave.startDate || leave.date);
+          const end = dateOnly(leave.endDate || leave.date || start);
+          if (!start) return;
+          const clippedStart = start > monthStart ? start : monthStart;
+          const clippedEnd = end && end < monthEnd ? end : monthEnd;
+          if (clippedEnd < monthStart || clippedStart > monthEnd || clippedStart > clippedEnd) return;
+          for (let date = clippedStart; date <= clippedEnd; date = dateOffsetISO(date, 1)) dates.add(date);
+        });
+      return dates;
+    }
+
     function monthlyTeachingSummary(month, year) {
       const from = localISO(new Date(year, month, 1));
       const to = localISO(new Date(year, month + 1, 0));
@@ -1933,7 +1966,7 @@
       const completed = entries.filter(isPaidCompletedEntry);
       const notShows = entries.filter(isNotShowEntry);
       const cancelled = entries.filter(isCancelledEntry);
-      const teacherLeaveCount = entries.filter(entry => entryMeta(entry).status === "teacher_leave").length;
+      const teacherLeaveCount = teacherLeaveDatesForMonth(month, year).size;
       const lessonPay = completed.reduce((sum, entry) => sum + Number(entryMeta(entry).estimatedPay || 0), 0);
       const notShowPay = notShows.reduce((sum, entry) => sum + Number(entryMeta(entry).estimatedPay || 5), 0);
       const notShowRate = notShows.length ? notShowPay / notShows.length : 5;
@@ -2062,7 +2095,7 @@
         {
           project: "Full attendance reward",
           description: automatic.teacherLeaveCount
-            ? `${automatic.teacherLeaveCount} teacher leave record${automatic.teacherLeaveCount === 1 ? "" : "s"}; not eligible`
+            ? `${automatic.teacherLeaveCount} teacher leave date${automatic.teacherLeaveCount === 1 ? "" : "s"}; not eligible`
             : `${automatic.completedCount} completed lessons; no teacher leave`,
           amount: automatic.attendancePay,
           automatic: true
@@ -2345,6 +2378,7 @@
       $("metricCompleted").textContent = summary.completedCount;
       $("metricNotShow").textContent = summary.notShowCount;
       $("metricCancelled").textContent = summary.cancelledCount;
+      $("metricTeacherLeave").textContent = summary.teacherLeaveCount;
     }
 
     function renderLeaveList() {
