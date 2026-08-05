@@ -42,6 +42,9 @@
         });
         const err = new Error(data.error || `Class One API HTTP ${res.status}`);
         err.status = res.status;
+        err.data = data;
+        err.currentVersion = data.currentVersion;
+        err.conflict = data.conflict;
         throw err;
       }
       return data;

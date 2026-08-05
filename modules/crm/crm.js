@@ -225,6 +225,9 @@
         });
         const err = new Error(data.error || res.statusText || "API request failed.");
         err.status = res.status;
+        err.data = data;
+        err.currentVersion = data.currentVersion;
+        err.conflict = data.conflict;
         throw err;
       }
       return data;
@@ -411,7 +414,7 @@
         version = Number(saved.version || version + 1);
         clearSyncedSnapshot(snapshot);
       } catch (err) {
-        if (err.status !== 409) throw err;
+        if (err.status !== 409 || err.conflict) throw err;
         setStatus("Merging CRM with latest Neon data...");
         const retryPatch = { ...patch, baseVersion: version, retryOf: patch.updatedAt, updatedAt: nowISO() };
         const retryStarted = performance.now();
@@ -957,16 +960,42 @@
         if (String(studentSlot.teacherId || "") !== String(teacher.id || "")) return;
         let teacherSlot = teacher.regularSlots.find(slot => slot.studentSlotId === studentSlot.id);
         if (!teacherSlot) {
-          teacherSlot = { id: studentSlot.teacherSlotId || deterministicId("slot", studentSlot.id), source: "student-profile", locked: true, createdAt: now };
+          teacherSlot = teacher.regularSlots.find(slot =>
+            activeRecord(slot) &&
+            slot.locked &&
+            String(slot.studentId || "") === String(student.id || "") &&
+            String(slot.day || slot.weekday || "") === String(studentSlot.day || "") &&
+            String(slot.time || slot.startTime || "") === String(studentSlot.time || "") &&
+            String(slot.subject || "") === String(studentSlot.subject || "") &&
+            rangesOverlap(slot.startDate || "", slot.endDate || "", studentSlot.startDate || "", studentSlot.endDate || "")
+          );
+        }
+        if (!teacherSlot) {
+          teacherSlot = {
+            id: studentSlot.teacherSlotId || deterministicId("slot", studentSlot.id),
+            source: "crm-enrollment",
+            locked: true,
+            createdAt: now,
+            createdBy: currentUser()?.email || "crm",
+            deviceId: deviceId()
+          };
           teacher.regularSlots.push(teacherSlot);
         }
         Object.assign(teacherSlot, {
+          teacherId: teacher.id,
           studentId: student.id,
           studentSlotId: studentSlot.id,
+          recurringScheduleId: studentSlot.id,
           studentName: student.name,
           day: studentSlot.day,
+          weekday: studentSlot.day,
           time: studentSlot.time,
+          startTime: studentSlot.time,
           subject: studentSlot.subject,
+          type: "regular class",
+          status: "booked",
+          minutes: Number(studentSlot.minutes || 30),
+          duration: Number(studentSlot.duration || studentSlot.minutes || 30),
           startDate: studentSlot.startDate || "",
           endDate: studentSlot.endDate || "",
           locked: true,
@@ -974,7 +1003,8 @@
           deleted: false,
           archived: false,
           updatedAt: now,
-          updatedBy: currentUser()?.email || "crm"
+          updatedBy: currentUser()?.email || "crm",
+          deviceId: deviceId()
         });
         changed = true;
       });
@@ -994,21 +1024,53 @@
       || deterministicId("student_crm", lead.id);
   }
 
-  function enrollmentSlotRecordsForStudent(studentId) {
+  function enrollmentSlotRecordsForStudent(studentId, studentName = "") {
     const now = nowISO();
     return enrollmentRegularSlotsDraft.map(slot => ({
       ...slot,
       id: slot.id || uid("student_slot"),
       teacherSlotId: slot.teacherSlotId || deterministicId("slot", slot.id || `${studentId}_${slot.teacherId}_${slot.day}_${slot.time}`),
       studentId,
+      studentName,
+      teacherName: teacherNameById(slot.teacherId),
+      weekday: slot.day,
+      startTime: slot.time,
       type: "regular class",
       minutes: Number(slot.minutes || 30),
+      duration: Number(slot.duration || slot.minutes || 30),
+      source: "crm-enrollment",
       startDate: dateOnly(slot.startDate),
       endDate: dateOnly(slot.endDate),
       createdAt: slot.createdAt || now,
+      createdBy: slot.createdBy || currentUser()?.email || "crm",
       updatedAt: now,
-      updatedBy: currentUser()?.email || "crm"
+      updatedBy: currentUser()?.email || "crm",
+      deviceId: deviceId()
     }));
+  }
+
+  function validateEnrollmentRegistrationState(student, lead, regularSlots) {
+    if (!studentById(student?.id)) return "The new student was not added to the CRM state.";
+    if (!regularSlots.length) return "No regular classes were prepared for this student.";
+    for (const slot of regularSlots) {
+      const teacher = teacherById(slot.teacherId);
+      if (!teacher) return `${teacherNameById(slot.teacherId) || "Selected teacher"} could not be found.`;
+      const linked = (teacher.regularSlots || []).find(teacherSlot =>
+        activeRecord(teacherSlot) &&
+        String(teacherSlot.studentSlotId || "") === String(slot.id || "") &&
+        String(teacherSlot.studentId || "") === String(student.id || "") &&
+        String(teacherSlot.day || teacherSlot.weekday || "") === String(slot.day || "") &&
+        String(teacherSlot.time || teacherSlot.startTime || "") === String(slot.time || "")
+      );
+      if (!linked) return `${teacherNameById(slot.teacherId)} was not linked to ${student.name} on ${slot.day} at ${timeLabel(slot.time)}.`;
+    }
+    if (String(lead?.studentId || lead?.linkedStudentId || "") !== String(student.id || "")) {
+      return "The CRM lead was not linked to the created student.";
+    }
+    if (String(lead?.status || "") !== CRM_REGISTERED_STATUS) {
+      return "The CRM lead was not moved to Registered.";
+    }
+    return "";
   }
 
   function registerStudentWithRegularClasses({ lead, studentData, regularSlots }) {
@@ -1016,7 +1078,14 @@
     let student = studentById(id);
     const isNew = !student;
     if (!student) {
-      student = { id, createdAt: nowISO(), regularSlots: [] };
+      student = {
+        id,
+        createdAt: nowISO(),
+        createdBy: currentUser()?.email || "crm",
+        source: "crm-enrollment",
+        deviceId: deviceId(),
+        regularSlots: []
+      };
       state.students.unshift(student);
     }
     const previousRegularSlots = Array.isArray(student.regularSlots) ? student.regularSlots.map(slot => ({ ...slot })) : [];
@@ -1025,7 +1094,9 @@
       id,
       regularSlots,
       updatedAt: nowISO(),
-      updatedBy: currentUser()?.email || "crm"
+      updatedBy: currentUser()?.email || "crm",
+      source: student.source || "crm-enrollment",
+      deviceId: deviceId()
     });
     syncEnrollmentSlotsToTeachers(student, previousRegularSlots, regularSlots);
     markStudentDirty(student);
@@ -1510,7 +1581,7 @@
     try {
       setStatus("Creating student and regular classes...");
       const id = studentIdForEnrollment(lead, name);
-      const regularSlots = enrollmentSlotRecordsForStudent(id);
+      const regularSlots = enrollmentSlotRecordsForStudent(id, name);
       const { student, isNew } = registerStudentWithRegularClasses({
         lead,
         regularSlots,
@@ -1530,8 +1601,10 @@
           registeredRemark: $("crmEnrollmentRegisteredRemark").value.trim(),
           status: $("crmEnrollmentStudentStatus").value || "registered",
           crmLeadId: lead.id,
+          source: "crm-enrollment",
           registeredAt: nowISO(),
-          registeredBy: currentUser()?.email || "crm"
+          registeredBy: currentUser()?.email || "crm",
+          deviceId: deviceId()
         }
       });
       Object.assign(lead, {
@@ -1552,6 +1625,8 @@
         updatedBy: currentUser()?.email || "crm"
       });
       markLeadDirty(lead);
+      const localValidationError = validateEnrollmentRegistrationState(student, lead, regularSlots);
+      if (localValidationError) throw new Error(localValidationError);
       logAction(isNew ? "Student Added" : "Student Updated", student.name, `Created from CRM lead ${enrollmentContextName(lead)}.`);
       logAction("CRM Lead Registered", lead.childName || lead.parentName || lead.id, `Linked student: ${student.name}.`);
       const synced = await saveState({ immediate: true, waitForActive: true });
