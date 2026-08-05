@@ -179,9 +179,14 @@
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 14px;
+      min-height: 116px;
+      display: grid;
+      grid-template-rows: minmax(30px, auto) auto 18px;
+      align-content: start;
     }
     .metric span { display: block; color: var(--muted); font-size: 12px; font-weight: 800; }
     .metric strong { display: block; margin-top: 8px; font-size: 26px; }
+    .metric-subtitle { margin-top: 4px; min-height: 18px; font-size: 12px; line-height: 1.2; }
     section {
       margin-top: 16px;
       background: #fff;
@@ -837,13 +842,13 @@
     </div>
 
     <div class="grid metrics">
-      <div class="metric"><span>Classes In Selected Month</span><strong id="metricTotal">0</strong></div>
-      <div class="metric"><span>Today's Remaining Classes</span><strong id="metricUpcoming">0</strong></div>
-      <div class="metric"><span>Completed</span><strong id="metricCompleted">0</strong></div>
-      <div class="metric"><span>Not Show</span><strong id="metricNotShow">0</strong></div>
-      <div class="metric"><span>Cancelled</span><strong id="metricCancelled">0</strong></div>
-      <div class="metric"><span>Teacher Leave</span><strong id="metricTeacherLeave">0</strong><div class="subtle">leave dates</div></div>
-      <div class="metric"><span>Income To Date</span><strong id="metricIncome">RM 0.00</strong></div>
+      <div class="metric"><span>Classes In Selected Month</span><strong id="metricTotal">0</strong><div class="metric-subtitle subtle" aria-hidden="true">&nbsp;</div></div>
+      <div class="metric"><span>Today's Remaining Classes</span><strong id="metricUpcoming">0</strong><div class="metric-subtitle subtle" aria-hidden="true">&nbsp;</div></div>
+      <div class="metric"><span>Completed</span><strong id="metricCompleted">0</strong><div class="metric-subtitle subtle" aria-hidden="true">&nbsp;</div></div>
+      <div class="metric"><span>Not Show</span><strong id="metricNotShow">0</strong><div class="metric-subtitle subtle" aria-hidden="true">&nbsp;</div></div>
+      <div class="metric"><span>Cancelled</span><strong id="metricCancelled">0</strong><div class="metric-subtitle subtle" aria-hidden="true">&nbsp;</div></div>
+      <div class="metric"><span>Teacher Leave</span><strong id="metricTeacherLeave">0</strong><div class="metric-subtitle subtle">leave dates</div></div>
+      <div class="metric"><span>Income To Date</span><strong id="metricIncome">RM 0.00</strong><div class="metric-subtitle subtle" aria-hidden="true">&nbsp;</div></div>
     </div>
 
     <section id="dailyNavigatorSection">
@@ -1933,10 +1938,14 @@
       return summary;
     }
 
+    function isTruthyFlag(value) {
+      return value === true || ["true", "1", "yes"].includes(String(value || "").trim().toLowerCase());
+    }
+
     function isActiveTeacherLeaveRecord(leave) {
-      if (!leave || leave.deleted || leave.archived) return false;
+      if (!leave || isTruthyFlag(leave.deleted)) return false;
       const status = String(leave.status || "active").trim().toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
-      return !["deleted", "removed", "archived", "cancelled", "canceled", "withdrawn", "inactive", "superseded", "undone"].includes(status);
+      return !["deleted", "removed", "cancelled", "canceled", "withdrawn", "inactive", "superseded", "undone"].includes(status);
     }
 
     function teacherLeaveDatesForMonth(month, year) {
