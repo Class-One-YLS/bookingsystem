@@ -1938,33 +1938,27 @@
       return summary;
     }
 
-    function isTruthyFlag(value) {
-      return value === true || ["true", "1", "yes"].includes(String(value || "").trim().toLowerCase());
+    function teacherIdForEntry(entry) {
+      return String(
+        entry?.cell?.teacherId ||
+        entry?.booking?.teacherId ||
+        entry?.slot?.teacherId ||
+        timetableData?.teacher?.id ||
+        ""
+      );
     }
 
-    function isActiveTeacherLeaveRecord(leave) {
-      if (!leave || isTruthyFlag(leave.deleted)) return false;
-      const status = String(leave.status || "active").trim().toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
-      return !["deleted", "removed", "cancelled", "canceled", "withdrawn", "inactive", "superseded", "undone"].includes(status);
-    }
-
-    function teacherLeaveDatesForMonth(month, year) {
+    function teacherLeaveDatesFromEntries(entries) {
       const teacherId = String(timetableData?.teacher?.id || "");
-      const monthStart = localISO(new Date(year, month, 1));
-      const monthEnd = localISO(new Date(year, month + 1, 0));
       const dates = new Set();
-      (timetableData?.teacherLeaves || [])
-        .filter(isActiveTeacherLeaveRecord)
-        .filter(leave => !teacherId || String(leave.teacherId || "") === teacherId)
-        .forEach(leave => {
-          const start = dateOnly(leave.startDate || leave.date);
-          const end = dateOnly(leave.endDate || leave.date || start);
-          if (!start) return;
-          const clippedStart = start > monthStart ? start : monthStart;
-          const clippedEnd = end && end < monthEnd ? end : monthEnd;
-          if (clippedEnd < monthStart || clippedStart > monthEnd || clippedStart > clippedEnd) return;
-          for (let date = clippedStart; date <= clippedEnd; date = dateOffsetISO(date, 1)) dates.add(date);
-        });
+      (entries || []).forEach(entry => {
+        const meta = entryMeta(entry);
+        if (meta.status !== "teacher_leave") return;
+        const entryTeacherId = teacherIdForEntry(entry);
+        if (teacherId && entryTeacherId && entryTeacherId !== teacherId) return;
+        const date = dateOnly(entry.date || entry.cell?.date || entry.booking?.date || entry.slot?.date || "");
+        if (date) dates.add(date);
+      });
       return dates;
     }
 
@@ -1975,7 +1969,7 @@
       const completed = entries.filter(isPaidCompletedEntry);
       const notShows = entries.filter(isNotShowEntry);
       const cancelled = entries.filter(isCancelledEntry);
-      const teacherLeaveCount = teacherLeaveDatesForMonth(month, year).size;
+      const teacherLeaveCount = teacherLeaveDatesFromEntries(entries).size;
       const lessonPay = completed.reduce((sum, entry) => sum + Number(entryMeta(entry).estimatedPay || 0), 0);
       const notShowPay = notShows.reduce((sum, entry) => sum + Number(entryMeta(entry).estimatedPay || 5), 0);
       const notShowRate = notShows.length ? notShowPay / notShows.length : 5;
