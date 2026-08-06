@@ -2385,7 +2385,7 @@
       apiKey: "73a5baa8e4a70be55d79615e2dfbf4e843fa04b57ec04764",
       stateKey: "production"
     };
-    const FRONTEND_BUILD = "2026.07.16-weekly-modal-readonly.1";
+    const FRONTEND_BUILD = "2026.08.06-public-holiday-open-off.1";
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
     const LOGIN_TIMEOUT_MS = 8000;
@@ -5388,8 +5388,8 @@
     function normalizeAvailabilityStatus(slot) {
       if (!slot) return "off";
       const status = String(slot.status || slot.availability || "").toLowerCase();
+      if (slot.unavailable === true || status === "off" || status === "unavailable" || status === "closed" || status === "public_holiday") return "off";
       if (slot.locked || slot.reserved || slot.studentName || slot.studentId) return "booked";
-      if (slot.unavailable === true || status === "off" || status === "unavailable" || status === "closed") return "off";
       return "open";
     }
 
@@ -9498,7 +9498,8 @@
       const occurrenceAttr = occurrenceId ? ` data-occurrence-id="${escapeHtml(occurrenceId)}"` : "";
       if (normalizeAvailabilityStatus(slot) === "off") {
         if (slot.status === "public_holiday" || slot.publicHolidayId || slot.source === "public_holiday") {
-          return `<button class="slot unavailable status-public-holiday"${cellAttr}${occurrenceAttr} disabled>${escapeHtml(teacher.name)}<small>Public Holiday${slot.remark ? ` | ${escapeHtml(slot.remark)}` : ""}</small></button>`;
+          const holidayData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, publicHolidayId: slot.publicHolidayId || "", date: slot.date, time: slot.time, holidayName: slot.holidayName || slot.remark || "Public Holiday" }));
+          return `<button class="slot unavailable status-public-holiday"${cellAttr}${occurrenceAttr} data-public-holiday-off="${holidayData}">${escapeHtml(teacher.name)}<small>OFF | Public Holiday${slot.holidayName ? ` | ${escapeHtml(slot.holidayName)}` : ""}</small></button>`;
         }
         if (slot.status === "teacher_leave" || slot.teacherLeaveId || slot.source === "teacher_leave") {
           const leaveData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, teacherLeaveId: slot.teacherLeaveId || "", date: slot.date, time: slot.time }));
@@ -12526,8 +12527,10 @@
       if (cell.kind === "open" || cell.available) {
         return {
           ...base,
+          status: "off",
           kind: "off",
           type: "public holiday",
+          reason: "public_holiday",
           studentId: "",
           studentName: "",
           locked: true,
@@ -16580,6 +16583,11 @@
         if (!leave) return setStatus("Teacher is on leave during this period.", "warn");
         if (!hasActionPermission("edit")) return setStatus("Teacher is on leave during this period.", "warn");
         showExistingTeacherLeaveModal(leave);
+        return;
+      }
+      const publicHolidayOff = e.target.closest("[data-public-holiday-off]");
+      if (publicHolidayOff) {
+        setStatus("This teacher is not teaching on this Public Holiday.", "warn");
         return;
       }
       const openOffSlot = e.target.closest("[data-open-off-slot]");
