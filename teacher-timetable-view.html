@@ -1227,7 +1227,7 @@
         if (["student_not_show", "student_no_show", "not_show", "no_show"].includes(normalized)) return "student_not_show";
         if (["teacher_leave", "teacher_on_leave"].includes(normalized)) return "teacher_leave";
         if (["public_holiday", "holiday"].includes(normalized)) return "public_holiday";
-        if (["completed", "complete", "passed", "finalized", "finished"].includes(normalized)) return "completed";
+        if (["completed", "complete", "passed", "finalized", "finalised", "finished"].includes(normalized)) return "completed";
         if (["booked", "booking"].includes(normalized)) return "booked";
         if (["available"].includes(normalized)) return "available";
         if (["off", "unavailable"].includes(normalized)) return "off";
@@ -1727,7 +1727,14 @@
 
     function classEntries(fromISO, toISO) {
       const cells = scheduleCells().filter(cell => cell.date >= fromISO && cell.date <= toISO && !["open", "reserved", "off"].includes(cell.kind) && cell.status !== "off" && !cell.unavailable);
+      const seen = new Set();
       return cells.map(cell => ({ kind: "cell", date: cell.date, time: cell.time, cell }))
+        .filter(entry => {
+          const key = entryOccurrenceKey(entry);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
         .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
     }
 
@@ -1938,6 +1945,21 @@
       return summary;
     }
 
+    function entryOccurrenceKey(entry) {
+      const record = entry?.cell || entry?.booking || entry?.slot || {};
+      const date = dateOnly(entry?.date || record.date || "");
+      const time = normalizeTime(entry?.time || record.time || "") || entry?.time || record.time || "";
+      return String(
+        record.occurrenceId ||
+        record.occurrenceKey ||
+        record.cellKey ||
+        record.bookingId ||
+        record.recordId ||
+        record.id ||
+        `${teacherIdForEntry(entry)}|${date}|${time}|${record.studentId || record.studentName || ""}|${record.sourceRecordId || ""}`
+      );
+    }
+
     function teacherIdForEntry(entry) {
       return String(
         entry?.cell?.teacherId ||
@@ -1962,6 +1984,35 @@
       return dates;
     }
 
+    function fallbackStudentIncomeRowsFromEntries(entries) {
+      const groups = new Map();
+      entries.forEach(entry => {
+        const record = entry?.cell || entry?.booking || entry?.slot || {};
+        const meta = entryMeta(entry);
+        const key = record.studentId || meta.studentName || entryOccurrenceKey(entry);
+        const current = groups.get(key) || {
+          studentId: record.studentId || "",
+          studentName: meta.studentName || "Student",
+          packageName: "Resolved lessons",
+          packageAmount: 0,
+          packageTotalClasses: 0,
+          lessonRate: 0,
+          profitSharePercentage: Number(timetableData?.teacher?.profitShare || 0),
+          completedLessons: 0,
+          teacherRatePerLesson: 0,
+          income: 0,
+          packageIncomplete: false
+        };
+        const pay = Number(meta.estimatedPay || 0);
+        current.completedLessons += 1;
+        current.income += pay;
+        current.teacherRatePerLesson = current.completedLessons ? current.income / current.completedLessons : 0;
+        current.lessonRate = current.teacherRatePerLesson;
+        groups.set(key, current);
+      });
+      return [...groups.values()].sort((a, b) => String(a.studentName || "").localeCompare(String(b.studentName || ""), "en", { sensitivity: "base" }));
+    }
+
     function monthlyTeachingSummary(month, year) {
       const from = localISO(new Date(year, month, 1));
       const to = localISO(new Date(year, month + 1, 0));
@@ -1974,25 +2025,32 @@
       const notShowPay = notShows.reduce((sum, entry) => sum + Number(entryMeta(entry).estimatedPay || 5), 0);
       const notShowRate = notShows.length ? notShowPay / notShows.length : 5;
       const apiSummary = apiIncomeSummaryFor(month, year);
+      const localIncomeTotal = lessonPay + notShowPay;
+      const apiSummaryMatchesResolvedEntries = apiSummary
+        && Number(apiSummary.completedLessons || 0) === completed.length
+        && Number(apiSummary.noShowCount ?? notShows.length) === notShows.length;
+      const incomeMode = apiSummary?.incomeMode || timetableData?.teacher?.incomeMode || "fixed_rate";
       return {
         entries,
         completed,
         notShows,
         cancelled,
-        completedCount: apiSummary ? Number(apiSummary.completedLessons || 0) : completed.length,
-        notShowCount: apiSummary ? Number(apiSummary.noShowCount ?? notShows.length) : notShows.length,
+        completedCount: completed.length,
+        notShowCount: notShows.length,
         notShowRate,
-        cancelledCount: apiSummary ? Number(apiSummary.cancelledCount ?? cancelled.length) : cancelled.length,
+        cancelledCount: cancelled.length,
         teacherLeaveCount,
-        lessonPay: apiSummary ? Number(apiSummary.completedIncome || 0) : lessonPay,
-        notShowPay: apiSummary ? Number(apiSummary.noShowAllowance || 0) : notShowPay,
-        incomeTotal: apiSummary ? Number(apiSummary.totalIncome || 0) : lessonPay + notShowPay,
-        incomeMode: apiSummary?.incomeMode || timetableData?.teacher?.incomeMode || "fixed_rate",
+        lessonPay,
+        notShowPay,
+        incomeTotal: localIncomeTotal,
+        incomeMode,
         teacherCategory: apiSummary?.teacherCategory || timetableData?.teacher?.payoutMethod || "Freelance Tutor",
         approvedClassRate: Number(apiSummary?.approvedClassRate ?? timetableData?.teacher?.rate ?? 0),
         profitSharePercentage: Number(apiSummary?.profitSharePercentage ?? timetableData?.teacher?.profitShare ?? 0),
-        studentIncomeRows: apiSummary?.studentIncomeRows || [],
-        packageWarnings: apiSummary?.packageWarnings || []
+        studentIncomeRows: incomeMode === "profit_share" && !apiSummaryMatchesResolvedEntries
+          ? fallbackStudentIncomeRowsFromEntries(completed)
+          : (apiSummary?.studentIncomeRows || []),
+        packageWarnings: apiSummaryMatchesResolvedEntries ? (apiSummary?.packageWarnings || []) : []
       };
     }
 
