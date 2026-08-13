@@ -2385,7 +2385,7 @@
       apiKey: "73a5baa8e4a70be55d79615e2dfbf4e843fa04b57ec04764",
       stateKey: "production"
     };
-    const FRONTEND_BUILD = "2026.08.06-public-holiday-open-off.1";
+    const FRONTEND_BUILD = "2026.08.06-public-holiday-all-cells.1";
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
     const LOGIN_TIMEOUT_MS = 8000;
@@ -2633,6 +2633,7 @@
     const teacherLinkFailed = new Set();
     const ARCHIVE_PAGE_SIZE = LIST_PAGE_SIZE;
     const TEACHER_DIRECTORY_PAGE_SIZE = LIST_PAGE_SIZE;
+    const MAX_PATCH_ENDPOINT_BYTES = 8 * 1024 * 1024;
     const BUSINESS_COLLECTIONS = [
       "teachers",
       "students",
@@ -3537,6 +3538,7 @@
         const changes = [];
         currentById.forEach((record, id) => {
           const baselineRecord = baselineById.get(id);
+          if (collectionName === "activityLogs" && baselineRecord && draftRecordTimestamp(record) <= draftRecordTimestamp(baselineRecord)) return;
           if (!baselineRecord || recordSignature(record) !== recordSignature(baselineRecord)) {
             changes.push(ensureDraftRecordMeta(record, baselineRecord, now));
           }
@@ -5539,6 +5541,7 @@
     function occurrenceOutcomeParticipatesInResolution(booking) {
       if (!booking || !occurrenceKeyForBooking(booking)) return false;
       if (isMovedDestinationBooking(booking)) return false;
+      if (isPureDeletedOccurrenceRecord(booking)) return false;
       if (booking.resolutionActive === true || booking.suppressRecurringOccurrence === true) return true;
       const status = occurrenceResolutionStatus(booking);
       return ["cancelled", "student_not_show", "teacher_leave", "public_holiday", "completed"].includes(status)
@@ -6405,7 +6408,8 @@
 
     function bookingRecordsForResolution() {
       bookingRecordsForResolutionCallCount += 1;
-      return state.bookings.filter(booking => !isSupersededBookingRecord(booking) || occurrenceOutcomeParticipatesInResolution(booking));
+      return state.bookings.filter(booking => !isPureDeletedOccurrenceRecord(booking))
+        .filter(booking => !isSupersededBookingRecord(booking) || occurrenceOutcomeParticipatesInResolution(booking));
     }
 
     function activeBookings() {
@@ -6729,7 +6733,7 @@
             pushResolvedCell(calendarCellFromSlot(slot, teacher));
             return;
           }
-          if (booking && inactiveBookingCanYieldToActiveSlot(booking) && slotIsActiveOccurrence(slot)) {
+          if (booking && inactiveBookingCanYieldToActiveSlot(booking, slot)) {
             pushResolvedCell(calendarCellFromSlot(slot, teacher));
             return;
           }
@@ -10497,6 +10501,13 @@
       return String(booking.status || "").toLowerCase() === "deleted" || booking.deleted === true;
     }
 
+    function isPureDeletedOccurrenceRecord(booking) {
+      if (!booking) return true;
+      const resolutionStatus = occurrenceResolutionStatus(booking);
+      if (resolutionStatus && resolutionStatus !== "deleted") return false;
+      return booking.deleted === true || booking.archived === true || booking.active === false || normalizeClassStatus(booking) === "deleted";
+    }
+
     function isSupersededBookingRecord(booking) {
       return Boolean(booking && (booking.supersededByBookingId || booking.rebookedByBookingId || booking.superseded === true));
     }
@@ -10517,8 +10528,12 @@
       return isCancelledStatus(status) || status === "off" || status === "available";
     }
 
-    function inactiveBookingCanYieldToActiveSlot(booking) {
-      return Boolean(booking && isHistoricalInactiveBooking(booking) && isSupersededBookingRecord(booking));
+    function inactiveBookingCanYieldToActiveSlot(booking, slot) {
+      if (!booking || !slot || !slotIsActiveOccurrence(slot) || !isHistoricalInactiveBooking(booking)) return false;
+      if (isSupersededBookingRecord(booking)) return true;
+      const bookingOccurrenceKey = occurrenceKeyForBooking(booking);
+      const slotOccurrenceKey = occurrenceKeyForSlot(slot, dateOnly(booking.date || slot.date));
+      return Boolean(!bookingOccurrenceKey || bookingOccurrenceKey !== slotOccurrenceKey);
     }
 
     function shouldUseBooking(candidate, existing) {
@@ -12496,7 +12511,10 @@
 
     function isRegularClassType(type) {
       const normalized = String(type || "regular class").trim().toLowerCase().replace(/[_-]+/g, " ");
-      return !normalized || normalized === "regular class" || normalized === "fixed regular" || normalized === "fixed regular class";
+      if (!normalized) return true;
+      if (/\b(assessment|trial|replacement|exam|extra|practical|reserve|one off|oneoff|special)\b/.test(normalized)) return false;
+      if (/\b(open|off|unavailable|teacher leave|public holiday|holiday)\b/.test(normalized)) return false;
+      return true;
     }
 
     function publicHolidayAffectsCell(cell, holiday) {
@@ -15008,6 +15026,12 @@
       setSyncMetric("payloadPrepMs", Math.round(uploadStartedAt - prepStartedAt));
       setSyncMetric("payloadBytes", lastNeonPayloadBytes);
       setSyncMetric("chunkCount", 1);
+      if (lastNeonPayloadBytes > MAX_PATCH_ENDPOINT_BYTES) {
+        const error = new Error(`Record patch is too large for direct upload (${Math.round(lastNeonPayloadBytes / 1024 / 1024)} MB). Falling back to chunked Neon save.`);
+        error.code = "PATCH_TOO_LARGE";
+        error.status = 413;
+        throw error;
+      }
       try {
         return await fetchNeonJson("/api/state-patch", {
           method: "POST",
@@ -15396,7 +15420,12 @@
             mergedWithNewerRemote = Boolean(data.mergedFromNewerVersion);
           } catch (patchError) {
             const patchUnavailable = [404, 405].includes(Number(patchError?.status || 0));
-            if (!patchUnavailable && !isNeonVersionConflict(patchError)) throw patchError;
+            const patchTooLarge = patchError?.code === "PATCH_TOO_LARGE" || Number(patchError?.status || 0) === 413;
+            if (!patchUnavailable && !patchTooLarge && !isNeonVersionConflict(patchError)) throw patchError;
+            if (patchTooLarge) {
+              canUsePatchEndpoint = false;
+              mergedPayload = mergePatchIntoPayload(basePayload, draftPatch);
+            }
             if (isNeonVersionConflict(patchError)) {
               const snapshot = await measureSyncStep("pullMs", () => fetchNeonStateSnapshot("Neon patch retry auto-merge"));
               expectedVersion = Number(snapshot.manifest?.version || 0);
