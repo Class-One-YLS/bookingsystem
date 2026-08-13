@@ -4866,6 +4866,9 @@
       const teacherStatus = teacherViewIsOutdated() ? "Not synced to Teacher View yet." : "Synced to Teacher View.";
       const payloadMb = lastNeonPayloadBytes ? `${(lastNeonPayloadBytes / 1024 / 1024).toFixed(2)} MB` : "No save yet";
       const saveDuration = lastNeonSaveDurationMs ? `${(lastNeonSaveDurationMs / 1000).toFixed(1)}s` : "No save yet";
+      const patchDetails = lastNeonPatchDiagnostics?.totalRecords
+        ? `${lastNeonPatchDiagnostics.totalRecords} changed record${lastNeonPatchDiagnostics.totalRecords === 1 ? "" : "s"} | ${lastNeonPatchDiagnostics.sections.map(section => `${section.name}:${section.count}`).join(", ")}`
+        : (lastNeonPatchMode === "Record patch" ? "No changed records measured" : "");
       const perf = syncPerf.last || {};
       const perfSummary = perf.totalMs
         ? `${(perf.totalMs / 1000).toFixed(1)}s total | ${perf.saveRequests || 0} request${perf.saveRequests === 1 ? "" : "s"} | ${perf.renderAllCalls || 0} full render${perf.renderAllCalls === 1 ? "" : "s"}`
@@ -4876,7 +4879,7 @@
         <div class="metric"><span class="subtle">Last Saved</span><strong style="font-size:16px;">${escapeHtml(lastSavedAt)}</strong><span class="subtle">${escapeHtml(teacherStatus)}</span></div>
         <div class="metric"><span class="subtle">Pending Unsaved Draft</span><strong>${draftExists ? "Yes" : "No"}</strong><span class="subtle">${draftExists ? "Safe in this browser" : "Cache only"}</span></div>
         <div class="metric"><span class="subtle">Current Device ID</span><strong style="font-size:14px;word-break:break-all;">${escapeHtml(currentDeviceId())}</strong><span class="subtle">Unique to this browser</span></div>
-        <div class="metric"><span class="subtle">Last Sync Payload</span><strong style="font-size:16px;">${escapeHtml(payloadMb)}</strong><span class="subtle">${lastNeonPatchMode ? `${escapeHtml(lastNeonPatchMode)} | ${lastNeonPayloadChunks ? `${lastNeonPayloadChunks} chunk${lastNeonPayloadChunks === 1 ? "" : "s"} | ` : ""}${escapeHtml(saveDuration)}` : "Business data only"}</span></div>
+        <div class="metric"><span class="subtle">Last Sync Payload</span><strong style="font-size:16px;">${escapeHtml(payloadMb)}</strong><span class="subtle">${lastNeonPatchMode ? `${escapeHtml(lastNeonPatchMode)} | ${lastNeonPayloadChunks ? `${lastNeonPayloadChunks} chunk${lastNeonPayloadChunks === 1 ? "" : "s"} | ` : ""}${escapeHtml(saveDuration)}${patchDetails ? ` | ${escapeHtml(patchDetails)}` : ""}` : "Business data only"}</span></div>
         <div class="metric"><span class="subtle">Last Sync Timing</span><strong style="font-size:14px;">${escapeHtml(perfSummary)}</strong><span class="subtle">${perf.versionCheckMs != null ? `Version ${perf.versionCheckMs}ms | Upload ${perf.uploadMs || 0}ms | Pull ${perf.pullMs || 0}ms` : "Measured after next save"}</span></div>
         <div class="metric"><span class="subtle">Frontend Build</span><strong style="font-size:14px;">${escapeHtml(FRONTEND_BUILD)}</strong><span class="subtle">Upload this file to update live</span></div>
       `;
@@ -15560,8 +15563,26 @@
             const patchTooLarge = patchError?.code === "PATCH_TOO_LARGE" || Number(patchError?.status || 0) === 413;
             if (!patchUnavailable && !patchTooLarge && !isNeonVersionConflict(patchError)) throw patchError;
             if (patchTooLarge) {
-              canUsePatchEndpoint = false;
-              mergedPayload = mergePatchIntoPayload(basePayload, draftPatch);
+              const snapshot = await measureSyncStep("pullMs", () => fetchNeonStateSnapshot("Neon oversized patch rebuild"));
+              expectedVersion = Number(snapshot.manifest?.version || expectedVersion || 0);
+              basePayload = businessPayloadFrom(snapshot.payload || {});
+              const rebuiltPatch = compactRecordPatch(buildRecordPatchFromPayload(remoteStatePayload(), basePayload, { includeDeletions: false }));
+              if (rebuiltPatch && jsonByteSize({
+                key: neonStateKey(),
+                expectedVersion,
+                patch: rebuiltPatch,
+                updatedBy: `${currentUser()?.name || safeStorageGet("classOneStaffName") || "Class One Admin"} · ${currentDeviceId().slice(0, 12)}`
+              }) <= MAX_PATCH_ENDPOINT_BYTES) {
+                draftPatch = rebuiltPatch;
+                mergedPayload = mergePatchIntoPayload(basePayload, draftPatch);
+                data = await uploadPatchToNeon(draftPatch, expectedVersion, "Neon rebuilt patch save");
+                usedPatchEndpoint = true;
+                mergedWithNewerRemote = true;
+              } else {
+                canUsePatchEndpoint = false;
+                mergedPayload = mergePatchIntoPayload(basePayload, rebuiltPatch || draftPatch);
+                draftPatch = rebuiltPatch || draftPatch;
+              }
             }
             if (isNeonVersionConflict(patchError)) {
               const snapshot = await measureSyncStep("pullMs", () => fetchNeonStateSnapshot("Neon patch retry auto-merge"));
