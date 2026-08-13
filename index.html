@@ -2682,6 +2682,7 @@
     let lastNeonPayloadBytes = 0;
     let lastNeonPayloadChunks = 0;
     let lastNeonPatchMode = "";
+    let lastNeonPatchDiagnostics = null;
     let teacherViewNotifyTimer = null;
     let renderAllCallCount = 0;
     let renderWeeklyTimetableCallCount = 0;
@@ -3578,6 +3579,119 @@
       return Object.keys(patch.changes).length || patch.settings ? patch : null;
     }
 
+    function jsonByteSize(value) {
+      const text = typeof value === "string" ? value : JSON.stringify(value ?? null);
+      try {
+        return new Blob([text]).size;
+      } catch (err) {
+        return text.length;
+      }
+    }
+
+    function compactRecordPatch(patch) {
+      if (!patch) return null;
+      const now = new Date().toISOString();
+      const compact = {
+        format: patch.format || "classone_record_patch_v1",
+        baseVersion: Number(patch.baseVersion || state.settings?.neonVersion || 0),
+        deviceId: patch.deviceId || currentDeviceId(),
+        createdAt: patch.createdAt || now,
+        updatedAt: patch.updatedAt || now,
+        changes: {},
+        settings: patch.settings ? stripInlineMedia(cloneJson(patch.settings)) : null
+      };
+      BUSINESS_COLLECTIONS.forEach(collectionName => {
+        const byId = new Map();
+        (patch.changes?.[collectionName] || []).forEach(record => {
+          if (!record || typeof record !== "object") return;
+          const clone = stripInlineMedia(cloneJson(record));
+          const id = recordIdForDraft(clone, collectionName);
+          const existing = byId.get(id);
+          if (!existing || compareDraftRecords(clone, existing) >= 0) byId.set(id, clone);
+        });
+        const records = Array.from(byId.values());
+        if (records.length) compact.changes[collectionName] = records;
+      });
+      const hasChanges = Object.keys(compact.changes).some(key => (compact.changes[key] || []).length);
+      return hasChanges || compact.settings ? compact : null;
+    }
+
+    function mergeRecordPatches(...patches) {
+      const usable = patches.map(compactRecordPatch).filter(Boolean);
+      if (!usable.length) return null;
+      const now = new Date().toISOString();
+      const merged = {
+        format: "classone_record_patch_v1",
+        baseVersion: Number(usable[0].baseVersion || state.settings?.neonVersion || 0),
+        deviceId: currentDeviceId(),
+        createdAt: usable[0].createdAt || now,
+        updatedAt: now,
+        changes: {},
+        settings: null
+      };
+      usable.forEach(patch => {
+        BUSINESS_COLLECTIONS.forEach(collectionName => {
+          const records = patch.changes?.[collectionName] || [];
+          if (!records.length) return;
+          merged.changes[collectionName] ||= [];
+          merged.changes[collectionName].push(...records);
+        });
+        if (patch.settings) {
+          const existingFields = merged.settings?.fields || {};
+          const existingRevisions = merged.settings?.fieldRevisions || {};
+          merged.settings = {
+            ...(merged.settings || {}),
+            ...stripInlineMedia(cloneJson(patch.settings)),
+            fields: {
+              ...existingFields,
+              ...(patch.settings.fields || {})
+            },
+            fieldRevisions: {
+              ...existingRevisions,
+              ...(patch.settings.fieldRevisions || {})
+            },
+            updatedAt: patch.settings.updatedAt || now,
+            updatedBy: patch.settings.updatedBy || currentUser()?.email || currentUser()?.name || "Class One Admin",
+            deviceId: patch.settings.deviceId || currentDeviceId()
+          };
+        }
+      });
+      return compactRecordPatch(merged);
+    }
+
+    function patchDiagnostics(patch) {
+      const compact = compactRecordPatch(patch);
+      if (!compact) return { totalBytes: 0, totalRecords: 0, sections: [], largestRecord: null };
+      const sections = [];
+      let totalRecords = 0;
+      let largestRecord = null;
+      BUSINESS_COLLECTIONS.forEach(collectionName => {
+        const records = compact.changes?.[collectionName] || [];
+        if (!records.length) return;
+        const sectionBytes = jsonByteSize(records);
+        totalRecords += records.length;
+        sections.push({ name: collectionName, count: records.length, bytes: sectionBytes });
+        records.forEach(record => {
+          const bytes = jsonByteSize(record);
+          if (!largestRecord || bytes > largestRecord.bytes) {
+            largestRecord = {
+              collection: collectionName,
+              id: recordIdForDraft(record, collectionName),
+              bytes
+            };
+          }
+        });
+      });
+      if (compact.settings) sections.push({ name: "settings", count: 1, bytes: jsonByteSize(compact.settings) });
+      sections.sort((a, b) => b.bytes - a.bytes);
+      return {
+        totalBytes: jsonByteSize(compact),
+        totalRecords,
+        sections: sections.slice(0, 10),
+        largestRecord
+      };
+    }
+
     function mergePatchIntoPayload(remotePayload = {}, patch = null) {
       const merged = businessPayloadFrom(remotePayload || {});
       if (!patch) return merged;
@@ -3633,24 +3747,26 @@
         safeStorageRemove(UNSAVED_DRAFT_KEY);
         return null;
       }
-      if (saved.format === "classone_record_patch_v1") return saved;
+      if (saved.format === "classone_record_patch_v1") return compactRecordPatch(saved);
+      if (!confirmedRemotePayload) return null;
       const legacyPayload = businessPayloadFrom(saved);
-      return buildRecordPatchFromPayload(legacyPayload, confirmedRemotePayload || businessPayloadFrom({}));
+      return buildRecordPatchFromPayload(legacyPayload, confirmedRemotePayload, { includeDeletions: false });
     }
 
     async function saveDraftPatch(patch) {
-      currentDraftPatch = patch;
-      if (!patch) {
+      const compactPatch = compactRecordPatch(patch);
+      currentDraftPatch = compactPatch;
+      if (!compactPatch) {
         safeStorageRemove(UNSAVED_DRAFT_KEY);
         await deleteStateFromIndexedDb(UNSAVED_DRAFT_KEY);
         return;
       }
-      await saveStateToIndexedDb(UNSAVED_DRAFT_KEY, patch);
+      await saveStateToIndexedDb(UNSAVED_DRAFT_KEY, compactPatch);
       safeStorageSet(UNSAVED_DRAFT_KEY, JSON.stringify({
         exists: true,
-        format: patch.format,
-        baseVersion: patch.baseVersion,
-        savedAt: patch.updatedAt || new Date().toISOString()
+        format: compactPatch.format,
+        baseVersion: compactPatch.baseVersion,
+        savedAt: compactPatch.updatedAt || new Date().toISOString()
       }));
     }
 
@@ -3701,7 +3817,10 @@
       safeStorageRemove(DATA_BACKUP_KEY);
       safeStorageRemove(STORE_KEY);
       if (hasDraft) {
-        const patch = buildRecordPatchFromPayload(remoteStatePayload(), confirmedRemotePayload || null);
+        const diffPatch = confirmedRemotePayload
+          ? buildRecordPatchFromPayload(remoteStatePayload(), confirmedRemotePayload)
+          : null;
+        const patch = mergeRecordPatches(currentDraftPatch, diffPatch);
         saveDraftPatch(patch).catch(err => setStatus(`Browser draft save failed: ${err.message}`, "error"));
         setRetrySaveVisible(lastNeonSaveFailed);
       } else {
@@ -15013,23 +15132,29 @@
 
     async function uploadPatchToNeon(patch, expectedVersion = 0, label = "Neon patch save") {
       const prepStartedAt = performance.now();
+      const compactPatch = compactRecordPatch(patch);
+      if (!compactPatch) throw new Error("No record patch changes to upload.");
+      lastNeonPatchDiagnostics = patchDiagnostics(compactPatch);
       const body = JSON.stringify({
         key: neonStateKey(),
         expectedVersion,
-        patch,
+        patch: compactPatch,
         updatedBy: `${currentUser()?.name || safeStorageGet("classOneStaffName") || "Class One Admin"} · ${currentDeviceId().slice(0, 12)}`
       });
       const uploadStartedAt = performance.now();
-      lastNeonPayloadBytes = new Blob([body]).size;
+      lastNeonPayloadBytes = jsonByteSize(body);
       lastNeonPayloadChunks = 1;
       lastNeonPatchMode = "Record patch";
       setSyncMetric("payloadPrepMs", Math.round(uploadStartedAt - prepStartedAt));
       setSyncMetric("payloadBytes", lastNeonPayloadBytes);
       setSyncMetric("chunkCount", 1);
+      setSyncMetric("patchRecordCount", lastNeonPatchDiagnostics.totalRecords || 0);
       if (lastNeonPayloadBytes > MAX_PATCH_ENDPOINT_BYTES) {
         const error = new Error(`Record patch is too large for direct upload (${Math.round(lastNeonPayloadBytes / 1024 / 1024)} MB). Falling back to chunked Neon save.`);
         error.code = "PATCH_TOO_LARGE";
         error.status = 413;
+        error.patchDiagnostics = lastNeonPatchDiagnostics;
+        console.warn("[ClassOne sync] Oversized record patch blocked before upload.", lastNeonPatchDiagnostics);
         throw error;
       }
       try {
@@ -15386,8 +15511,20 @@
       try {
         const currentVersion = Number(state.settings.neonVersion || 0);
         const pushedRevision = Number(state.settings.localRevision || 0);
-        let draftPatch = await loadUnsavedDraftPatch();
-        if (!draftPatch) draftPatch = buildRecordPatchFromPayload(remoteStatePayload(), confirmedRemotePayload || null);
+        let draftPatch = compactRecordPatch(await loadUnsavedDraftPatch());
+        if (!draftPatch && !confirmedRemotePayload) {
+          const snapshot = await measureSyncStep("pullMs", () => fetchNeonStateSnapshot("Neon baseline for patch"));
+          confirmedRemotePayload = businessPayloadFrom(snapshot.payload || {});
+          if (!snapshot.empty) {
+            state.settings.neonVersion = Number(snapshot.manifest?.version || state.settings.neonVersion || 0);
+            lastObservedNeonVersion = state.settings.neonVersion;
+            lastObservedNeonUpdatedAt = snapshot.manifest?.updatedAt || lastObservedNeonUpdatedAt;
+          }
+        }
+        if (!draftPatch && confirmedRemotePayload) {
+          draftPatch = buildRecordPatchFromPayload(remoteStatePayload(), confirmedRemotePayload, { includeDeletions: false });
+        }
+        draftPatch = compactRecordPatch(draftPatch);
         if (!draftPatch) {
           clearUnsavedDraft();
           if (logManual) setStatus("No unsaved business changes to sync.");
@@ -15407,7 +15544,7 @@
           expectedVersion = Number(snapshot.manifest?.version || remoteVersion || 0);
           basePayload = businessPayloadFrom(snapshot.payload || {});
           mergedWithNewerRemote = true;
-          canUsePatchEndpoint = false;
+          canUsePatchEndpoint = true;
         }
         let mergedPayload = mergePatchIntoPayload(basePayload, draftPatch);
         let data;
@@ -15458,10 +15595,11 @@
         const newerEditExists = localRevisionAfterUpload > pushedRevision || pendingSave;
         if (newerEditExists) {
           confirmedRemotePayload = businessPayloadFrom(mergedPayload);
-          let residualPatch = currentDraftPatch || await loadUnsavedDraftPatch();
+          let residualPatch = compactRecordPatch(currentDraftPatch || await loadUnsavedDraftPatch());
           if (!residualPatch) {
             residualPatch = buildRecordPatchFromPayload(workingPayloadBeforeApply, confirmedRemotePayload, { includeDeletions: false });
           }
+          residualPatch = compactRecordPatch(residualPatch);
           const workingPayload = residualPatch ? mergePatchIntoPayload(confirmedRemotePayload, residualPatch) : confirmedRemotePayload;
           applyPayloadPreservingForms(workingPayload);
           state.settings.pendingLocalSync = true;
