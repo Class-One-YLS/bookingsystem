@@ -2388,7 +2388,8 @@
     const ENABLE_BOOKING_OUTCOME_DELTA_SYNC = true;
     const ENABLE_BOOKING_CREATE_DELTA_SYNC = true;
     const ENABLE_RECURRING_ASSIGNMENT_DELTA_SYNC = true;
-    const FRONTEND_BUILD = "2026.08.14-phase2-add-class-recurring-delta.1";
+    const CLASS_ONE_BUILD = "2026.08.14-phase2-verification.1";
+    const FRONTEND_BUILD = CLASS_ONE_BUILD;
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
     const LOGIN_TIMEOUT_MS = 8000;
@@ -4902,14 +4903,15 @@
 
     function markTeacherViewOutdated(message = "Not synced to Teacher View yet.") {
       state.settings.teacherViewSyncOutdated = true;
-      state.settings.teacherViewSyncMessage = message;
+      state.settings.teacherViewSyncMessage = SYNC_DEBUG ? message : "Some changes are still syncing.";
       lastNeonSaveFailed = true;
+      if (SYNC_DEBUG) console.warn("[ClassOne Teacher View sync outdated]", { message });
       persistState();
       renderSchedule();
       renderTeacherOverview();
       renderTeachers();
       renderSyncHealth();
-      setStatus(`Not synced to Teacher View yet. ${message}`, "error");
+      setStatus("Some changes are still syncing. You can continue working.", "warn");
     }
 
     function markTeacherViewSynced(version) {
@@ -7304,15 +7306,92 @@
       });
     }
 
+    async function classOnePhase2Status() {
+      const status = {
+        frontendBuild: CLASS_ONE_BUILD,
+        debugSync: SYNC_DEBUG,
+        apiBase: safeApiUrlForDisplay(neonApiBase()),
+        apiReachable: false,
+        bookingOutcomeEndpoint: false,
+        bookingCreateEndpoint: false,
+        recurringUpsertEndpoint: false,
+        recurringBackfillEndpoint: false,
+        composedState: false,
+        systemVersion: null,
+        apiBuild: "",
+        bookingBackfill: null,
+        recurringBackfill: null,
+        warnings: []
+      };
+      if (!neonConfigured()) {
+        status.warnings.push("Neon API URL or API key is not configured.");
+        return status;
+      }
+      try {
+        const version = await fetchNeonJson(
+          `/api/state-version?key=${encodeURIComponent(neonStateKey())}`,
+          { method: "GET" },
+          "Phase 2 state-version status",
+          SYNC_READ_TIMEOUT_MS
+        );
+        const capabilities = version.capabilities || {};
+        const endpoints = version.endpoints || {};
+        status.apiReachable = true;
+        status.systemVersion = Number(version.version || 0);
+        status.apiBuild = version.build || "";
+        status.composedState = Boolean(version.composed || capabilities.composedState);
+        status.bookingOutcomeEndpoint = Boolean(capabilities.phase1BookingOutcome && endpoints.bookingOutcome);
+        status.bookingCreateEndpoint = Boolean(capabilities.phase2BookingCreate && endpoints.bookingCreate);
+        status.recurringUpsertEndpoint = Boolean(capabilities.phase2RecurringAssignments && endpoints.recurringAssignmentUpsert);
+        status.recurringBackfillEndpoint = Boolean(capabilities.recurringBackfillStatus && endpoints.recurringAssignmentBackfill);
+      } catch (error) {
+        status.warnings.push(`API status check failed: ${error.message}`);
+      }
+      try {
+        const bookingBackfill = await classOneBookingBackfillStatus();
+        status.bookingBackfill = {
+          legacyCount: Number(bookingBackfill.legacyBookingCount || 0),
+          normalizedCount: Number(bookingBackfill.normalizedBookingCount || 0),
+          missingCount: Number(bookingBackfill.missingNormalizedBookingCount || 0),
+          conflictCount: Number(bookingBackfill.duplicateConflictCount || 0),
+          lastBackfillTimestamp: bookingBackfill.lastBackfillTimestamp || null,
+          ready: Boolean(bookingBackfill.ready)
+        };
+        if (!status.bookingBackfill.ready) status.warnings.push("Booking outcome delta sync is not ready for production mutation testing.");
+      } catch (error) {
+        status.warnings.push(`Booking backfill status failed: ${error.message}`);
+      }
+      try {
+        const recurringBackfill = await classOneRecurringAssignmentBackfillStatus();
+        status.recurringBackfill = {
+          legacyCount: Number(recurringBackfill.legacyRecurringAssignmentCount || 0),
+          normalizedCount: Number(recurringBackfill.normalizedRecurringAssignmentCount || 0),
+          missingCount: Number(recurringBackfill.missingNormalizedAssignmentCount || 0),
+          conflictCount: Number(recurringBackfill.duplicateConflictCount || 0),
+          duplicateLegacyAssignmentCount: Number(recurringBackfill.duplicateLegacyAssignmentCount || 0),
+          lastBackfillTimestamp: recurringBackfill.lastBackfillTimestamp || null,
+          ready: Boolean(recurringBackfill.ready)
+        };
+        if (!status.recurringBackfill.ready) status.warnings.push("Recurring assignment delta sync is not ready for production mutation testing.");
+      } catch (error) {
+        status.warnings.push(`Recurring backfill status failed: ${error.message}`);
+      }
+      if (SYNC_DEBUG) console.info("[ClassOne Phase 2 status]", status);
+      return status;
+    }
+
     window.classOneDebug = {
       ...(window.classOneDebug || {}),
       auditTimetableSourceRecords,
       cleanupRecurringClassSources,
       bookingBackfillStatus: classOneBookingBackfillStatus,
       recurringAssignmentBackfillStatus: classOneRecurringAssignmentBackfillStatus,
+      phase2Status: classOnePhase2Status,
       performanceCounters: classOnePerformanceCounters,
       resetPerformanceCounters: resetClassOnePerformanceCounters
     };
+
+    if (SYNC_DEBUG) console.info(`Class One build: ${CLASS_ONE_BUILD}`);
 
     function canonicalCellAvailabilityResult(cell, options = {}) {
       if (!cell) return null;
@@ -15359,6 +15438,51 @@
       return new Set((Array.isArray(teachers) ? teachers : []).map(item => item?.id).filter(Boolean));
     }
 
+    function statePatchDebugInfo(bodyText) {
+      const body = safeParseJson(bodyText);
+      const patch = body.patch || body;
+      const changes = patch.changes || {};
+      const collections = Object.entries(changes)
+        .filter(([, value]) => Array.isArray(value) && value.length)
+        .map(([name, records]) => ({
+          name,
+          count: records.length,
+          bytes: jsonByteSize(records)
+        }))
+        .sort((a, b) => b.bytes - a.bytes);
+      const payloadBytes = jsonByteSize(bodyText || "");
+      const bookingIds = bookingIdsFromStatePatchBody(bodyText);
+      const teacherIds = teacherIdsFromStatePatchBody(bodyText);
+      const alreadyNormalized = [...bookingIds].some(id => recentBookingOutcomeDeltaSyncs.has(id) || recentBookingCreateDeltaSyncs.has(id)) ||
+        [...teacherIds].some(teacherId => [...recentRecurringAssignmentDeltaSyncs.values()].some(item => String(item.teacherId || "") === String(teacherId || "")));
+      return {
+        payloadBytes,
+        collections,
+        largestCollections: collections.slice(0, 8),
+        operationAlreadyNormalized: alreadyNormalized
+      };
+    }
+
+    function logStatePatchDebug(path, options = {}, label = "") {
+      if (!SYNC_DEBUG || !path.startsWith("/api/state-patch")) return;
+      const info = statePatchDebugInfo(options.body || "");
+      const message = {
+        operation: label || "Unknown operation",
+        endpoint: "/api/state-patch",
+        payloadBytes: info.payloadBytes,
+        collections: info.collections,
+        operationAlreadyNormalized: info.operationAlreadyNormalized
+      };
+      if (info.payloadBytes > 1024 * 1024) {
+        console.warn("STATE PATCH DEBUG: large legacy patch payload.", {
+          ...message,
+          largestCollections: info.largestCollections
+        });
+      } else {
+        console.info("STATE PATCH DEBUG", message);
+      }
+    }
+
     function pruneDeltaDebugWindow() {
       const cutoff = Date.now() - BOOKING_OUTCOME_DEBUG_WINDOW_MS;
       recentBookingOutcomeDeltaSyncs.forEach((item, bookingId) => {
@@ -15427,6 +15551,7 @@
       const requestOptions = { ...options };
       if (path.startsWith("/api/state") || path.startsWith("/api/teacher-version")) saveRequestCount += 1;
       const requestStartedAt = performance.now();
+      logStatePatchDebug(path, options, label);
       detectDeltaLegacyStatePatch(path, options, label);
       if (method !== "GET" && !isSessionRequest && sessionToken()) {
         try {
