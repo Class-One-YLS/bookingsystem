@@ -2386,7 +2386,9 @@
       stateKey: "production"
     };
     const ENABLE_BOOKING_OUTCOME_DELTA_SYNC = true;
-    const FRONTEND_BUILD = "2026.08.06-public-holiday-all-cells.1";
+    const ENABLE_BOOKING_CREATE_DELTA_SYNC = true;
+    const ENABLE_RECURRING_ASSIGNMENT_DELTA_SYNC = true;
+    const FRONTEND_BUILD = "2026.08.14-phase2-add-class-recurring-delta.1";
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
     const LOGIN_TIMEOUT_MS = 8000;
@@ -2474,6 +2476,7 @@
       tutorLeads: [],
       crmHistoricalMonthlyStats: [],
       bookings: [],
+      recurringAssignments: [],
       replacements: [],
       replacementCredits: [],
       teacherLeaves: [],
@@ -2639,6 +2642,7 @@
       "teachers",
       "students",
       "bookings",
+      "recurringAssignments",
       "leads",
       "tutorLeads",
       "crmHistoricalMonthlyStats",
@@ -2692,6 +2696,8 @@
     let outcomeSaveCallCount = 0;
     let saveRequestCount = 0;
     const recentBookingOutcomeDeltaSyncs = new Map();
+    const recentBookingCreateDeltaSyncs = new Map();
+    const recentRecurringAssignmentDeltaSyncs = new Map();
     const BOOKING_OUTCOME_DEBUG_WINDOW_MS = 2 * 60 * 1000;
     const syncPerf = {
       last: {},
@@ -7286,11 +7292,24 @@
       });
     }
 
+    function classOneRecurringAssignmentBackfillStatus() {
+      return fetchNeonJson(
+        `/api/recurring-assignments/backfill?key=${encodeURIComponent(neonStateKey())}`,
+        { method: "GET" },
+        "Recurring assignment backfill status",
+        SYNC_READ_TIMEOUT_MS
+      ).then(result => {
+        console.info("[ClassOne recurring assignment backfill status]", result);
+        return result;
+      });
+    }
+
     window.classOneDebug = {
       ...(window.classOneDebug || {}),
       auditTimetableSourceRecords,
       cleanupRecurringClassSources,
       bookingBackfillStatus: classOneBookingBackfillStatus,
+      recurringAssignmentBackfillStatus: classOneRecurringAssignmentBackfillStatus,
       performanceCounters: classOnePerformanceCounters,
       resetPerformanceCounters: resetClassOnePerformanceCounters
     };
@@ -8536,7 +8555,7 @@
       }
     }
 
-    function confirmFixedRegularBooking() {
+    async function confirmFixedRegularBooking() {
       const data = JSON.parse($("fixedRegularSlotData").value || "null");
       const teacher = data ? teacherById(data.teacherId) : null;
       const student = studentById($("fixedRegularStudent").value);
@@ -8583,7 +8602,7 @@
       };
       student.regularSlots ||= [];
       student.regularSlots.push(studentSlot);
-      teacher.regularSlots.push({
+      const teacherSlot = {
         id: uid("slot"),
         studentId: student.id,
         studentSlotId: studentSlot.id,
@@ -8598,19 +8617,30 @@
         source: "teacher-overview",
         createdAt: now,
         updatedAt: now
-      });
+      };
+      teacher.regularSlots.push(teacherSlot);
       student.updatedAt = now;
       teacher.updatedAt = now;
       const period = endDate ? `${startDate} to ${endDate}` : `${startDate} onward`;
       const undoAfter = snapshotCollections({ students: [student.id], teachers: [teacher.id] });
-      logAction("Fixed Regular Class Booked", `${student.name} with ${teacher.name}`, "Open weekly slot", `${data.day} ${timeLabel(data.time)} | ${period}`, $("fixedRegularRemark").value.trim() || "Booked from Teacher Overview.", {
+      const activityLog = logAction("Fixed Regular Class Booked", `${student.name} with ${teacher.name}`, "Open weekly slot", `${data.day} ${timeLabel(data.time)} | ${period}`, $("fixedRegularRemark").value.trim() || "Booked from Teacher Overview.", {
         undo: makeUndoSnapshot(undoBefore, undoAfter)
       });
       $("fixedRegularBookingModal").classList.add("hide");
-      save(false);
       renderTeacherOverview();
       renderStudents();
-      setStatus(`Regular class booked for ${student.name}: ${data.day} ${timeLabel(data.time)}, ${period}.`);
+      setStatus(`Regular class booked for ${student.name}: ${data.day} ${timeLabel(data.time)}, ${period}. Syncing...`);
+      const assignment = recurringAssignmentFromTeacherSlot(teacher, teacherSlot, "regularSlots");
+      try {
+        await syncRecurringAssignmentDelta(assignment, "Fixed regular class booked", {
+          operation: "create_regular_assignment",
+          activityLog
+        });
+      } catch (error) {
+        markTeacherViewOutdated("Regular class saved in this browser only. Not synced to Teacher View yet.");
+        persistState();
+        setStatus(`Regular class saved locally. Sync pending: ${error.message}`, "warn");
+      }
     }
 
     function setFixedRegularSlotOff() {
@@ -8737,7 +8767,7 @@
       return offSlot;
     }
 
-    function confirmCancelFixedRegular() {
+    async function confirmCancelFixedRegular() {
       if (confirmCancelFixedRegular.inProgress) return;
       confirmCancelFixedRegular.inProgress = true;
       const confirmButton = $("confirmCancelFixedRegularBtn");
@@ -8882,14 +8912,27 @@
 
       const studentName = recurringSlot.studentName || data.studentName || "Student";
       const undoAfter = snapshotCollections({ students: student ? [student.id] : [], teachers: [teacher.id], bookings: futureBookingIds });
-      logAction("Regular Class Last Day Set", studentName, `${teacher.name} | ${recurringSlot.day} ${timeLabel(recurringSlot.time)} | Previous end: ${originalEndDate || "none"}`, `Last class date: ${lastClassDate}`, "Updated from Teacher Overview. Previous history retained; no replacement credit created.", {
+      const activityLog = logAction("Regular Class Last Day Set", studentName, `${teacher.name} | ${recurringSlot.day} ${timeLabel(recurringSlot.time)} | Previous end: ${originalEndDate || "none"}`, `Last class date: ${lastClassDate}`, "Updated from Teacher Overview. Previous history retained; no replacement credit created.", {
         undo: makeUndoSnapshot(undoBefore, undoAfter)
       });
       $("cancelFixedRegularModal").classList.add("hide");
-      save(false);
       renderTeacherOverview();
       renderStudents();
-      setStatus(`${studentName}'s last regular class date is ${formatDateFromAny(lastClassDate)}. ${teacher.name}'s ${recurringSlot.day} ${timeLabel(recurringSlot.time)} slot opens after that date.`);
+      setStatus(`${studentName}'s last regular class date is ${formatDateFromAny(lastClassDate)}. Syncing...`);
+      const assignment = recurringAssignmentFromTeacherSlot(teacher, recurringSlot, "regularSlots");
+      try {
+        await syncRecurringAssignmentDelta(assignment, "Regular class last day set", {
+          operation: "end_regular_assignment",
+          activityLog
+        });
+        if (futureBookings.length) {
+          await syncBookingCreateDeltas(futureBookings.map(booking => ({ booking })), "Future regular booking tombstones");
+        }
+      } catch (error) {
+        markTeacherViewOutdated("Last class date saved in this browser only. Not synced to Teacher View yet.");
+        persistState();
+        setStatus(`Last class date saved locally. Sync pending: ${error.message}`, "warn");
+      }
       } finally {
         confirmCancelFixedRegular.inProgress = false;
         if (confirmButton) confirmButton.disabled = false;
@@ -9287,19 +9330,23 @@
       const regularChangeUndoBefore = snapshotCollections({ teachers: [sourceTeacher.id, targetTeacher.id], students: changedStudent ? [changedStudent.id] : [], bookings: affectedBookingIdsBefore });
       const originalEndDate = sourceSlot.endDate || "";
       const sourceSlotSnapshot = { ...sourceSlot };
+      const recurringAssignmentDeltas = [];
       if (dateOnly(sourceSlot.startDate) && dateOnly(sourceSlot.startDate) >= startDate) {
         markSlotRemoved(sourceSlot, new Date().toISOString(), "Regular class time changed before its start date.");
       } else {
         sourceSlot.endDate = dateOffsetISO(startDate, -1);
         sourceSlot.updatedAt = new Date().toISOString();
       }
+      recurringAssignmentDeltas.push(recurringAssignmentFromTeacherSlot(sourceTeacher, sourceSlot, "regularSlots"));
       if (changeType === "temporary") {
-        sourceTeacher.regularSlots.push({
+        const restoredSourceSlot = {
           ...sourceSlotSnapshot,
           id: uid("slot"),
           startDate: dateOffsetISO(endDate, 1),
           endDate: originalEndDate
-        });
+        };
+        sourceTeacher.regularSlots.push(restoredSourceSlot);
+        recurringAssignmentDeltas.push(recurringAssignmentFromTeacherSlot(sourceTeacher, restoredSourceSlot, "regularSlots"));
       }
       if (target.interactionSource === "teacher_overview_booked_change") {
         const targetOpenSlot = [...(targetTeacher.regularSlots || [])].reverse().find(slot =>
@@ -9307,7 +9354,7 @@
           regularSlotRangesOverlap(slot, { startDate, endDate: changeType === "temporary" ? endDate : "" })
         );
         if (targetOpenSlot) splitOpenSlotForFixedBooking(targetTeacher, targetOpenSlot, startDate, changeType === "temporary" ? endDate : "");
-        sourceTeacher.regularSlots.push({
+        const reopenedSourceSlot = {
           id: uid("slot"),
           day: sourceSlot.day,
           time: sourceSlot.time,
@@ -9319,10 +9366,12 @@
           source: "teacher-overview-regular-change",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
-        });
+        };
+        sourceTeacher.regularSlots.push(reopenedSourceSlot);
+        recurringAssignmentDeltas.push(recurringAssignmentFromTeacherSlot(sourceTeacher, reopenedSourceSlot, "regularSlots"));
       }
       targetTeacher.regularSlots ||= [];
-      targetTeacher.regularSlots.push({
+      const targetRecurringSlot = {
         id: uid("slot"),
         day: target.day,
         time: target.time,
@@ -9333,12 +9382,15 @@
         source: "manual_regular_change",
         startDate,
         endDate: changeType === "temporary" ? endDate : ""
-      });
+      };
+      targetTeacher.regularSlots.push(targetRecurringSlot);
+      recurringAssignmentDeltas.push(recurringAssignmentFromTeacherSlot(targetTeacher, targetRecurringSlot, "regularSlots"));
       sourceTeacher.updatedAt = new Date().toISOString();
       targetTeacher.updatedAt = sourceTeacher.updatedAt;
       syncStudentRegularSlotRange(sourceSlot.studentName, sourceTeacher, sourceSlot, targetTeacher, target, startDate, endDate, changeType);
       if (target.interactionSource === "teacher_overview_booked_change") {
         const now = new Date().toISOString();
+        const deletedBookingDeltas = [];
         scheduleBookings().filter(booking =>
           booking.teacherId === sourceTeacher.id && booking.time === sourceSlot.time &&
           dayFromISO(booking.date) === sourceSlot.day && booking.date >= startDate &&
@@ -9348,10 +9400,14 @@
         ).forEach(booking => {
           stampBookingStatus(booking, "deleted", now);
           booking.archived = true;
+          deletedBookingDeltas.push({ booking });
         });
+        confirmRegularChange.deletedBookingDeltas = deletedBookingDeltas;
+      } else {
+        confirmRegularChange.deletedBookingDeltas = [];
       }
       const undoAfter = snapshotCollections({ teachers: [sourceTeacher.id, targetTeacher.id], students: changedStudent ? [changedStudent.id] : [], bookings: affectedBookingIdsBefore });
-      logAction(
+      const activityLog = logAction(
         changeType === "temporary" ? "Temporary Regular Slot Change" : "Long Term Regular Slot Change",
         sourceSlot.studentName || "Regular class",
         sourceBefore,
@@ -9360,9 +9416,20 @@
         { undo: makeUndoSnapshot(regularChangeUndoBefore, undoAfter) }
       );
       $("regularChangeModal").classList.add("hide");
-      save(false);
       renderAll();
-      await autoPushIfConfigured("Regular class slot changed.");
+      try {
+        await syncRecurringAssignmentDelta(recurringAssignmentDeltas.filter(Boolean), "Regular class slot changed", {
+          operation: changeType === "temporary" ? "temporary_regular_change" : "long_term_regular_change",
+          activityLog
+        });
+        if ((confirmRegularChange.deletedBookingDeltas || []).length) {
+          await syncBookingCreateDeltas(confirmRegularChange.deletedBookingDeltas, "Future regular booking tombstones");
+        }
+      } catch (error) {
+        markTeacherViewOutdated("Regular class change saved in this browser only. Not synced to Teacher View yet.");
+        persistState();
+        setStatus(`Regular class change saved locally. Sync pending: ${error.message}`, "warn");
+      }
     }
 
     function openSetOffModalForSlot(data) {
@@ -15286,32 +15353,67 @@
       return new Set((Array.isArray(bookings) ? bookings : []).map(item => item?.id || item?.bookingId).filter(Boolean));
     }
 
-    function pruneBookingOutcomeDebugWindow() {
+    function teacherIdsFromStatePatchBody(bodyText) {
+      const body = safeParseJson(bodyText);
+      const teachers = body.patch?.changes?.teachers || body.changes?.teachers || [];
+      return new Set((Array.isArray(teachers) ? teachers : []).map(item => item?.id).filter(Boolean));
+    }
+
+    function pruneDeltaDebugWindow() {
       const cutoff = Date.now() - BOOKING_OUTCOME_DEBUG_WINDOW_MS;
       recentBookingOutcomeDeltaSyncs.forEach((item, bookingId) => {
         if (!item || Number(item.at || 0) < cutoff) recentBookingOutcomeDeltaSyncs.delete(bookingId);
       });
+      recentBookingCreateDeltaSyncs.forEach((item, bookingId) => {
+        if (!item || Number(item.at || 0) < cutoff) recentBookingCreateDeltaSyncs.delete(bookingId);
+      });
+      recentRecurringAssignmentDeltaSyncs.forEach((item, assignmentId) => {
+        if (!item || Number(item.at || 0) < cutoff) recentRecurringAssignmentDeltaSyncs.delete(assignmentId);
+      });
     }
 
-    function detectBookingOutcomeLegacyStatePatch(path, options = {}, label = "") {
+    function detectDeltaLegacyStatePatch(path, options = {}, label = "") {
       if (!SYNC_DEBUG || !path.startsWith("/api/state-patch")) return;
-      pruneBookingOutcomeDebugWindow();
+      pruneDeltaDebugWindow();
       const ids = bookingIdsFromStatePatchBody(options.body || "");
       ids.forEach(bookingId => {
         const recent = recentBookingOutcomeDeltaSyncs.get(bookingId);
-        if (!recent) return;
-        recent.legacyStatePatchTriggered = true;
-        recent.legacyStatePatchLabel = label;
-        recent.legacyStatePatchStack = (new Error("Legacy state-patch after booking outcome")).stack || "";
-        const warning = {
-          bookingId,
-          operation: recent.operation,
-          endpoint: "/api/state-patch",
-          label,
-          functionStack: recent.legacyStatePatchStack.split("\n").slice(1, 6).map(line => line.trim())
-        };
-        console.warn("MIGRATION ERROR: booking outcome was persisted through both delta sync and legacy state sync.", warning);
-        setStatus("MIGRATION ERROR: booking outcome was persisted through both delta sync and legacy state sync. See console.", "error");
+        const created = recentBookingCreateDeltaSyncs.get(bookingId);
+        [recent, created].filter(Boolean).forEach(item => {
+          item.legacyStatePatchTriggered = true;
+          item.legacyStatePatchLabel = label;
+          item.legacyStatePatchStack = (new Error("Legacy state-patch after migrated booking delta")).stack || "";
+          const warning = {
+            bookingId,
+            operation: item.operation,
+            deltaEndpoint: item.endpoint,
+            endpoint: "/api/state-patch",
+            label,
+            functionStack: item.legacyStatePatchStack.split("\n").slice(1, 6).map(line => line.trim())
+          };
+          console.warn("MIGRATION ERROR: booking mutation was persisted through both delta sync and legacy state sync.", warning);
+          setStatus("MIGRATION ERROR: migrated booking mutation also triggered legacy state sync. See console.", "error");
+        });
+      });
+      const teacherIds = teacherIdsFromStatePatchBody(options.body || "");
+      teacherIds.forEach(teacherId => {
+        recentRecurringAssignmentDeltaSyncs.forEach(item => {
+          if (String(item.teacherId || "") !== String(teacherId || "")) return;
+          item.legacyStatePatchTriggered = true;
+          item.legacyStatePatchLabel = label;
+          item.legacyStatePatchStack = (new Error("Legacy state-patch after recurring assignment delta")).stack || "";
+          const warning = {
+            assignmentId: item.assignmentId,
+            teacherId,
+            operation: item.operation,
+            deltaEndpoint: item.endpoint,
+            endpoint: "/api/state-patch",
+            label,
+            functionStack: item.legacyStatePatchStack.split("\n").slice(1, 6).map(line => line.trim())
+          };
+          console.warn("MIGRATION ERROR: recurring assignment was persisted through both delta sync and legacy state sync.", warning);
+          setStatus("MIGRATION ERROR: migrated recurring assignment also triggered legacy state sync. See console.", "error");
+        });
       });
     }
 
@@ -15325,7 +15427,7 @@
       const requestOptions = { ...options };
       if (path.startsWith("/api/state") || path.startsWith("/api/teacher-version")) saveRequestCount += 1;
       const requestStartedAt = performance.now();
-      detectBookingOutcomeLegacyStatePatch(path, options, label);
+      detectDeltaLegacyStatePatch(path, options, label);
       if (method !== "GET" && !isSessionRequest && sessionToken()) {
         try {
           const body = requestOptions.body ? JSON.parse(requestOptions.body) : {};
@@ -15395,6 +15497,108 @@
       const index = payload[collectionName].findIndex(item => item.id === record.id);
       if (index >= 0) payload[collectionName][index] = { ...payload[collectionName][index], ...record };
       else payload[collectionName].unshift(record);
+    }
+
+    function recurringAssignmentIdFromSlot(slot, teacher = null, collectionName = "regularSlots") {
+      if (!slot) return "";
+      if (slot.normalizedRecurringAssignmentId) return String(slot.normalizedRecurringAssignmentId);
+      if (slot.assignmentId) return String(slot.assignmentId);
+      if (slot.id) return String(slot.id);
+      return `recurring_${[
+        teacher?.id || slot.teacherId || "",
+        slot.studentId || "",
+        studentNameKey(slot.studentName || ""),
+        slot.day || slot.weekday || "",
+        normalizeTimeValue(slot.time) || slot.time || "",
+        dateOnly(slot.startDate || ""),
+        collectionName
+      ].join("_").replace(/[^a-zA-Z0-9_.:-]+/g, "_")}`;
+    }
+
+    function recurringAssignmentFromTeacherSlot(teacher, slot, collectionName = "regularSlots") {
+      if (!teacher || !slot) return null;
+      const assignmentId = recurringAssignmentIdFromSlot(slot, teacher, collectionName);
+      return {
+        ...slot,
+        id: slot.id || assignmentId,
+        assignmentId,
+        normalizedRecurringAssignmentId: assignmentId,
+        teacherId: teacher.id,
+        day: slot.day || slot.weekday || "",
+        weekday: slot.weekday || slot.day || "",
+        time: normalizeTimeValue(slot.time) || slot.time || "",
+        type: slot.type || "regular class",
+        status: slot.status || (slot.deleted ? "deleted" : slot.unavailable ? "off" : "active"),
+        sourceCollection: collectionName,
+        sourceSlotId: slot.id || "",
+        studentSlotId: slot.studentSlotId || "",
+        recordVersion: Number(slot.recordVersion || 0),
+        updatedAt: slot.updatedAt || new Date().toISOString()
+      };
+    }
+
+    function applyRecurringAssignmentLocal(assignment) {
+      if (!assignment?.assignmentId) return;
+      state.recurringAssignments ||= [];
+      const existingAssignmentIndex = state.recurringAssignments.findIndex(item => String(item.assignmentId || item.id || "") === String(assignment.assignmentId));
+      if (existingAssignmentIndex >= 0) state.recurringAssignments[existingAssignmentIndex] = { ...state.recurringAssignments[existingAssignmentIndex], ...assignment };
+      else state.recurringAssignments.unshift(assignment);
+
+      const teacher = teacherById(assignment.teacherId);
+      if (teacher) {
+        const collectionName = assignment.sourceCollection === "overrideSlots" ? "overrideSlots" : "regularSlots";
+        teacher[collectionName] ||= [];
+        const sourceSlotId = assignment.sourceSlotId || assignment.id || assignment.assignmentId;
+        const teacherSlot = {
+          ...assignment,
+          id: sourceSlotId,
+          normalizedRecurringAssignmentId: assignment.assignmentId,
+          day: assignment.day || assignment.weekday || "",
+          time: normalizeTimeValue(assignment.time) || assignment.time || "",
+          teacherId: assignment.teacherId
+        };
+        const index = teacher[collectionName].findIndex(slot =>
+          String(slot.normalizedRecurringAssignmentId || slot.assignmentId || "") === String(assignment.assignmentId) ||
+          (sourceSlotId && String(slot.id || "") === String(sourceSlotId))
+        );
+        if (index >= 0) teacher[collectionName][index] = { ...teacher[collectionName][index], ...teacherSlot };
+        else teacher[collectionName].push(teacherSlot);
+      }
+
+      if (assignment.studentId) {
+        const student = studentById(assignment.studentId);
+        if (student) {
+          student.regularSlots ||= [];
+          const studentSlotId = assignment.studentSlotId || `student_slot_${assignment.assignmentId}`;
+          const studentSlot = {
+            id: studentSlotId,
+            normalizedRecurringAssignmentId: assignment.assignmentId,
+            teacherId: assignment.teacherId,
+            day: assignment.day || assignment.weekday || "",
+            time: normalizeTimeValue(assignment.time) || assignment.time || "",
+            subject: assignment.subject || "",
+            startDate: assignment.startDate || "",
+            endDate: assignment.endDate || "",
+            source: assignment.source || assignment.sourceCollection || "recurring_assignments_v2",
+            recordVersion: Number(assignment.recordVersion || 0),
+            updatedAt: assignment.updatedAt || ""
+          };
+          const index = student.regularSlots.findIndex(slot =>
+            String(slot.normalizedRecurringAssignmentId || "") === String(assignment.assignmentId) ||
+            String(slot.id || "") === String(studentSlotId)
+          );
+          if (index >= 0) student.regularSlots[index] = { ...student.regularSlots[index], ...studentSlot };
+          else student.regularSlots.push(studentSlot);
+        }
+      }
+    }
+
+    function upsertPayloadRecurringAssignment(payload, assignment) {
+      if (!payload || !assignment?.assignmentId) return;
+      payload.recurringAssignments ||= [];
+      const index = payload.recurringAssignments.findIndex(item => String(item.assignmentId || item.id || "") === String(assignment.assignmentId));
+      if (index >= 0) payload.recurringAssignments[index] = { ...payload.recurringAssignments[index], ...assignment };
+      else payload.recurringAssignments.unshift(assignment);
     }
 
     function bookingOutcomeDeltaRequestId(change) {
@@ -15565,6 +15769,163 @@
       for (const item of items) await syncBookingOutcomeDelta(item, label);
       setStatus(`${label} synced.`, "success");
       return true;
+    }
+
+    function bookingCreateDeltaSupported(booking) {
+      return ENABLE_BOOKING_CREATE_DELTA_SYNC && neonConfigured() && Boolean(booking?.id && booking?.teacherId && booking?.date && booking?.time);
+    }
+
+    function bookingCreateDeltaRequestId(change) {
+      return [
+        "booking_create",
+        currentDeviceId(),
+        change.booking?.id || change.booking?.bookingId || "",
+        change.booking?.updatedAt || change.booking?.createdAt || new Date().toISOString()
+      ].join("_").replace(/[^a-zA-Z0-9_.:-]+/g, "_");
+    }
+
+    async function syncBookingCreateDelta(change, label = "Booking created") {
+      if (!change?.booking?.id) throw new Error("Booking create delta is missing a booking id.");
+      const body = {
+        key: neonStateKey(),
+        requestId: bookingCreateDeltaRequestId(change),
+        bookingId: change.booking.id,
+        expectedRecordVersion: change.expectedRecordVersion == null ? undefined : change.expectedRecordVersion,
+        booking: change.booking,
+        reuseCancelledBookingId: change.reuseCancelledBookingId || change.booking.reusedCancelledBookingId || "",
+        supersededBooking: change.supersededBooking || null,
+        replacementTask: change.replacementTask || null,
+        replacementCredit: change.replacementCredit || null,
+        activityLog: change.activityLog || null,
+        updatedBy: `${currentUser()?.name || safeStorageGet("classOneStaffName") || "Class One Admin"} · ${currentDeviceId().slice(0, 12)}`
+      };
+      const payloadBytes = jsonByteSize(body);
+      if (SYNC_DEBUG && payloadBytes > 100 * 1024) {
+        console.warn("[ClassOne booking create delta] Large payload.", { bytes: payloadBytes, largestFields: largestJsonFields(body, 8) });
+      }
+      recentBookingCreateDeltaSyncs.set(change.booking.id, {
+        at: Date.now(),
+        bookingId: change.booking.id,
+        operation: "create",
+        endpoint: "/api/bookings/create",
+        bytes: payloadBytes,
+        legacyStatePatchTriggered: false
+      });
+      const data = await fetchNeonJson("/api/bookings/create", {
+        method: "POST",
+        body: JSON.stringify(body)
+      }, `${label} delta sync`, SYNC_SAVE_TIMEOUT_MS);
+      if (data.booking) upsertLocalRecord("bookings", data.booking);
+      if (data.supersededBooking) upsertLocalRecord("bookings", data.supersededBooking);
+      if (data.replacementTask) upsertLocalRecord("replacements", data.replacementTask);
+      if (data.replacementCredit) upsertLocalRecord("replacementCredits", data.replacementCredit);
+      if (data.activityLog) upsertLocalRecord("activityLogs", data.activityLog);
+      if (confirmedRemotePayload) {
+        if (data.booking) upsertPayloadRecord(confirmedRemotePayload, "bookings", data.booking);
+        if (data.supersededBooking) upsertPayloadRecord(confirmedRemotePayload, "bookings", data.supersededBooking);
+        if (data.replacementTask) upsertPayloadRecord(confirmedRemotePayload, "replacements", data.replacementTask);
+        if (data.replacementCredit) upsertPayloadRecord(confirmedRemotePayload, "replacementCredits", data.replacementCredit);
+        if (data.activityLog) upsertPayloadRecord(confirmedRemotePayload, "activityLogs", data.activityLog);
+      }
+      state.settings.neonVersion = Number(data.version || state.settings.neonVersion || 0);
+      lastObservedNeonVersion = state.settings.neonVersion;
+      lastObservedNeonUpdatedAt = data.updatedAt || new Date().toISOString();
+      state.settings.lastSyncedAt = new Date().toISOString();
+      markTeacherViewSynced(state.settings.neonVersion);
+      persistState();
+      notifyTeacherViews(state.settings.neonVersion);
+      console.info("[ClassOne booking create delta]", {
+        marker: "BOOKING CREATE DELTA SYNC",
+        bookingId: change.booking.id,
+        endpoint: "/api/bookings/create",
+        bytes: payloadBytes,
+        status: data.__httpStatus || 200,
+        recordVersion: Number(data.recordVersion || data.booking?.recordVersion || 0),
+        systemVersion: Number(data.version || 0),
+        legacyStatePatchTriggered: Boolean(recentBookingCreateDeltaSyncs.get(change.booking.id)?.legacyStatePatchTriggered)
+      });
+      return data;
+    }
+
+    async function syncBookingCreateDeltas(changes, label = "Booking created") {
+      const items = (changes || []).filter(change => bookingCreateDeltaSupported(change?.booking));
+      if (!items.length) return false;
+      setStatus("Saving booking...", "success", false);
+      for (const item of items) await syncBookingCreateDelta(item, label);
+      setStatus(`${label} synced.`, "success");
+      return true;
+    }
+
+    function recurringAssignmentDeltaSupported(assignment) {
+      return ENABLE_RECURRING_ASSIGNMENT_DELTA_SYNC && neonConfigured() && Boolean(assignment?.assignmentId && assignment?.teacherId && assignment?.day && assignment?.time);
+    }
+
+    function recurringAssignmentDeltaRequestId(assignments = [], operation = "upsert") {
+      const ids = assignments.map(item => item.assignmentId || item.id || "").join("_");
+      const stamp = assignments.map(item => item.updatedAt || item.createdAt || "").sort().join("_") || new Date().toISOString();
+      return ["recurring", operation, currentDeviceId(), ids, stamp].join("_").replace(/[^a-zA-Z0-9_.:-]+/g, "_");
+    }
+
+    async function syncRecurringAssignmentDelta(assignments, label = "Recurring assignment saved", options = {}) {
+      const items = (Array.isArray(assignments) ? assignments : [assignments])
+        .filter(item => recurringAssignmentDeltaSupported(item));
+      if (!items.length) return false;
+      const body = {
+        key: neonStateKey(),
+        requestId: recurringAssignmentDeltaRequestId(items, options.operation || "upsert"),
+        assignments: items,
+        expectedRecordVersions: Object.fromEntries(items
+          .filter(item => Number(item.recordVersion || 0) > 0)
+          .map(item => [item.assignmentId, Number(item.recordVersion || 0)])),
+        activityLog: options.activityLog || null,
+        updatedBy: `${currentUser()?.name || safeStorageGet("classOneStaffName") || "Class One Admin"} · ${currentDeviceId().slice(0, 12)}`
+      };
+      const payloadBytes = jsonByteSize(body);
+      if (SYNC_DEBUG && payloadBytes > 100 * 1024) {
+        console.warn("[ClassOne recurring assignment delta] Large payload.", { bytes: payloadBytes, largestFields: largestJsonFields(body, 8) });
+      }
+      items.forEach(item => {
+        recentRecurringAssignmentDeltaSyncs.set(item.assignmentId, {
+          at: Date.now(),
+          assignmentId: item.assignmentId,
+          teacherId: item.teacherId,
+          operation: options.operation || "upsert",
+          endpoint: "/api/recurring-assignments/upsert",
+          bytes: payloadBytes,
+          legacyStatePatchTriggered: false
+        });
+      });
+      const data = await fetchNeonJson("/api/recurring-assignments/upsert", {
+        method: "POST",
+        body: JSON.stringify(body)
+      }, `${label} delta sync`, SYNC_SAVE_TIMEOUT_MS);
+      (data.assignments || (data.assignment ? [data.assignment] : [])).forEach(assignment => {
+        applyRecurringAssignmentLocal(assignment);
+        if (confirmedRemotePayload) upsertPayloadRecurringAssignment(confirmedRemotePayload, assignment);
+      });
+      if (data.activityLog) {
+        upsertLocalRecord("activityLogs", data.activityLog);
+        if (confirmedRemotePayload) upsertPayloadRecord(confirmedRemotePayload, "activityLogs", data.activityLog);
+      }
+      state.settings.neonVersion = Number(data.version || state.settings.neonVersion || 0);
+      lastObservedNeonVersion = state.settings.neonVersion;
+      lastObservedNeonUpdatedAt = data.updatedAt || new Date().toISOString();
+      state.settings.lastSyncedAt = new Date().toISOString();
+      markTeacherViewSynced(state.settings.neonVersion);
+      persistState();
+      notifyTeacherViews(state.settings.neonVersion);
+      console.info("[ClassOne recurring assignment delta]", {
+        marker: "RECURRING ASSIGNMENT DELTA SYNC",
+        assignmentIds: items.map(item => item.assignmentId),
+        endpoint: "/api/recurring-assignments/upsert",
+        bytes: payloadBytes,
+        status: data.__httpStatus || 200,
+        recordVersion: Number(data.recordVersion || data.assignment?.recordVersion || 0),
+        systemVersion: Number(data.version || 0),
+        legacyStatePatchTriggered: items.some(item => recentRecurringAssignmentDeltaSyncs.get(item.assignmentId)?.legacyStatePatchTriggered)
+      });
+      setStatus(`${label} synced.`, "success");
+      return data;
     }
 
     async function fetchNeonManifest(label = "Neon version check", timeoutMs = 15000) {
@@ -18444,6 +18805,9 @@
         }
       }
       const createdBookings = [];
+      const bookingCreateDeltaChanges = [];
+      let recurringDeltaChange = null;
+      let recurringActivityLog = null;
       if (period.mode === "permanent") {
         const teacher = teacherById(slot.teacherId);
         const undoBefore = snapshotCollections({ teachers: [teacher?.id], students: student ? [student.id] : [] });
@@ -18457,11 +18821,14 @@
         teacher.overrideSlots.push(recurringSlot);
         if (student) {
           student.regularSlots ||= [];
-          student.regularSlots.push({ id: uid("student_slot"), teacherId: slot.teacherId, day: period.day, time: slot.time, subject, startDate: period.startDate });
+          const studentSlot = { id: uid("student_slot"), teacherId: slot.teacherId, day: period.day, time: slot.time, subject, startDate: period.startDate };
+          student.regularSlots.push(studentSlot);
+          recurringSlot.studentSlotId = studentSlot.id;
         }
-        logAction("Ongoing Regular Class Added", studentName, "", `${teacher.name} | ${period.day} ${timeLabel(slot.time)} | from ${formatDateFromAny(period.startDate)}`, remark, {
+        recurringActivityLog = logAction("Ongoing Regular Class Added", studentName, "", `${teacher.name} | ${period.day} ${timeLabel(slot.time)} | from ${formatDateFromAny(period.startDate)}`, remark, {
           undo: makeUndoSnapshot(undoBefore, snapshotCollections({ teachers: [teacher?.id], students: student ? [student.id] : [] }))
         });
+        recurringDeltaChange = recurringAssignmentFromTeacherSlot(teacher, recurringSlot, "overrideSlots");
       } else {
         const recurrenceGroupId = period.mode === "temporary" ? uid("series") : "";
         period.dates.forEach(date => {
@@ -18480,12 +18847,14 @@
           const undoBefore = snapshotCollections({ bookings: [booking.id] });
           state.bookings.push(booking);
           createdBookings.push(booking);
-          logAction("Booking Created", studentName, "", bookingLogSummary(booking), type || "", {
+          const activityLog = logAction("Booking Created", studentName, "", bookingLogSummary(booking), type || "", {
             undo: makeUndoSnapshot(undoBefore, snapshotCollections({ bookings: [booking.id] }))
           });
+          bookingCreateDeltaChanges.push({ booking, activityLog });
         });
       }
       const booking = createdBookings[0] || null;
+      let supersededBookingForDelta = null;
       if (booking && slot.reuseCancelledBookingId) {
         const cancelledBooking = state.bookings.find(item => item.id === slot.reuseCancelledBookingId);
         if (cancelledBooking) {
@@ -18500,6 +18869,7 @@
           logAction("Cancelled Slot Rebooked", cancelledBooking.studentName || cancelledBooking.id, bookingLogSummary(cancelledBooking), bookingLogSummary(booking), `New student: ${booking.studentName}`, {
             undo: makeUndoSnapshot(undoBefore, snapshotCollections({ bookings: [cancelledBooking.id, booking.id] }))
           });
+          supersededBookingForDelta = cancelledBooking;
         }
       }
       if (booking?.type === "replacement class" && !selectedReplacementId) {
@@ -18539,9 +18909,44 @@
       if (booking) syncMatchingLeadFromBooking(booking);
       clearPendingReplacementContext();
       $("bookingModal").classList.add("hide");
-      save(false);
       renderAll();
-      await autoPushIfConfigured(type === "replacement class" ? "Replacement class booked." : "Booking confirmed.");
+      const replacementTaskForDelta = booking?.id
+        ? (state.replacements || []).find(item => item.replacementBookingId === booking.id) || null
+        : null;
+      const replacementCreditForDelta = booking?.id
+        ? (state.replacementCredits || []).find(item => (item.usedByBookingIds || []).includes(booking.id)) || null
+        : null;
+      bookingCreateDeltaChanges.forEach(change => {
+        if (change.booking?.id === booking?.id) {
+          change.supersededBooking = supersededBookingForDelta;
+          change.replacementTask = replacementTaskForDelta;
+          change.replacementCredit = replacementCreditForDelta;
+          change.reuseCancelledBookingId = slot.reuseCancelledBookingId || "";
+        }
+      });
+      if (recurringDeltaChange) {
+        try {
+          await syncRecurringAssignmentDelta(recurringDeltaChange, "Regular class booking", {
+            operation: "create_regular_assignment",
+            activityLog: recurringActivityLog
+          });
+        } catch (error) {
+          markTeacherViewOutdated("Regular class saved in this browser only. Not synced to Teacher View yet.");
+          persistState();
+          setStatus(`Regular class saved locally. Sync pending: ${error.message}`, "warn");
+        }
+      } else if (bookingCreateDeltaChanges.length && bookingCreateDeltaChanges.every(change => bookingCreateDeltaSupported(change.booking))) {
+        try {
+          await syncBookingCreateDeltas(bookingCreateDeltaChanges, type === "replacement class" ? "Replacement class booked" : "Booking confirmed");
+        } catch (error) {
+          markTeacherViewOutdated("Booking saved in this browser only. Not synced to Teacher View yet.");
+          persistState();
+          setStatus(`Booking saved locally. Sync pending: ${error.message}`, "warn");
+        }
+      } else {
+        save(false);
+        await autoPushIfConfigured(type === "replacement class" ? "Replacement class booked." : "Booking confirmed.");
+      }
       if (booking && ["assessment", "trial class"].includes(booking.type)) await autoPushCrmIfConfigured();
     };
     $("restoreCancelledClassBtn").onclick = () => restoreCancelledClass($("undoReplacementId").value);
@@ -18854,8 +19259,8 @@
       });
     };
     $("bookOpenSlotBtn").onclick = startBookingFromOpenSlotAction;
-    $("confirmFixedRegularBookingBtn").onclick = () => {
-      try { confirmFixedRegularBooking(); }
+    $("confirmFixedRegularBookingBtn").onclick = async () => {
+      try { await confirmFixedRegularBooking(); }
       catch (err) {
         setStatus(`Regular class booking failed: ${err.message}`, "error");
         alert(`Regular class booking failed: ${err.message}`);
@@ -18904,8 +19309,8 @@
     $("reserveRegularSearch").addEventListener("input", () => renderReservationPeople($("reserveRegularSearch").value));
     $("reserveRegularPerson").addEventListener("change", () => updateReservationPersonDetails(true));
     $("setFixedRegularSlotOffBtn").onclick = setFixedRegularSlotOff;
-    $("confirmCancelFixedRegularBtn").onclick = () => {
-      try { confirmCancelFixedRegular(); }
+    $("confirmCancelFixedRegularBtn").onclick = async () => {
+      try { await confirmCancelFixedRegular(); }
       catch (err) {
         setStatus(`Regular slot cancellation failed: ${err.message}`, "error");
         alert(`Regular slot cancellation failed: ${err.message}`);
