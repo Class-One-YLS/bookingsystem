@@ -16971,6 +16971,19 @@
       logAction("Regular Class Ended", booking.studentName || booking.id, before, `Ended from ${formatDateFromAny(startDate)}`, remark || "No future replacement credits created.");
     }
 
+    function refreshBookingOutcomeUi(label = "Class outcome") {
+      try {
+        renderSchedule();
+        renderReplacements();
+        if (activeTabId() === "activity") renderActivityLog();
+        return true;
+      } catch (error) {
+        console.error("Booking outcome saved, but UI refresh failed", error);
+        setStatus(`${label} saved, but part of the screen could not refresh. Please refresh the page.`, "warn");
+        return false;
+      }
+    }
+
     async function saveOutcome() {
       if (outcomeSaveInProgress) {
         setStatus("Class outcome save is already in progress.", "warn");
@@ -17043,18 +17056,16 @@
         upsertFeedbackFromOutcome(feedbackBooking);
         $("bookingOutcomeModal").classList.add("hide");
         clearOutcomeModalDraft();
-        renderSchedule();
-        renderReplacements();
+        refreshBookingOutcomeUi("Class outcome");
         if (!requiresLegacyOutcomeSave && deltaChanges.length) {
           try {
             await syncBookingOutcomeDeltas(deltaChanges, `Class marked as ${bookingStatusLabel(nextStatus)}`);
-            renderSchedule();
-            renderReplacements();
-            renderActivity();
           } catch (error) {
             setStatus(`Class outcome sync failed — Retry. ${error.message}`, "error");
             alert(`Class outcome sync failed: ${error.message}`);
+            return;
           }
+          refreshBookingOutcomeUi(`Class marked as ${bookingStatusLabel(nextStatus)}`);
         } else {
           save(false, { render: false, label: "class outcome" });
           if (SYNC_DEBUG) console.info("[ClassOne outcome perf counters]", classOnePerformanceCounters());
@@ -17351,15 +17362,17 @@
       $("undoCancellationModal").classList.add("hide");
       selectedReplacementIds.clear();
       if (changed) {
-        renderAll();
+        refreshBookingOutcomeUi("Cancellation restore");
         if (!requiresLegacyUndoSave && deltaChanges.length) {
           try {
             await syncBookingOutcomeDeltas(deltaChanges, `${changed} cancellation${changed === 1 ? "" : "s"} withdrawn`);
-            renderAll();
           } catch (error) {
             setStatus(`Undo cancellation sync failed — Retry. ${error.message}`, "error");
             alert(`Undo cancellation sync failed: ${error.message}`);
+            if (errors.length) alert(errors.join("\n"));
+            return;
           }
+          refreshBookingOutcomeUi(`${changed} cancellation${changed === 1 ? "" : "s"} withdrawn`);
         } else {
           save(false);
           await autoPushIfConfigured(`${changed} cancellation${changed === 1 ? "" : "s"} withdrawn. Original class restored.`);
