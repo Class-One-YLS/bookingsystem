@@ -2385,6 +2385,7 @@
       apiKey: "73a5baa8e4a70be55d79615e2dfbf4e843fa04b57ec04764",
       stateKey: "production"
     };
+    const ENABLE_BOOKING_OUTCOME_DELTA_SYNC = true;
     const FRONTEND_BUILD = "2026.08.06-public-holiday-all-cells.1";
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
@@ -4343,7 +4344,7 @@
     function logAction(type, target, beforeValue = "", afterValue = "", notes = "", options = {}) {
       state.activityLogs ||= [];
       const undo = options.undo && !undoBlockedActionType(type) ? cloneForUndo(options.undo) : null;
-      state.activityLogs.unshift({
+      const entry = {
         id: uid("log"),
         createdAt: new Date().toISOString(),
         user: currentUser()?.name || safeStorageGet("classOneStaffName") || "This browser / Admin",
@@ -4353,8 +4354,10 @@
         afterValue: compactLogValue(afterValue),
         notes: String(notes || ""),
         ...(undo ? { undo } : {})
-      });
+      };
+      state.activityLogs.unshift(entry);
       state.activityLogs = state.activityLogs.slice(0, 2500);
+      return entry;
     }
 
     function compactLogValue(value) {
@@ -15307,6 +15310,95 @@
       }
     }
 
+    function outcomeDeltaSupported(status) {
+      const normalized = normalizeClassStatus(status) || status;
+      return ENABLE_BOOKING_OUTCOME_DELTA_SYNC && neonConfigured() && ["cancelled", "completed", "student_not_show", "booked"].includes(normalized);
+    }
+
+    function upsertLocalRecord(collectionName, record) {
+      if (!record || !record.id) return;
+      state[collectionName] ||= [];
+      const index = state[collectionName].findIndex(item => item.id === record.id);
+      if (index >= 0) state[collectionName][index] = { ...state[collectionName][index], ...record };
+      else state[collectionName].unshift(record);
+    }
+
+    function upsertPayloadRecord(payload, collectionName, record) {
+      if (!payload || !record || !record.id) return;
+      payload[collectionName] ||= [];
+      const index = payload[collectionName].findIndex(item => item.id === record.id);
+      if (index >= 0) payload[collectionName][index] = { ...payload[collectionName][index], ...record };
+      else payload[collectionName].unshift(record);
+    }
+
+    function bookingOutcomeDeltaRequestId(change) {
+      return [
+        "outcome",
+        currentDeviceId(),
+        change.booking?.id || change.booking?.bookingId || "",
+        change.outcome || change.booking?.status || "",
+        change.booking?.updatedAt || new Date().toISOString()
+      ].join("_").replace(/[^a-zA-Z0-9_.:-]+/g, "_");
+    }
+
+    async function syncBookingOutcomeDelta(change, label = "Booking outcome") {
+      if (!change?.booking?.id) throw new Error("Booking outcome delta is missing a booking id.");
+      const body = {
+        key: neonStateKey(),
+        requestId: bookingOutcomeDeltaRequestId(change),
+        bookingId: change.booking.id,
+        expectedRecordVersion: change.expectedRecordVersion == null ? undefined : change.expectedRecordVersion,
+        outcome: normalizeClassStatus(change.outcome || change.booking.status) || change.booking.status,
+        remark: change.booking.remark || "",
+        replacementRequired: Boolean(change.replacementTask && change.replacementTask.replacementNeeded !== false),
+        booking: change.booking,
+        replacementTask: change.replacementTask || null,
+        replacementCredit: change.replacementCredit || null,
+        activityLog: change.activityLog || null,
+        updatedBy: `${currentUser()?.name || safeStorageGet("classOneStaffName") || "Class One Admin"} · ${currentDeviceId().slice(0, 12)}`
+      };
+      const beforeBytes = Math.max(0, lastNeonPayloadBytes || 0);
+      const payloadBytes = jsonByteSize(body);
+      const data = await fetchNeonJson("/api/bookings/outcome", {
+        method: "POST",
+        body: JSON.stringify(body)
+      }, `${label} delta sync`, SYNC_SAVE_TIMEOUT_MS);
+      if (data.booking) upsertLocalRecord("bookings", data.booking);
+      if (data.replacementTask) upsertLocalRecord("replacements", data.replacementTask);
+      if (data.replacementCredit) upsertLocalRecord("replacementCredits", data.replacementCredit);
+      if (data.activityLog) upsertLocalRecord("activityLogs", data.activityLog);
+      if (confirmedRemotePayload) {
+        if (data.booking) upsertPayloadRecord(confirmedRemotePayload, "bookings", data.booking);
+        if (data.replacementTask) upsertPayloadRecord(confirmedRemotePayload, "replacements", data.replacementTask);
+        if (data.replacementCredit) upsertPayloadRecord(confirmedRemotePayload, "replacementCredits", data.replacementCredit);
+        if (data.activityLog) upsertPayloadRecord(confirmedRemotePayload, "activityLogs", data.activityLog);
+      }
+      state.settings.neonVersion = Number(data.version || state.settings.neonVersion || 0);
+      lastObservedNeonVersion = state.settings.neonVersion;
+      lastObservedNeonUpdatedAt = data.updatedAt || new Date().toISOString();
+      state.settings.lastSyncedAt = new Date().toISOString();
+      markTeacherViewSynced(state.settings.neonVersion);
+      persistState();
+      notifyTeacherViews(state.settings.neonVersion);
+      console.info("[ClassOne booking outcome delta]", {
+        bookingId: change.booking.id,
+        outcome: body.outcome,
+        requestBytes: payloadBytes,
+        previousStatePatchBytes: beforeBytes,
+        version: state.settings.neonVersion
+      });
+      return data;
+    }
+
+    async function syncBookingOutcomeDeltas(changes, label = "Booking outcome") {
+      const items = (changes || []).filter(change => change?.booking?.id && outcomeDeltaSupported(change.outcome || change.booking.status));
+      if (!items.length) return false;
+      setStatus("Saving class outcome...", "success", false);
+      for (const item of items) await syncBookingOutcomeDelta(item, label);
+      setStatus(`${label} synced.`, "success");
+      return true;
+    }
+
     async function fetchNeonManifest(label = "Neon version check", timeoutMs = 15000) {
       const manifest = await fetchNeonJson(
         `/api/state-chunk?key=${encodeURIComponent(neonStateKey())}`,
@@ -16082,10 +16174,11 @@
     function applyOutcomeToBooking(booking, nextStatus, remark, replacementNeeded, options = {}) {
       const currentClassStatus = occurrenceResolutionStatus(booking) || normalizeClassStatus(booking) || booking.status || "";
       const nextClassStatus = normalizeClassStatus(nextStatus) || nextStatus;
+      const expectedRecordVersion = booking.recordVersion == null ? null : Number(booking.recordVersion || 0);
       if (currentClassStatus === "cancelled" && nextClassStatus === "cancelled") {
         booking.remark = remark || booking.remark || "";
         normaliseOccurrenceOutcome(booking, "cancelled");
-        return { unchanged: true };
+        return { unchanged: true, booking, expectedRecordVersion };
       }
       const before = bookingLogSummary(booking);
       const replacementIdsBefore = (state.replacements || [])
@@ -16106,14 +16199,15 @@
         stampBookingStatus(booking, "completed", now);
       }
       booking.changedAt = now;
-      if (replacementReasonForStatus(nextStatus)) handleReplacementForOutcome(booking, replacementNeeded);
-      else if (nextStatus === "student_not_show" && options.createStudentNotShowReplacement) handleReplacementForOutcome(booking, "yes", "Student Not Show");
+      let replacementSideEffects = {};
+      if (replacementReasonForStatus(nextStatus)) replacementSideEffects = handleReplacementForOutcome(booking, replacementNeeded);
+      else if (nextStatus === "student_not_show" && options.createStudentNotShowReplacement) replacementSideEffects = handleReplacementForOutcome(booking, "yes", "Student Not Show");
       else if (options.withdrawExistingReplacement) withdrawReplacementForBooking(booking);
       if (replacementReasonForStatus(nextStatus)) restoreAutoOpenedSlotIfUnused(booking);
       const replacementIdsAfter = (state.replacements || [])
         .filter(item => item.originalBookingId === booking.id || item.replacementBookingId === booking.id)
         .map(item => item.id);
-      logAction("Class Outcome Updated", booking.studentName || booking.id, before, bookingLogSummary(booking), booking.remark || "", {
+      const activityLog = logAction("Class Outcome Updated", booking.studentName || booking.id, before, bookingLogSummary(booking), booking.remark || "", {
         undo: makeUndoSnapshot(undoBefore, snapshotCollections({ bookings: [booking.id], replacements: [...new Set([...replacementIdsBefore, ...replacementIdsAfter])] }))
       });
       if (SYNC_DEBUG && weeklyTraceTargetMatches(booking.teacherId, dateOnly(booking.date), normalizeTimeValue(booking.time) || booking.time)) {
@@ -16141,6 +16235,14 @@
         console.info("[local state winner after outcome]", weeklyTraceRecord("resolver winner", canonicalResolvedCellForSlot(booking.teacherId, booking.date, booking.time)));
         console.groupEnd();
       }
+      return {
+        booking,
+        expectedRecordVersion,
+        outcome: nextClassStatus,
+        replacementTask: replacementSideEffects.replacementTask || null,
+        replacementCredit: replacementSideEffects.replacementCredit || null,
+        activityLog
+      };
     }
 
     function restoreAutoOpenedSlotIfUnused(booking) {
@@ -16247,6 +16349,8 @@
         const recurringSlot = recurringSlotForBooking(booking);
         const scope = recurringSlot && replacementReasonForStatus(nextStatus) ? $("outcomeScope").value : "one_date";
         let feedbackBooking = booking;
+        const deltaChanges = [];
+        let requiresLegacyOutcomeSave = !outcomeDeltaSupported(nextStatus) || scope === "permanent";
         if (scope === "permanent") {
           try { endRecurringClass(booking, recurringSlot, dateOnly($("outcomeScopeStart").value || booking.date), remark); }
           catch (err) { return alert(err.message); }
@@ -16259,7 +16363,11 @@
           const affected = [];
           try { dates.forEach(date => affected.push(recurringBookingForDate(booking, recurringSlot, date))); }
           catch (err) { return alert(`Cannot cancel this period. ${err.message}`); }
-          affected.forEach(item => applyOutcomeToBooking(item, nextStatus, remark, replacementNeeded, outcomeOptions));
+          affected.forEach(item => {
+            const change = applyOutcomeToBooking(item, nextStatus, remark, replacementNeeded, outcomeOptions);
+            if (outcomeDeltaSupported(change?.outcome || nextStatus)) deltaChanges.push(change);
+            else requiresLegacyOutcomeSave = true;
+          });
         } else {
           let affectedBooking = booking;
           if (recurringSlot && outcomeInteractionSource === "teacher_overview") {
@@ -16273,17 +16381,31 @@
             const occupied = activeBookings().find(item => item.id !== affectedBooking.id && item.teacherId === affectedBooking.teacherId && item.date === affectedBooking.date && item.time === affectedBooking.time);
             if (occupied) return alert(`Cannot restore this class because the slot is now booked for ${occupied.studentName || "another student"}.`);
           }
-          applyOutcomeToBooking(affectedBooking, nextStatus, remark, replacementNeeded, outcomeOptions);
+          const change = applyOutcomeToBooking(affectedBooking, nextStatus, remark, replacementNeeded, outcomeOptions);
+          if (outcomeDeltaSupported(change?.outcome || nextStatus)) deltaChanges.push(change);
+          else requiresLegacyOutcomeSave = true;
           feedbackBooking = affectedBooking;
         }
         upsertFeedbackFromOutcome(feedbackBooking);
         $("bookingOutcomeModal").classList.add("hide");
         clearOutcomeModalDraft();
-        save(false, { render: false, label: "class outcome" });
         renderSchedule();
         renderReplacements();
-        if (SYNC_DEBUG) console.info("[ClassOne outcome perf counters]", classOnePerformanceCounters());
-        await autoPushIfConfigured(scope === "permanent" ? "Regular class ended." : `Class marked as ${bookingStatusLabel(nextStatus)}.`);
+        if (!requiresLegacyOutcomeSave && deltaChanges.length) {
+          try {
+            await syncBookingOutcomeDeltas(deltaChanges, `Class marked as ${bookingStatusLabel(nextStatus)}`);
+            renderSchedule();
+            renderReplacements();
+            renderActivity();
+          } catch (error) {
+            setStatus(`Class outcome sync failed — Retry. ${error.message}`, "error");
+            alert(`Class outcome sync failed: ${error.message}`);
+          }
+        } else {
+          save(false, { render: false, label: "class outcome" });
+          if (SYNC_DEBUG) console.info("[ClassOne outcome perf counters]", classOnePerformanceCounters());
+          await autoPushIfConfigured(scope === "permanent" ? "Regular class ended." : `Class marked as ${bookingStatusLabel(nextStatus)}.`);
+        }
       } finally {
         outcomeSaveInProgress = false;
         if (saveButton) {
@@ -16532,6 +16654,8 @@
       const ids = undoReplacementIds(replacementValue);
       let changed = 0;
       const errors = [];
+      const deltaChanges = [];
+      let requiresLegacyUndoSave = false;
       ids.forEach(replacementId => {
       const replacement = (state.replacements || []).find(item => item.id === replacementId);
         if (!replacement) {
@@ -16547,22 +16671,45 @@
         if (occupied) {
           errors.push(`${replacement.studentName || replacement.id}: original slot is now booked for ${occupied.studentName || "another student"}.`);
           return;
-        }
+      }
       const before = bookingLogSummary(booking);
+      const expectedRecordVersion = booking.recordVersion == null ? null : Number(booking.recordVersion || 0);
       stampBookingStatus(booking, "booked");
       booking.archived = false;
       booking.publicHolidayOverride = true;
       booking.remark = [booking.remark, "Cancellation withdrawn; original class restored."].filter(Boolean).join("\n");
       withdrawReplacementForBooking(booking);
-      logAction("Cancellation Withdrawn", booking.studentName || booking.id, before, bookingLogSummary(booking), replacement.reason || "");
+      const activityLog = logAction("Cancellation Withdrawn", booking.studentName || booking.id, before, bookingLogSummary(booking), replacement.reason || "");
+      if (outcomeDeltaSupported("booked")) {
+        deltaChanges.push({
+          booking,
+          expectedRecordVersion,
+          outcome: "booked",
+          replacementTask: (state.replacements || []).find(item => replacementMatchesBooking(item, booking)) || replacement,
+          replacementCredit: null,
+          activityLog
+        });
+      } else {
+        requiresLegacyUndoSave = true;
+      }
         changed += 1;
       });
       $("undoCancellationModal").classList.add("hide");
       selectedReplacementIds.clear();
       if (changed) {
-        save(false);
         renderAll();
-        await autoPushIfConfigured(`${changed} cancellation${changed === 1 ? "" : "s"} withdrawn. Original class restored.`);
+        if (!requiresLegacyUndoSave && deltaChanges.length) {
+          try {
+            await syncBookingOutcomeDeltas(deltaChanges, `${changed} cancellation${changed === 1 ? "" : "s"} withdrawn`);
+            renderAll();
+          } catch (error) {
+            setStatus(`Undo cancellation sync failed — Retry. ${error.message}`, "error");
+            alert(`Undo cancellation sync failed: ${error.message}`);
+          }
+        } else {
+          save(false);
+          await autoPushIfConfigured(`${changed} cancellation${changed === 1 ? "" : "s"} withdrawn. Original class restored.`);
+        }
       }
       if (errors.length) alert(errors.join("\n"));
     }
@@ -16614,7 +16761,7 @@
 
     function handleReplacementForOutcome(booking, publicHolidayChoice, forcedReason = "") {
       const reason = forcedReason || replacementReasonForStatus(booking.status);
-      if (!reason) return;
+      if (!reason) return {};
       const compulsory = !forcedReason && (booking.status === "cancelled" || booking.status === "teacher_leave");
       const needed = compulsory || publicHolidayChoice === "yes";
       const sourceOccurrenceKey = occurrenceKeyForBooking(booking);
@@ -16645,13 +16792,15 @@
         updatedAt: now
       };
       state.replacements ||= [];
+      let replacementTask = existing || null;
       if (existing) {
         Object.assign(existing, base);
         existing.archived = false;
         if (!needed) existing.status = "No Replacement Needed";
         else if (existing.status === "No Replacement Needed" || existing.status === "Cancellation Withdrawn") existing.status = "Action Needed";
+        replacementTask = existing;
       } else {
-        state.replacements.push({
+        replacementTask = {
           id: uid("replacement"),
           ...base,
           status: needed ? "Action Needed" : "No Replacement Needed",
@@ -16661,10 +16810,12 @@
           replacementTime: "",
           replacementBookingId: "",
           createdAt: now
-        });
+        };
+        state.replacements.push(replacementTask);
       }
+      let replacementCredit = (state.replacementCredits || []).find(credit => credit.status !== "void" && replacementCreditMatchesBooking(credit, booking)) || null;
       if (needed && !state.replacementCredits.some(credit => credit.status !== "void" && replacementCreditMatchesBooking(credit, booking))) {
-        addReplacementCredit({
+        replacementCredit = addReplacementCredit({
           studentId: booking.studentId || "",
           studentName: booking.studentName || "",
           amount: 1,
@@ -16680,6 +16831,7 @@
         });
       }
       setStatus(needed ? "Replacement record created." : "Class recorded as no replacement needed.");
+      return { replacementTask, replacementCredit };
     }
 
     async function createCrmBooking(kind) {
