@@ -6218,15 +6218,20 @@
 
     function upsertTeacherLeaveReplacement(booking, leave, now) {
       const teacher = teacherById(booking.teacherId);
+      const sourceOccurrenceKey = occurrenceKeyForBooking(booking);
+      const sourceOccurrenceId = occurrenceIdForBooking(booking);
       const existing = (state.replacements || []).find(item =>
         item.teacherLeaveId === leave.id &&
-        (item.sourceBookingId === booking.id || item.bookingId === booking.id) &&
+        (item.sourceBookingId === booking.id || item.bookingId === booking.id || item.originalBookingId === booking.id || (sourceOccurrenceKey && item.sourceOccurrenceKey === sourceOccurrenceKey) || (sourceOccurrenceId && item.sourceOccurrenceId === sourceOccurrenceId)) &&
         item.originalDate === dateOnly(booking.date) &&
         (normalizeTimeValue(item.originalTime) || item.originalTime) === (normalizeTimeValue(booking.time) || booking.time)
       );
       const base = {
         bookingId: booking.id,
+        originalBookingId: booking.id,
         sourceBookingId: booking.id,
+        sourceOccurrenceKey,
+        sourceOccurrenceId,
         sourceRecurringScheduleId: booking.recurringScheduleId || booking.sourceSlotId || "",
         teacherLeaveId: leave.id,
         reason: "Teacher Leave",
@@ -6234,6 +6239,7 @@
         studentId: booking.studentId || "",
         studentName: booking.studentName || "",
         subject: booking.subject || "",
+        teacherId: booking.teacherId,
         originalTeacherId: booking.teacherId,
         originalTeacherName: teacher ? teacher.name : "",
         originalDate: dateOnly(booking.date),
@@ -10650,6 +10656,30 @@
       return isCancelledStatus(status) || status === "off" || status === "available";
     }
 
+    function occurrenceIdentityForBookingChoice(booking) {
+      if (!booking) return "";
+      let id = occurrenceKeyForBooking(booking) || booking.sourceOccurrenceKey || booking.occurrenceKey || "";
+      if (!id && String(booking.sourceOccurrenceId || "").startsWith("occurrence:")) id = String(booking.sourceOccurrenceId).slice("occurrence:".length);
+      if (!id && String(booking.occurrenceId || "").startsWith("occurrence:")) id = String(booking.occurrenceId).slice("occurrence:".length);
+      return String(id || "");
+    }
+
+    function bookingsShareOccurrenceIdentity(candidate, existing) {
+      const candidateOccurrence = occurrenceIdentityForBookingChoice(candidate);
+      const existingOccurrence = occurrenceIdentityForBookingChoice(existing);
+      if (candidateOccurrence && existingOccurrence) return candidateOccurrence === existingOccurrence;
+      const sameStudent = Boolean(
+        (candidate.studentId && existing.studentId && candidate.studentId === existing.studentId) ||
+        (studentNameKey(candidate.studentName) && studentNameKey(candidate.studentName) === studentNameKey(existing.studentName))
+      );
+      return Boolean(
+        candidate?.teacherId && existing?.teacherId && candidate.teacherId === existing.teacherId &&
+        dateOnly(candidate.date) && dateOnly(candidate.date) === dateOnly(existing.date) &&
+        (normalizeTimeValue(candidate.time) || candidate.time) === (normalizeTimeValue(existing.time) || existing.time) &&
+        sameStudent
+      );
+    }
+
     function inactiveBookingCanYieldToActiveSlot(booking, slot) {
       if (!booking || !slot || !slotIsActiveOccurrence(slot) || !isHistoricalInactiveBooking(booking)) return false;
       if (isSupersededBookingRecord(booking)) return true;
@@ -10663,7 +10693,8 @@
       if (!existing) return true;
       if (isSupersededBookingRecord(existing) && !occurrenceOutcomeParticipatesInResolution(existing)) return true;
       const sameRecord = Boolean(candidate?.id && existing?.id && candidate.id === existing.id);
-      if (!sameRecord) {
+      const sameOccurrence = bookingsShareOccurrenceIdentity(candidate, existing);
+      if (!sameRecord && !sameOccurrence) {
         const candidateInactive = isHistoricalInactiveBooking(candidate);
         const existingInactive = isHistoricalInactiveBooking(existing);
         if (candidateInactive !== existingInactive) return !candidateInactive;
@@ -16183,7 +16214,7 @@
         const remark = $("outcomeRemark").value.trim();
         let replacementNeeded = $("outcomeReplacementNeeded").value;
         const outcomeOptions = { createStudentNotShowReplacement: false, withdrawExistingReplacement: false };
-        const existingActiveReplacement = (state.replacements || []).some(item => item.bookingId === booking.id && !item.archived && item.status !== "Cancellation Withdrawn");
+        const existingActiveReplacement = (state.replacements || []).some(item => replacementMatchesBooking(item, booking) && !item.archived && item.status !== "Cancellation Withdrawn");
         if (nextStatus === "student_not_show") {
           outcomeOptions.createStudentNotShowReplacement = confirm("Does this Student Not Show class need a replacement class?");
           replacementNeeded = outcomeOptions.createStudentNotShowReplacement ? "yes" : "no";
@@ -16391,8 +16422,28 @@
       await autoPushIfConfigured("Booking deleted.");
     }
 
+    function replacementMatchesBooking(item, booking) {
+      if (!item || !booking) return false;
+      const sourceOccurrenceKey = occurrenceKeyForBooking(booking);
+      const sourceOccurrenceId = occurrenceIdForBooking(booking);
+      if (item.bookingId && item.bookingId === booking.id) return true;
+      if (item.originalBookingId && item.originalBookingId === booking.id) return true;
+      if (item.sourceBookingId && item.sourceBookingId === booking.id) return true;
+      if (sourceOccurrenceKey && item.sourceOccurrenceKey === sourceOccurrenceKey) return true;
+      if (sourceOccurrenceId && item.sourceOccurrenceId === sourceOccurrenceId) return true;
+      return Boolean(
+        item.originalTeacherId === booking.teacherId &&
+        dateOnly(item.originalDate) === dateOnly(booking.date) &&
+        (normalizeTimeValue(item.originalTime) || item.originalTime) === (normalizeTimeValue(booking.time) || booking.time) &&
+        (
+          (booking.studentId && item.studentId === booking.studentId) ||
+          (!booking.studentId && studentNameKey(item.studentName) === studentNameKey(booking.studentName))
+        )
+      );
+    }
+
     function withdrawReplacementForBooking(booking) {
-      const existing = (state.replacements || []).find(item => item.bookingId === booking.id);
+      const existing = (state.replacements || []).find(item => replacementMatchesBooking(item, booking));
       if (!existing) return;
       const now = new Date().toISOString();
       existing.status = "Cancellation Withdrawn";
@@ -16525,22 +16576,23 @@
       const compulsory = !forcedReason && (booking.status === "cancelled" || booking.status === "teacher_leave");
       const needed = compulsory || publicHolidayChoice === "yes";
       const sourceOccurrenceKey = occurrenceKeyForBooking(booking);
-      const existing = (state.replacements || []).find(item =>
-        item.bookingId === booking.id ||
-        item.sourceBookingId === booking.id ||
-        (sourceOccurrenceKey && item.sourceOccurrenceKey === sourceOccurrenceKey)
-      );
+      const sourceOccurrenceId = occurrenceIdForBooking(booking);
+      const existing = (state.replacements || []).find(item => replacementMatchesBooking(item, booking));
       const teacher = teacherById(booking.teacherId);
       const now = new Date().toISOString();
       const base = {
         bookingId: booking.id,
+        originalBookingId: booking.id,
         sourceBookingId: booking.id,
         sourceOccurrenceKey,
+        sourceOccurrenceId,
         sourceRecurringScheduleId: recurringSourceSlotId(booking),
         reason,
         replacementNeeded: needed,
+        studentId: booking.studentId || "",
         studentName: booking.studentName || "",
         subject: booking.subject || "",
+        teacherId: booking.teacherId,
         originalTeacherId: booking.teacherId,
         originalTeacherName: teacher ? teacher.name : "",
         originalDate: dateOnly(booking.date),
