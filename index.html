@@ -6314,7 +6314,9 @@
           if (replacement.created) replacementsCreated += 1;
           if (replacement.record?.id) replacementRecordIds.push(replacement.record.id);
           state.replacementCredits ||= [];
-          if (!state.replacementCredits.some(credit => credit.sourceBookingId === booking.id && credit.status !== "void")) {
+          if (!state.replacementCredits.some(credit => credit.status !== "void" && replacementCreditMatchesBooking(credit, booking))) {
+            const sourceOccurrenceKey = occurrenceKeyForBooking(booking);
+            const sourceOccurrenceId = occurrenceIdForBooking(booking);
             addReplacementCredit({
               studentId: booking.studentId || "",
               studentName: booking.studentName || "",
@@ -6322,6 +6324,12 @@
               reason: "Teacher Leave",
               remark: "Auto credit from teacher leave.",
               sourceBookingId: booking.id,
+              sourceOccurrenceKey,
+              sourceOccurrenceId,
+              teacherId: booking.teacherId,
+              originalDate: booking.date,
+              originalTime: booking.time,
+              subject: booking.subject || "",
               teacherLeaveId: leave.id
             });
           }
@@ -9502,12 +9510,13 @@
         ...(leave?.affectedBookingIds || []),
         ...(state.bookings || []).filter(booking => booking.teacherLeaveId === leave?.id).map(booking => booking.id)
       ].filter(Boolean))];
+      const affectedBookings = (state.bookings || []).filter(booking => bookingIds.includes(booking.id));
       const replacementIds = [...new Set([
         ...(leave?.replacementRecordIds || []),
         ...(state.replacements || []).filter(item => item.teacherLeaveId === leave?.id).map(item => item.id)
       ].filter(Boolean))];
       const replacementCreditIds = [...new Set((state.replacementCredits || [])
-        .filter(credit => credit.teacherLeaveId === leave?.id || (credit.sourceBookingId && bookingIds.includes(credit.sourceBookingId)))
+        .filter(credit => credit.teacherLeaveId === leave?.id || (credit.sourceBookingId && bookingIds.includes(credit.sourceBookingId)) || affectedBookings.some(booking => replacementCreditMatchesBooking(credit, booking)))
         .map(credit => credit.id))];
       return {
         teachers: [leave?.teacherId].filter(Boolean),
@@ -12190,7 +12199,7 @@
         .reduce((sum, item) => sum + Number(item.amount || 0) - Number(item.used || 0), 0);
     }
 
-    function addReplacementCredit({ studentId = "", studentName = "", amount = 1, reason = "", remark = "", sourceBookingId = "", sourceOccurrenceKey = "", teacherLeaveId = "", publicHolidayId = "" }) {
+    function addReplacementCredit({ studentId = "", studentName = "", amount = 1, reason = "", remark = "", sourceBookingId = "", sourceOccurrenceKey = "", sourceOccurrenceId = "", teacherLeaveId = "", publicHolidayId = "", teacherId = "", originalDate = "", originalTime = "", subject = "" }) {
       const now = new Date().toISOString();
       const student = studentById(studentId) || (state.students || []).find(s => cleanStudentName(s.name).toLowerCase() === cleanStudentName(studentName).toLowerCase());
       const credit = {
@@ -12203,8 +12212,13 @@
         remark: remark || "",
         sourceBookingId,
         sourceOccurrenceKey,
+        sourceOccurrenceId,
         teacherLeaveId,
         publicHolidayId,
+        teacherId,
+        originalDate: dateOnly(originalDate),
+        originalTime: originalTime ? timePart(originalTime) : "",
+        subject,
         source: publicHolidayId ? "public_holiday" : "",
         status: "active",
         createdAt: now,
@@ -12819,6 +12833,7 @@
 
     function upsertPublicHolidayReplacementForCell(holiday, cell, now) {
       const sourceOccurrenceKey = cell.sourceOccurrenceKey || cell.occurrenceKey || `${cell.recurringScheduleId || cell.slotId || cell.bookingId || cell.recordId}|${cell.date}`;
+      const sourceOccurrenceId = cell.occurrenceId || (sourceOccurrenceKey ? occurrenceIdFromKey(sourceOccurrenceKey) : "");
       const existing = (state.replacements || []).find(item =>
         item.publicHolidayId === holiday.id &&
         item.sourceOccurrenceKey === sourceOccurrenceKey &&
@@ -12829,6 +12844,7 @@
         bookingId: cell.bookingId || "",
         sourceBookingId: cell.bookingId || "",
         sourceOccurrenceKey,
+        sourceOccurrenceId,
         sourceRecurringScheduleId: cell.recurringScheduleId || cell.slotId || "",
         publicHolidayId: holiday.id,
         source: "public_holiday",
@@ -12884,6 +12900,11 @@
           remark: holiday.name || "Public holiday replacement credit.",
           sourceBookingId: cell.bookingId || "",
           sourceOccurrenceKey,
+          sourceOccurrenceId,
+          teacherId: cell.teacherId || "",
+          originalDate: cell.date,
+          originalTime: cell.time,
+          subject: cell.subject || "",
           publicHolidayId: holiday.id
         });
       }
@@ -12891,6 +12912,7 @@
         publicHolidayId: holiday.id,
         source: "public_holiday",
         sourceOccurrenceKey,
+        sourceOccurrenceId,
         replacementId: replacement.id,
         subject: cell.subject || credit.subject || "",
         teacherId: cell.teacherId || credit.teacherId || "",
@@ -16328,7 +16350,7 @@
         .filter(item => item.originalBookingId === booking.id || item.replacementBookingId === booking.id)
         .map(item => item.id);
       const creditIdsBefore = (state.replacementCredits || [])
-        .filter(item => item.bookingId === booking.id || item.usedBookingId === booking.id)
+        .filter(item => replacementCreditMatchesBooking(item, booking))
         .map(item => item.id);
       const undoBefore = snapshotCollections({ bookings: [booking.id], replacements: replacementIdsBefore, replacementCredits: creditIdsBefore });
       const refundedCredit = refundReplacementCreditForBooking(booking);
@@ -16342,7 +16364,7 @@
         .filter(item => item.originalBookingId === booking.id || item.replacementBookingId === booking.id)
         .map(item => item.id);
       const creditIdsAfter = (state.replacementCredits || [])
-        .filter(item => item.bookingId === booking.id || item.usedBookingId === booking.id)
+        .filter(item => replacementCreditMatchesBooking(item, booking))
         .map(item => item.id);
       logAction("Booking Deleted", booking.studentName || booking.id, before, "Deleted", `${refundedCredit ? "Replacement credit refunded. " : ""}${restoredOff ? "Date-specific slot returned to OFF. " : ""}${booking.remark || "Deleted from class outcome."}`, {
         undo: makeUndoSnapshot(undoBefore, snapshotCollections({
@@ -16438,6 +16460,26 @@
         (
           (booking.studentId && item.studentId === booking.studentId) ||
           (!booking.studentId && studentNameKey(item.studentName) === studentNameKey(booking.studentName))
+        )
+      );
+    }
+
+    function replacementCreditMatchesBooking(credit, booking) {
+      if (!credit || !booking) return false;
+      const sourceOccurrenceKey = occurrenceKeyForBooking(booking);
+      const sourceOccurrenceId = occurrenceIdForBooking(booking);
+      if (credit.sourceBookingId && credit.sourceBookingId === booking.id) return true;
+      if (credit.bookingId && credit.bookingId === booking.id) return true;
+      if (credit.usedBookingId && credit.usedBookingId === booking.id) return true;
+      if (sourceOccurrenceKey && credit.sourceOccurrenceKey === sourceOccurrenceKey) return true;
+      if (sourceOccurrenceId && credit.sourceOccurrenceId === sourceOccurrenceId) return true;
+      return Boolean(
+        credit.teacherId === booking.teacherId &&
+        dateOnly(credit.originalDate) === dateOnly(booking.date) &&
+        (normalizeTimeValue(credit.originalTime) || credit.originalTime) === (normalizeTimeValue(booking.time) || booking.time) &&
+        (
+          (booking.studentId && credit.studentId === booking.studentId) ||
+          (studentNameKey(credit.studentName) && studentNameKey(credit.studentName) === studentNameKey(booking.studentName))
         )
       );
     }
@@ -16621,10 +16663,7 @@
           createdAt: now
         });
       }
-      if (needed && !state.replacementCredits.some(credit =>
-        credit.status !== "void" &&
-        (credit.sourceBookingId === booking.id || (sourceOccurrenceKey && credit.sourceOccurrenceKey === sourceOccurrenceKey))
-      )) {
+      if (needed && !state.replacementCredits.some(credit => credit.status !== "void" && replacementCreditMatchesBooking(credit, booking))) {
         addReplacementCredit({
           studentId: booking.studentId || "",
           studentName: booking.studentName || "",
@@ -16632,7 +16671,12 @@
           reason,
           remark: "Auto credit from cancelled class.",
           sourceBookingId: booking.id,
-          sourceOccurrenceKey
+          sourceOccurrenceKey,
+          sourceOccurrenceId,
+          teacherId: booking.teacherId,
+          originalDate: booking.date,
+          originalTime: booking.time,
+          subject: booking.subject || ""
         });
       }
       setStatus(needed ? "Replacement record created." : "Class recorded as no replacement needed.");
