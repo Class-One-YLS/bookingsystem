@@ -5609,6 +5609,7 @@
 
     function recurringSourceSlotId(record) {
       if (isMovedDestinationBooking(record)) return "";
+      const keySource = recurringSourceFromOccurrenceKey(record);
       return record?.normalizedRecurringAssignmentId ||
         record?.assignmentId ||
         record?.recurringAssignmentId ||
@@ -5616,11 +5617,29 @@
         record?.sourceSlotId ||
         record?.recurringScheduleId ||
         record?.movedFromRecurringClassId ||
+        keySource ||
         "";
+    }
+
+    function recurringSourceFromOccurrenceKey(record) {
+      const values = [
+        record?.sourceOccurrenceKey,
+        record?.occurrenceKey,
+        String(record?.sourceOccurrenceId || "").startsWith("occurrence:") ? String(record.sourceOccurrenceId).slice("occurrence:".length) : "",
+        String(record?.occurrenceId || "").startsWith("occurrence:") ? String(record.occurrenceId).slice("occurrence:".length) : ""
+      ];
+      for (const value of values) {
+        const text = String(value || "").trim();
+        if (!text || !text.includes("|")) continue;
+        const [source, date] = text.split("|");
+        if (source && dateOnly(date)) return source;
+      }
+      return "";
     }
 
     function recurringSourceAliases(record) {
       if (!record || isMovedDestinationBooking(record)) return [];
+      const keySource = recurringSourceFromOccurrenceKey(record);
       return [...new Set([
         record.normalizedRecurringAssignmentId,
         record.assignmentId,
@@ -5629,6 +5648,7 @@
         record.sourceSlotId,
         record.recurringScheduleId,
         record.movedFromRecurringClassId,
+        keySource,
         record.id
       ].map(value => String(value || "").trim()).filter(Boolean))];
     }
@@ -5695,7 +5715,7 @@
       if (id.startsWith("occurrence:")) {
         const key = id.slice("occurrence:".length);
         return bookingRecordsForResolution()
-          .filter(booking => occurrenceKeyForBooking(booking) === key)
+          .filter(booking => occurrenceKeysForBooking(booking).includes(key))
           .reduce((selected, booking) => shouldUseBooking(booking, selected) ? booking : selected, null);
       }
       return null;
@@ -6662,6 +6682,19 @@
 
     function calendarCellFromBooking(booking, teacher, slot = null) {
       const status = occurrenceResolutionStatus(booking) || normalizeClassStatus(booking) || booking.status || "booked";
+      const recurringScheduleId = booking.normalizedRecurringAssignmentId ||
+        booking.assignmentId ||
+        booking.recurringAssignmentId ||
+        booking.recurringSourceSlotId ||
+        booking.recurringScheduleId ||
+        booking.sourceSlotId ||
+        slot?.normalizedRecurringAssignmentId ||
+        slot?.assignmentId ||
+        slot?.recurringAssignmentId ||
+        slot?.recurringSourceSlotId ||
+        slot?.recurringScheduleId ||
+        slot?.id ||
+        "";
       return {
         cellKey: `${booking.teacherId || teacher?.id || ""}|${dateOnly(booking.date)}|${normalizeTimeValue(booking.time) || booking.time}`,
         teacherId: booking.teacherId || teacher?.id || "",
@@ -6677,8 +6710,13 @@
         occurrenceKey: occurrenceKeyForBooking(booking),
         recordRole: bookingRecordRole(booking),
         moveTransactionId: booking.moveTransactionId || "",
-        recurringScheduleId: booking.recurringScheduleId || booking.sourceSlotId || "",
+        recurringScheduleId,
         slotId: slot?.id || booking.sourceSlotId || "",
+        sourceSlotId: booking.sourceSlotId || slot?.id || "",
+        normalizedRecurringAssignmentId: booking.normalizedRecurringAssignmentId || slot?.normalizedRecurringAssignmentId || "",
+        assignmentId: booking.assignmentId || slot?.assignmentId || "",
+        recurringAssignmentId: booking.recurringAssignmentId || slot?.recurringAssignmentId || "",
+        recurringSourceSlotId: booking.recurringSourceSlotId || recurringScheduleId,
         studentId: booking.studentId || "",
         studentName: booking.studentName || "",
         subject: booking.subject || slot?.subject || "",
@@ -6707,6 +6745,13 @@
       const leaveUnavailable = Boolean(isOffSlot && (slot.status === "teacher_leave" || slot.teacherLeaveId));
       const locked = Boolean(slot.locked || slot.reserved || leaveUnavailable);
       const unavailableStatus = isOffSlot ? (slot.status || "off") : "";
+      const recurringScheduleId = slot.normalizedRecurringAssignmentId ||
+        slot.assignmentId ||
+        slot.recurringAssignmentId ||
+        slot.recurringSourceSlotId ||
+        slot.recurringScheduleId ||
+        slot.id ||
+        "";
       return {
         cellKey: `${slot.teacherId || teacher?.id || ""}|${dateOnly(slot.date)}|${normalizeTimeValue(slot.time) || slot.time}`,
         teacherId: slot.teacherId || teacher?.id || "",
@@ -6720,8 +6765,13 @@
         recordId: slot.id || "",
         occurrenceId: occurrenceIdForSlot(slot, dateOnly(slot.date)),
         occurrenceKey: occurrenceKeyForSlot(slot, dateOnly(slot.date)),
-        recurringScheduleId: slot.recurringScheduleId || slot.id || "",
+        recurringScheduleId,
         slotId: slot.id || "",
+        sourceSlotId: slot.sourceSlotId || slot.id || "",
+        normalizedRecurringAssignmentId: slot.normalizedRecurringAssignmentId || "",
+        assignmentId: slot.assignmentId || "",
+        recurringAssignmentId: slot.recurringAssignmentId || "",
+        recurringSourceSlotId: slot.recurringSourceSlotId || recurringScheduleId,
         studentId: slot.studentId || "",
         studentName: slot.reserved ? (slot.reservationName || slot.studentName || "") : (slot.studentName || ""),
         subject: slot.subject || "",
@@ -8218,15 +8268,15 @@
       const display = teacherOverviewDisplaySlot(teacher, day, time);
       const slot = display.slot;
       if (slot?.futureRegularReservation && display.upcoming) {
-        const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentId: slot.studentId || "", studentName: slot.studentName || "Future regular class", slotId: slot.id, interactionSource: "teacher_overview", upcomingStart: slot.startDate, futureRegularReservation: true }));
+        const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentId: slot.studentId || "", studentName: slot.studentName || "Future regular class", slotId: slot.id, sourceSlotId: slot.sourceSlotId || slot.id || "", normalizedRecurringAssignmentId: slot.normalizedRecurringAssignmentId || "", assignmentId: slot.assignmentId || "", recurringAssignmentId: slot.recurringAssignmentId || "", recurringSourceSlotId: slot.recurringSourceSlotId || slot.normalizedRecurringAssignmentId || slot.assignmentId || slot.recurringAssignmentId || slot.id || "", recurringScheduleId: slot.recurringScheduleId || slot.normalizedRecurringAssignmentId || slot.assignmentId || slot.recurringAssignmentId || slot.id || "", occurrenceKey: occurrenceKeyForSlot(slot, dateStr), interactionSource: "teacher_overview", upcomingStart: slot.startDate, futureRegularReservation: true }));
         return `<td class="teacher-cell-reserved"><button class="teacher-cell-button" data-fixed-slot="${fixedData}" title="Click to change or cancel this future regular class">${escapeHtml(futureRegularReservationLabel(slot))}</button></td>`;
       }
       if (slot?.reserved) {
-        const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentId: slot.studentId || "", studentName: slot.studentName || "Reserved", slotId: slot.id, reserved: true, interactionSource: "teacher_overview" }));
+        const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentId: slot.studentId || "", studentName: slot.studentName || "Reserved", slotId: slot.id, sourceSlotId: slot.sourceSlotId || slot.id || "", normalizedRecurringAssignmentId: slot.normalizedRecurringAssignmentId || "", assignmentId: slot.assignmentId || "", recurringAssignmentId: slot.recurringAssignmentId || "", recurringSourceSlotId: slot.recurringSourceSlotId || slot.normalizedRecurringAssignmentId || slot.assignmentId || slot.recurringAssignmentId || slot.id || "", recurringScheduleId: slot.recurringScheduleId || slot.normalizedRecurringAssignmentId || slot.assignmentId || slot.recurringAssignmentId || slot.id || "", occurrenceKey: occurrenceKeyForSlot(slot, dateStr), reserved: true, interactionSource: "teacher_overview" }));
         return `<td class="teacher-cell-reserved"><button class="teacher-cell-button" data-fixed-slot="${fixedData}" title="Click to release this reservation early">${escapeHtml(reservationLabel(slot))}</button></td>`;
       }
       if (slot?.locked) {
-        const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentId: slot.studentId || "", studentName: slot.studentName || "Fixed regular class", slotId: slot.id, interactionSource: "teacher_overview", upcomingStart: display.upcoming ? slot.startDate : "" }));
+        const fixedData = escapeHtml(JSON.stringify({ teacherId: teacher.id, date: dateStr, day: slot.day, time: slot.time, subject: slot.subject || "", studentId: slot.studentId || "", studentName: slot.studentName || "Fixed regular class", slotId: slot.id, sourceSlotId: slot.sourceSlotId || slot.id || "", normalizedRecurringAssignmentId: slot.normalizedRecurringAssignmentId || "", assignmentId: slot.assignmentId || "", recurringAssignmentId: slot.recurringAssignmentId || "", recurringSourceSlotId: slot.recurringSourceSlotId || slot.normalizedRecurringAssignmentId || slot.assignmentId || slot.recurringAssignmentId || slot.id || "", recurringScheduleId: slot.recurringScheduleId || slot.normalizedRecurringAssignmentId || slot.assignmentId || slot.recurringAssignmentId || slot.id || "", occurrenceKey: occurrenceKeyForSlot(slot, dateStr), interactionSource: "teacher_overview", upcomingStart: display.upcoming ? slot.startDate : "" }));
         const title = display.upcoming ? `Upcoming regular class from ${formatDateFromAny(slot.startDate)}` : "Booked regular class";
         return `<td class="teacher-cell-booked${display.upcoming ? " upcoming" : ""}"><button class="teacher-cell-button" data-fixed-slot="${fixedData}" title="${escapeHtml(title)}">${escapeHtml(slot.studentName || "Fixed regular class")} ${slot.subject ? `(${escapeHtml(slot.subject)})` : ""}</button></td>`;
       }
@@ -9876,7 +9926,25 @@
         </button>`;
       }
       if (slot.locked) {
-        const fixedData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, studentId: slot.studentId || "", studentName: slot.studentName || "Fixed regular class", slotId: slot.id, occurrenceId, occurrenceKey: occurrenceKeyForSlot(slot, slot.date), reserved: Boolean(slot.reserved) }));
+        const fixedData = escapeHtml(JSON.stringify({
+          teacherId: slot.teacherId,
+          date: slot.date,
+          day: slot.day,
+          time: slot.time,
+          subject,
+          studentId: slot.studentId || "",
+          studentName: slot.studentName || "Fixed regular class",
+          slotId: slot.id,
+          sourceSlotId: slot.sourceSlotId || slot.id || "",
+          normalizedRecurringAssignmentId: slot.normalizedRecurringAssignmentId || "",
+          assignmentId: slot.assignmentId || "",
+          recurringAssignmentId: slot.recurringAssignmentId || "",
+          recurringSourceSlotId: slot.recurringSourceSlotId || slot.normalizedRecurringAssignmentId || slot.assignmentId || slot.recurringAssignmentId || slot.id || "",
+          recurringScheduleId: slot.recurringScheduleId || slot.normalizedRecurringAssignmentId || slot.assignmentId || slot.recurringAssignmentId || slot.id || "",
+          occurrenceId,
+          occurrenceKey: occurrenceKeyForSlot(slot, slot.date),
+          reserved: Boolean(slot.reserved)
+        }));
         if (slot.status === "public_holiday" || slot.publicHolidayId || slot.source === "public_holiday") {
           return `<button class="slot fixed status-public-holiday"${cellAttr}${occurrenceAttr} disabled>
             <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
@@ -13251,6 +13319,15 @@
     function fixedSlotToBooking(data) {
       const now = new Date().toISOString();
       const status = slotHasPassed(data.date, data.time) ? "completed" : "booked";
+      const recurringSourceId = data.normalizedRecurringAssignmentId ||
+        data.assignmentId ||
+        data.recurringAssignmentId ||
+        data.recurringSourceSlotId ||
+        data.recurringScheduleId ||
+        data.sourceSlotId ||
+        data.slotId ||
+        recurringSourceFromOccurrenceKey(data) ||
+        "";
       const booking = {
         id: fixedSlotBookingId(data),
         teacherId: data.teacherId,
@@ -13270,11 +13347,16 @@
         slotRevisionAt: now,
         ...(status === "completed" ? { completedAt: now } : {}),
         source: "fixed_regular_manual",
-        sourceSlotId: data.slotId || "",
-        occurrenceId: data.occurrenceId || occurrenceIdFromKey(occurrenceKeyFromParts(data.slotId || "", data.date)),
-        occurrenceKey: data.occurrenceKey || occurrenceKeyFromParts(data.slotId || "", data.date)
+        sourceSlotId: data.sourceSlotId || data.slotId || recurringSourceId || "",
+        normalizedRecurringAssignmentId: data.normalizedRecurringAssignmentId || "",
+        assignmentId: data.assignmentId || data.normalizedRecurringAssignmentId || "",
+        recurringAssignmentId: data.recurringAssignmentId || data.assignmentId || data.normalizedRecurringAssignmentId || "",
+        recurringSourceSlotId: recurringSourceId,
+        recurringScheduleId: data.recurringScheduleId || recurringSourceId || data.slotId || "",
+        occurrenceId: data.occurrenceId || occurrenceIdFromKey(occurrenceKeyFromParts(recurringSourceId || data.slotId || "", data.date)),
+        occurrenceKey: data.occurrenceKey || occurrenceKeyFromParts(recurringSourceId || data.slotId || "", data.date)
       };
-      if (booking.sourceSlotId) normaliseOccurrenceOutcome(booking, status);
+      if (recurringSourceSlotId(booking)) normaliseOccurrenceOutcome(booking, status);
       return booking;
     }
 
@@ -15893,7 +15975,10 @@
         method: "POST",
         body: JSON.stringify(body)
       }, `${label} delta sync`, SYNC_SAVE_TIMEOUT_MS);
-      if (data.booking) upsertLocalRecord("bookings", data.booking);
+      if (data.booking) {
+        normaliseOccurrenceOutcome(data.booking, data.booking.status || data.booking.outcome || data.booking.classOutcome);
+        upsertLocalRecord("bookings", data.booking);
+      }
       if (data.replacementTask) upsertLocalRecord("replacements", data.replacementTask);
       if (data.replacementCredit) upsertLocalRecord("replacementCredits", data.replacementCredit);
       if (data.activityLog) upsertLocalRecord("activityLogs", data.activityLog);
