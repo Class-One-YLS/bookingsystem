@@ -5609,7 +5609,28 @@
 
     function recurringSourceSlotId(record) {
       if (isMovedDestinationBooking(record)) return "";
-      return record?.recurringSourceSlotId || record?.sourceSlotId || record?.recurringScheduleId || record?.movedFromRecurringClassId || "";
+      return record?.normalizedRecurringAssignmentId ||
+        record?.assignmentId ||
+        record?.recurringAssignmentId ||
+        record?.recurringSourceSlotId ||
+        record?.sourceSlotId ||
+        record?.recurringScheduleId ||
+        record?.movedFromRecurringClassId ||
+        "";
+    }
+
+    function recurringSourceAliases(record) {
+      if (!record || isMovedDestinationBooking(record)) return [];
+      return [...new Set([
+        record.normalizedRecurringAssignmentId,
+        record.assignmentId,
+        record.recurringAssignmentId,
+        record.recurringSourceSlotId,
+        record.sourceSlotId,
+        record.recurringScheduleId,
+        record.movedFromRecurringClassId,
+        record.id
+      ].map(value => String(value || "").trim()).filter(Boolean))];
     }
 
     function occurrenceKeyFromParts(sourceSlotId, date) {
@@ -5618,12 +5639,31 @@
       return source && dateStr ? `${source}|${dateStr}` : "";
     }
 
+    function occurrenceKeysFromAliases(aliases, date) {
+      const dateStr = dateOnly(date);
+      if (!dateStr) return [];
+      return [...new Set((aliases || []).map(source => occurrenceKeyFromParts(source, dateStr)).filter(Boolean))];
+    }
+
     function occurrenceKeyForBooking(booking) {
       return occurrenceKeyFromParts(recurringSourceSlotId(booking), booking?.date || booking?.occurrenceDate);
     }
 
     function occurrenceKeyForSlot(slot, dateStr) {
-      return occurrenceKeyFromParts(slot?.id || slot?.recurringScheduleId, dateStr);
+      return occurrenceKeyFromParts(recurringSourceSlotId(slot) || slot?.id || slot?.recurringScheduleId, dateStr);
+    }
+
+    function occurrenceKeysForBooking(booking) {
+      return occurrenceKeysFromAliases(recurringSourceAliases(booking), booking?.date || booking?.occurrenceDate);
+    }
+
+    function occurrenceKeysForSlot(slot, dateStr) {
+      return occurrenceKeysFromAliases(recurringSourceAliases(slot), dateStr);
+    }
+
+    function recordsShareOccurrenceKey(booking, slot, dateStr) {
+      const bookingKeys = new Set(occurrenceKeysForBooking(booking));
+      return occurrenceKeysForSlot(slot, dateStr).some(key => bookingKeys.has(key));
     }
 
     function occurrenceIdFromKey(key) {
@@ -5705,10 +5745,10 @@
     function occurrenceOutcomeMapForBookings(bookings = bookingRecordsForResolution()) {
       const byOccurrence = new Map();
       (bookings || []).forEach(booking => {
-        const key = occurrenceKeyForBooking(booking);
-        if (!key) return;
-        const current = byOccurrence.get(key);
-        if (shouldUseBooking(booking, current)) byOccurrence.set(key, booking);
+        occurrenceKeysForBooking(booking).forEach(key => {
+          const current = byOccurrence.get(key);
+          if (shouldUseBooking(booking, current)) byOccurrence.set(key, booking);
+        });
       });
       return byOccurrence;
     }
@@ -5725,15 +5765,15 @@
     }
 
     function occurrenceOutcomeForSlot(slot, dateStr, occurrenceOutcomes = null) {
-      const key = occurrenceKeyForSlot(slot, dateStr);
-      if (!key) return null;
+      const keys = occurrenceKeysForSlot(slot, dateStr);
+      if (!keys.length) return null;
       const map = occurrenceOutcomes || occurrenceOutcomeMapForBookings();
-      return map.get(key) || null;
+      return keys.map(key => map.get(key)).find(Boolean) || null;
     }
 
     function occurrenceOutcomeSuppressesSlot(outcome, slot, dateStr) {
       if (!outcome || !slot) return false;
-      const sourceMatches = occurrenceKeyForBooking(outcome) === occurrenceKeyForSlot(slot, dateStr);
+      const sourceMatches = recordsShareOccurrenceKey(outcome, slot, dateStr);
       if (!sourceMatches) return false;
       return outcome.suppressRecurringOccurrence === true || occurrenceOutcomeParticipatesInResolution(outcome);
     }
@@ -10858,7 +10898,7 @@
       if (isSupersededBookingRecord(booking)) return true;
       const bookingOccurrenceKey = occurrenceKeyForBooking(booking);
       const slotOccurrenceKey = occurrenceKeyForSlot(slot, dateOnly(booking.date || slot.date));
-      return Boolean(!bookingOccurrenceKey || bookingOccurrenceKey !== slotOccurrenceKey);
+      return Boolean(!bookingOccurrenceKey || !slotOccurrenceKey || !recordsShareOccurrenceKey(booking, slot, dateOnly(booking.date || slot.date)));
     }
 
     function shouldUseBooking(candidate, existing) {
