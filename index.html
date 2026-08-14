@@ -2691,6 +2691,8 @@
     let bookingRecordsForResolutionCallCount = 0;
     let outcomeSaveCallCount = 0;
     let saveRequestCount = 0;
+    const recentBookingOutcomeDeltaSyncs = new Map();
+    const BOOKING_OUTCOME_DEBUG_WINDOW_MS = 2 * 60 * 1000;
     const syncPerf = {
       last: {},
       active: null
@@ -7272,10 +7274,23 @@
       return classOnePerformanceCounters();
     }
 
+    function classOneBookingBackfillStatus() {
+      return fetchNeonJson(
+        `/api/bookings/backfill?key=${encodeURIComponent(neonStateKey())}`,
+        { method: "GET" },
+        "Booking backfill status",
+        SYNC_READ_TIMEOUT_MS
+      ).then(result => {
+        console.info("[ClassOne booking backfill status]", result);
+        return result;
+      });
+    }
+
     window.classOneDebug = {
       ...(window.classOneDebug || {}),
       auditTimetableSourceRecords,
       cleanupRecurringClassSources,
+      bookingBackfillStatus: classOneBookingBackfillStatus,
       performanceCounters: classOnePerformanceCounters,
       resetPerformanceCounters: resetClassOnePerformanceCounters
     };
@@ -15253,6 +15268,53 @@
       return chunks.length ? chunks : [""];
     }
 
+    function safeParseJson(value) {
+      try { return JSON.parse(value || "{}"); } catch (err) { return {}; }
+    }
+
+    function largestJsonFields(value, limit = 5) {
+      if (!value || typeof value !== "object") return [];
+      return Object.entries(value)
+        .map(([key, fieldValue]) => ({ key, bytes: jsonByteSize(fieldValue) }))
+        .sort((a, b) => b.bytes - a.bytes)
+        .slice(0, limit);
+    }
+
+    function bookingIdsFromStatePatchBody(bodyText) {
+      const body = safeParseJson(bodyText);
+      const bookings = body.patch?.changes?.bookings || body.changes?.bookings || [];
+      return new Set((Array.isArray(bookings) ? bookings : []).map(item => item?.id || item?.bookingId).filter(Boolean));
+    }
+
+    function pruneBookingOutcomeDebugWindow() {
+      const cutoff = Date.now() - BOOKING_OUTCOME_DEBUG_WINDOW_MS;
+      recentBookingOutcomeDeltaSyncs.forEach((item, bookingId) => {
+        if (!item || Number(item.at || 0) < cutoff) recentBookingOutcomeDeltaSyncs.delete(bookingId);
+      });
+    }
+
+    function detectBookingOutcomeLegacyStatePatch(path, options = {}, label = "") {
+      if (!SYNC_DEBUG || !path.startsWith("/api/state-patch")) return;
+      pruneBookingOutcomeDebugWindow();
+      const ids = bookingIdsFromStatePatchBody(options.body || "");
+      ids.forEach(bookingId => {
+        const recent = recentBookingOutcomeDeltaSyncs.get(bookingId);
+        if (!recent) return;
+        recent.legacyStatePatchTriggered = true;
+        recent.legacyStatePatchLabel = label;
+        recent.legacyStatePatchStack = (new Error("Legacy state-patch after booking outcome")).stack || "";
+        const warning = {
+          bookingId,
+          operation: recent.operation,
+          endpoint: "/api/state-patch",
+          label,
+          functionStack: recent.legacyStatePatchStack.split("\n").slice(1, 6).map(line => line.trim())
+        };
+        console.warn("MIGRATION ERROR: booking outcome was persisted through both delta sync and legacy state sync.", warning);
+        setStatus("MIGRATION ERROR: booking outcome was persisted through both delta sync and legacy state sync. See console.", "error");
+      });
+    }
+
     async function fetchNeonJson(path, options = {}, label = "Neon database", timeoutMs = SYNC_SAVE_TIMEOUT_MS) {
       const url = `${neonApiBase()}${path}`;
       const displayUrl = safeApiUrlForDisplay(url);
@@ -15263,6 +15325,7 @@
       const requestOptions = { ...options };
       if (path.startsWith("/api/state") || path.startsWith("/api/teacher-version")) saveRequestCount += 1;
       const requestStartedAt = performance.now();
+      detectBookingOutcomeLegacyStatePatch(path, options, label);
       if (method !== "GET" && !isSessionRequest && sessionToken()) {
         try {
           const body = requestOptions.body ? JSON.parse(requestOptions.body) : {};
@@ -15284,6 +15347,9 @@
         });
         const text = await res.text();
         const data = text ? JSON.parse(text) : {};
+        if (data && typeof data === "object") {
+          Object.defineProperty(data, "__httpStatus", { value: res.status, enumerable: false, configurable: true });
+        }
         if (method !== "GET" || !res.ok) console.info("[ClassOne API]", { label, url: displayUrl, method, status: res.status, ok: res.ok });
         if (SYNC_DEBUG && path.startsWith("/api/state")) {
           console.info("[ClassOne sync timing]", { label, method, status: res.status, durationMs: Math.round(performance.now() - requestStartedAt) });
@@ -15341,8 +15407,94 @@
       ].join("_").replace(/[^a-zA-Z0-9_.:-]+/g, "_");
     }
 
+    function bookingOutcomeOperation(change, label = "") {
+      const outcome = normalizeClassStatus(change?.outcome || change?.booking?.status) || "";
+      if (outcome === "booked" && /withdrawn|restore/i.test(`${label} ${change?.booking?.remark || ""}`)) return "restore";
+      return outcome || "booking_outcome";
+    }
+
+    function warnIfBookingOutcomePayloadLarge(body, payloadBytes) {
+      if (!SYNC_DEBUG) return;
+      if (payloadBytes > 1024 * 1024) {
+        console.error("[ClassOne booking outcome delta] Abnormal payload over 1 MB.", {
+          bytes: payloadBytes,
+          largestFields: largestJsonFields(body, 8)
+        });
+      } else if (payloadBytes > 100 * 1024) {
+        console.warn("[ClassOne booking outcome delta] Payload exceeds 100 KB.", {
+          bytes: payloadBytes,
+          largestFields: largestJsonFields(body, 5)
+        });
+      }
+    }
+
+    function bookingOutcomeFieldSnapshot(booking) {
+      if (!booking) return null;
+      return {
+        bookingId: booking.id || booking.bookingId || "",
+        status: normalizeClassStatus(booking.status) || booking.status || "",
+        outcome: normalizeClassStatus(booking.outcome) || booking.outcome || "",
+        classOutcome: normalizeClassStatus(booking.classOutcome) || booking.classOutcome || "",
+        recordVersion: Number(booking.recordVersion || 0)
+      };
+    }
+
+    async function verifyBookingOutcomeComposedState(change, deltaResponse) {
+      if (!SYNC_DEBUG || !deltaResponse?.booking?.id) return null;
+      const bookingId = deltaResponse.booking.id;
+      const expected = bookingOutcomeFieldSnapshot(deltaResponse.booking);
+      const result = {
+        bookingId,
+        normalized: expected,
+        composed: null,
+        teacherView: null,
+        composedMatches: false,
+        teacherViewMatches: null
+      };
+      try {
+        const composed = await fetchNeonJson(
+          `/api/state?key=${encodeURIComponent(neonStateKey())}`,
+          { method: "GET" },
+          "Booking outcome composed-state verification",
+          SYNC_READ_TIMEOUT_MS
+        );
+        const composedBooking = (composed.data?.bookings || []).find(item => item.id === bookingId || item.bookingId === bookingId);
+        result.composed = bookingOutcomeFieldSnapshot(composedBooking);
+        result.composedMatches = ["bookingId", "status", "outcome", "classOutcome", "recordVersion"]
+          .every(field => String(result.composed?.[field] ?? "") === String(expected?.[field] ?? ""));
+        if (!result.composedMatches) console.warn("COMPOSED STATE MISMATCH", result);
+      } catch (error) {
+        result.composedError = error.message;
+      }
+      try {
+        const teacher = teacherById(deltaResponse.booking.teacherId);
+        if (teacher?.viewToken && deltaResponse.booking.date) {
+          const teacherViewData = await fetchTeacherViewCells(teacher, dateOnly(deltaResponse.booking.date), dateOnly(deltaResponse.booking.date));
+          const cellKey = teacherDateTimeKey(deltaResponse.booking.teacherId, deltaResponse.booking.date, deltaResponse.booking.time);
+          const teacherCells = teacherViewData.resolvedCalendar?.cells || teacherViewData.cells || [];
+          const teacherCell = teacherCells.find(cell =>
+            cell.bookingId === bookingId ||
+            (cell.cellKey || `${cell.teacherId || teacher.id}|${cell.date}|${normalizeTimeValue(cell.time) || cell.time}`) === cellKey
+          );
+          result.teacherView = {
+            bookingId: teacherCell?.bookingId || "",
+            status: normalizeClassStatus(teacherCell?.status) || teacherCell?.status || "",
+            recordVersion: Number(teacherCell?.recordVersion || teacherCell?.booking?.recordVersion || 0),
+            version: Number(teacherViewData.version || 0)
+          };
+          result.teacherViewMatches = Boolean(teacherCell)
+            && String(result.teacherView.status || "") === String(expected.status || "");
+        }
+      } catch (error) {
+        result.teacherViewError = error.message;
+      }
+      console.info("[ClassOne booking outcome verification]", result);
+      return result;
+    }
+
     async function syncBookingOutcomeDelta(change, label = "Booking outcome") {
       if (!change?.booking?.id) throw new Error("Booking outcome delta is missing a booking id.");
+      const operation = bookingOutcomeOperation(change, label);
       const body = {
         key: neonStateKey(),
         requestId: bookingOutcomeDeltaRequestId(change),
@@ -15359,6 +15511,15 @@
       };
       const beforeBytes = Math.max(0, lastNeonPayloadBytes || 0);
       const payloadBytes = jsonByteSize(body);
+      warnIfBookingOutcomePayloadLarge(body, payloadBytes);
+      recentBookingOutcomeDeltaSyncs.set(change.booking.id, {
+        at: Date.now(),
+        bookingId: change.booking.id,
+        operation,
+        endpoint: "/api/bookings/outcome",
+        bytes: payloadBytes,
+        legacyStatePatchTriggered: false
+      });
       const data = await fetchNeonJson("/api/bookings/outcome", {
         method: "POST",
         body: JSON.stringify(body)
@@ -15381,12 +15542,19 @@
       persistState();
       notifyTeacherViews(state.settings.neonVersion);
       console.info("[ClassOne booking outcome delta]", {
+        marker: "BOOKING DELTA SYNC",
         bookingId: change.booking.id,
-        outcome: body.outcome,
-        requestBytes: payloadBytes,
+        operation,
+        endpoint: "/api/bookings/outcome",
+        bytes: payloadBytes,
+        status: data.__httpStatus || 200,
+        recordVersion: Number(data.recordVersion || data.booking?.recordVersion || 0),
+        systemVersion: Number(data.version || 0),
+        legacyStatePatchTriggered: Boolean(recentBookingOutcomeDeltaSyncs.get(change.booking.id)?.legacyStatePatchTriggered),
         previousStatePatchBytes: beforeBytes,
         version: state.settings.neonVersion
       });
+      await verifyBookingOutcomeComposedState(change, data);
       return data;
     }
 
