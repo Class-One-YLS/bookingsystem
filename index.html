@@ -594,6 +594,7 @@
     .slot-teacher { display: block; font-size: 13px; line-height: 1.15; font-weight: 800; margin-bottom: 3px; }
     .slot-student { display: block; font-size: 16px; line-height: 1.15; font-weight: 950; margin-top: 3px; overflow-wrap: anywhere; }
     .slot-details { display: block; color: #3d4b45; font-size: 11px; line-height: 1.15; font-weight: 700; margin-top: 2px; overflow-wrap: anywhere; }
+    .slot-debug-label { display: block; margin-top: 4px; padding-top: 3px; border-top: 1px dashed rgba(23,33,43,.28); color: #475467; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 9px; line-height: 1.2; font-weight: 700; overflow-wrap: anywhere; }
     .status-badge, .completed-badge { display: inline-flex; align-items: center; min-height: 17px; padding: 0 7px; border-radius: 999px; background: #edf4f0; color: var(--ink); font-size: 11px; font-weight: 900; line-height: 1; margin: 2px 0 3px; vertical-align: middle; }
     .completed-badge, .status-badge.status-completed { background: var(--class-completed-badge-bg); color: #fff; }
     .status-badge.status-cancelled, .status-badge.status-public-holiday, .status-badge.status-teacher-leave { background: #667085; color: #fff; }
@@ -2426,6 +2427,7 @@
     ];
     const DEVICE_ID_KEY = "classone_device_id";
     const SYNC_DEBUG = new URLSearchParams(window.location.search).get("debugSync") === "1";
+    let lastOccurrenceOutcomeDebug = null;
     const loginMascots = [
       { src: "classone-mascot-transparent.png", pose: "floating", alt: "" }
     ];
@@ -7269,6 +7271,153 @@
       return result;
     }
 
+    function occurrenceDebugRecordFromCell(cell) {
+      if (!cell) return null;
+      return {
+        sourceType: cell.source || cell.kind || "",
+        sourceRecordId: cell.sourceRecordId || cell.recordId || cell.bookingId || cell.slotId || "",
+        bookingId: cell.bookingId || "",
+        occurrenceId: cell.occurrenceId || "",
+        occurrenceKey: cell.occurrenceKey || "",
+        recurringAssignmentId: cell.recurringAssignmentId || cell.assignmentId || cell.normalizedRecurringAssignmentId || cell.recurringScheduleId || "",
+        normalizedRecurringAssignmentId: cell.normalizedRecurringAssignmentId || "",
+        sourceSlotId: cell.sourceSlotId || cell.slotId || "",
+        teacherId: cell.teacherId || "",
+        studentId: cell.studentId || "",
+        studentName: cell.studentName || "",
+        date: dateOnly(cell.date || ""),
+        time: normalizeTimeValue(cell.time) || cell.time || "",
+        subject: cell.subject || "",
+        classType: cell.type || "",
+        status: cell.status || "",
+        updatedAt: cell.updatedAt || ""
+      };
+    }
+
+    function occurrenceDebugRecordFromBooking(booking) {
+      if (!booking) return null;
+      return {
+        sourceType: booking.source || "state.bookings",
+        sourceRecordId: booking.id || "",
+        bookingId: booking.id || booking.bookingId || "",
+        occurrenceId: occurrenceIdForBooking(booking),
+        occurrenceKey: occurrenceKeyForBooking(booking),
+        recurringAssignmentId: booking.recurringAssignmentId || booking.assignmentId || booking.normalizedRecurringAssignmentId || recurringSourceSlotId(booking) || "",
+        normalizedRecurringAssignmentId: booking.normalizedRecurringAssignmentId || "",
+        sourceSlotId: booking.sourceSlotId || "",
+        teacherId: booking.teacherId || "",
+        studentId: booking.studentId || "",
+        studentName: booking.studentName || "",
+        date: dateOnly(booking.date || ""),
+        time: normalizeTimeValue(booking.time) || booking.time || "",
+        subject: booking.subject || "",
+        classType: booking.type || "",
+        status: occurrenceResolutionStatus(booking) || normalizeClassStatus(booking) || booking.status || "",
+        outcome: booking.outcome || "",
+        classOutcome: booking.classOutcome || "",
+        resolutionStatus: booking.resolutionStatus || "",
+        resolutionActive: booking.resolutionActive === true,
+        suppressRecurringOccurrence: booking.suppressRecurringOccurrence === true,
+        recordVersion: Number(booking.recordVersion || 0),
+        updatedAt: booking.updatedAt || booking.statusChangedAt || booking.slotRevisionAt || "",
+        cancelledAt: booking.cancelledAt || "",
+        completedAt: booking.completedAt || "",
+        finalizedAt: booking.finalizedAt || ""
+      };
+    }
+
+    function compareOccurrenceDebugIdentities(renderedCardSource, cancelRequestTarget) {
+      if (!renderedCardSource || !cancelRequestTarget) return null;
+      const renderedRecurring = renderedCardSource.recurringAssignmentId || renderedCardSource.normalizedRecurringAssignmentId || "";
+      const targetRecurring = cancelRequestTarget.recurringAssignmentId || cancelRequestTarget.normalizedRecurringAssignmentId || "";
+      return {
+        sameCanonicalOccurrence: Boolean(
+          (renderedCardSource.occurrenceKey && renderedCardSource.occurrenceKey === cancelRequestTarget.occurrenceKey) ||
+          (renderedRecurring && renderedRecurring === targetRecurring && renderedCardSource.date === cancelRequestTarget.date)
+        ),
+        sameBookingId: Boolean(renderedCardSource.bookingId && renderedCardSource.bookingId === cancelRequestTarget.bookingId),
+        sameRecurringAssignment: Boolean(renderedRecurring && renderedRecurring === targetRecurring),
+        sameOccurrenceKey: Boolean(renderedCardSource.occurrenceKey && renderedCardSource.occurrenceKey === cancelRequestTarget.occurrenceKey),
+        renderedDate: renderedCardSource.date,
+        requestDate: cancelRequestTarget.date,
+        renderedTime: renderedCardSource.time,
+        requestTime: cancelRequestTarget.time
+      };
+    }
+
+    function occurrenceDebugDomSource(cellKey) {
+      if (!cellKey) return null;
+      const nodes = [...document.querySelectorAll("[data-cell-key]")];
+      const node = nodes.find(item => item.dataset.cellKey === cellKey);
+      if (!node) return null;
+      return {
+        tagName: node.tagName,
+        text: node.textContent.replace(/\s+/g, " ").trim().slice(0, 300),
+        bookingId: node.dataset.bookingId || "",
+        recordId: node.dataset.recordId || "",
+        occurrenceId: node.dataset.occurrenceId || "",
+        recordRole: node.dataset.recordRole || "",
+        cellKey: node.dataset.cellKey || ""
+      };
+    }
+
+    async function inspectOccurrence(query = {}) {
+      if (!SYNC_DEBUG) {
+        throw new Error("Open the admin page with ?debugSync=1 before using classOneDebug.inspectOccurrence().");
+      }
+      const dateISO = dateOnly(query.date || "");
+      const targetTime = normalizeTimeValue(query.time || "") || query.time || "";
+      const teacher = query.teacherId
+        ? teacherById(query.teacherId)
+        : (state.teachers || []).find(item => studentNameKey(item.name || "") === studentNameKey(query.teacherName || ""));
+      if (!teacher || !dateISO || !targetTime) throw new Error("inspectOccurrence requires teacherName or teacherId, date, and time.");
+      const cellKey = teacherDateTimeKey(teacher.id, dateISO, targetTime);
+      const localAudit = auditTimetableSourceRecords({ ...query, teacherId: teacher.id, date: dateISO, time: targetTime });
+      const resolved = canonicalResolvedCellForSlot(teacher.id, dateISO, targetTime);
+      const renderedCardSource = occurrenceDebugRecordFromCell(resolved);
+      const cancelRequestTarget = lastOccurrenceOutcomeDebug?.request?.selectedUiOccurrence || null;
+      let apiAudit = null;
+      let apiError = "";
+      if (neonConfigured()) {
+        const params = new URLSearchParams({
+          key: neonStateKey(),
+          debugSync: "1",
+          teacherId: teacher.id,
+          teacherName: teacher.name || "",
+          studentName: query.studentName || "",
+          studentId: query.studentId || "",
+          date: dateISO,
+          time: targetTime
+        });
+        try {
+          apiAudit = await fetchNeonJson(`/api/occurrence-debug?${params.toString()}`, { method: "GET" }, "Occurrence debug inspector", SYNC_READ_TIMEOUT_MS);
+        } catch (error) {
+          apiError = error.message;
+        }
+      }
+      const result = {
+        ok: true,
+        readOnly: true,
+        generatedAt: new Date().toISOString(),
+        query: { ...query, teacherId: teacher.id, teacherName: teacher.name || "", date: dateISO, time: targetTime },
+        visibleWeeklyTimetableCardSource: renderedCardSource,
+        visibleDomCard: occurrenceDebugDomSource(cellKey),
+        cancelRequestTarget,
+        cancelRequestVsRenderedCard: compareOccurrenceDebugIdentities(renderedCardSource, cancelRequestTarget),
+        lastCancelOutcomeRequest: lastOccurrenceOutcomeDebug,
+        weeklyTimetableWinnerTrace: localAudit,
+        teacherViewWinnerTrace: apiAudit?.resolvedSources?.teacherViewWinnerTrace || null,
+        productionApiAudit: apiAudit,
+        productionApiError: apiError,
+        firstDivergenceHint: compareOccurrenceDebugIdentities(renderedCardSource, cancelRequestTarget)?.sameCanonicalOccurrence === false
+          ? "The last cancel request target is not the same canonical occurrence as the visible Weekly Timetable card."
+          : "",
+        instructions: "Read-only diagnostic. Do not cancel again until this object is reviewed."
+      };
+      console.info("[ClassOne occurrence forensic audit]", result);
+      return result;
+    }
+
     async function cleanupRecurringClassSources({ teacherId = "", teacherName = "", studentName = "", date = "", time = "", reason = "" } = {}) {
       const dateISO = dateOnly(date);
       const targetTime = normalizeTimeValue(time) || time || "";
@@ -7473,6 +7622,8 @@
     window.classOneDebug = {
       ...(window.classOneDebug || {}),
       auditTimetableSourceRecords,
+      inspectOccurrence,
+      lastOutcomeRequest: () => lastOccurrenceOutcomeDebug,
       cleanupRecurringClassSources,
       bookingBackfillStatus: classOneBookingBackfillStatus,
       recurringAssignmentBackfillStatus: classOneRecurringAssignmentBackfillStatus,
@@ -9883,6 +10034,16 @@
       `;
     }
 
+    function slotDebugLabelHtml({ source = "", assignment = "", occurrence = "", booking = "" } = {}) {
+      if (!SYNC_DEBUG) return "";
+      return `<span class="slot-debug-label">${escapeHtml([
+        `src:${source || "-"}`,
+        `assignment:${assignment || "-"}`,
+        `occ:${occurrence || "-"}`,
+        `booking:${booking || "-"}`
+      ].join(" | "))}</span>`;
+    }
+
     function slotHtml(slot, booking) {
       const teacher = teacherById(slot.teacherId);
       if (!teacher) return "";
@@ -9892,24 +10053,37 @@
       const occurrenceId = booking ? occurrenceIdForBooking(booking) : (slot.occurrenceId || occurrenceIdForSlot(slot, slot.date));
       const occurrenceAttr = occurrenceId ? ` data-occurrence-id="${escapeHtml(occurrenceId)}"` : "";
       if (normalizeAvailabilityStatus(slot) === "off") {
+        const debugLabel = slotDebugLabelHtml({
+          source: slot.source || "slot",
+          assignment: slot.normalizedRecurringAssignmentId || slot.assignmentId || slot.recurringAssignmentId || slot.id || "",
+          occurrence: occurrenceKeyForSlot(slot, slot.date),
+          booking: ""
+        });
         if (slot.status === "public_holiday" || slot.publicHolidayId || slot.source === "public_holiday") {
           const holidayData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, publicHolidayId: slot.publicHolidayId || "", date: slot.date, time: slot.time, holidayName: slot.holidayName || slot.remark || "Public Holiday" }));
-          return `<button class="slot unavailable status-public-holiday"${cellAttr}${occurrenceAttr} data-public-holiday-off="${holidayData}">${escapeHtml(teacher.name)}<small>OFF | Public Holiday${slot.holidayName ? ` | ${escapeHtml(slot.holidayName)}` : ""}</small></button>`;
+          return `<button class="slot unavailable status-public-holiday"${cellAttr}${occurrenceAttr} data-public-holiday-off="${holidayData}">${escapeHtml(teacher.name)}<small>OFF | Public Holiday${slot.holidayName ? ` | ${escapeHtml(slot.holidayName)}` : ""}</small>${debugLabel}</button>`;
         }
         if (slot.status === "teacher_leave" || slot.teacherLeaveId || slot.source === "teacher_leave") {
           const leaveData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, teacherLeaveId: slot.teacherLeaveId || "", date: slot.date, time: slot.time }));
-          return `<button class="slot unavailable status-teacher-leave"${cellAttr}${occurrenceAttr} data-view-teacher-leave="${leaveData}">${escapeHtml(teacher.name)}<small>Teacher Leave${slot.remark ? ` | ${escapeHtml(slot.remark)}` : ""}</small></button>`;
+          return `<button class="slot unavailable status-teacher-leave"${cellAttr}${occurrenceAttr} data-view-teacher-leave="${leaveData}">${escapeHtml(teacher.name)}<small>Teacher Leave${slot.remark ? ` | ${escapeHtml(slot.remark)}` : ""}</small>${debugLabel}</button>`;
         }
         const offData = escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, slotId: slot.id || "", slotWasOff: true, interactionSource: "weekly_timetable" }));
-        return `<button class="slot unavailable"${cellAttr}${occurrenceAttr} data-open-off-slot="${offData}">${escapeHtml(teacher.name)}<small>OFF${slot.remark ? ` | ${escapeHtml(slot.remark)}` : ""}</small></button>`;
+        return `<button class="slot unavailable"${cellAttr}${occurrenceAttr} data-open-off-slot="${offData}">${escapeHtml(teacher.name)}<small>OFF${slot.remark ? ` | ${escapeHtml(slot.remark)}` : ""}</small>${debugLabel}</button>`;
       }
       if (booking) {
+        const bookingDebugLabel = slotDebugLabelHtml({
+          source: booking.source || "booking",
+          assignment: booking.normalizedRecurringAssignmentId || booking.assignmentId || booking.recurringAssignmentId || booking.recurringSourceSlotId || booking.sourceSlotId || "",
+          occurrence: occurrenceKeyForBooking(booking),
+          booking: booking.id || ""
+        });
         if (booking.source === "teacher_leave_record") {
           return `<button class="slot booked ${statusClass(booking.status)}"${cellAttr}${occurrenceAttr} disabled>
             <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
             <span class="status-badge ${statusClass(booking.status)}">${escapeHtml(bookingStatusLabel(booking.status))}</span>
             <span class="slot-student">Teacher Leave</span>
             ${booking.remark ? `<span class="slot-details">${escapeHtml(booking.remark)}</span>` : ""}
+            ${bookingDebugLabel}
           </button>`;
         }
         const reserveClass = booking.type === "reserve" ? " reserve" : "";
@@ -9923,6 +10097,7 @@
           <span class="${badgeClass}">${escapeHtml(displayStatus)}</span>
           <span class="slot-student">${escapeHtml(booking.studentName || "Class")}</span>
           <span class="slot-details">${escapeHtml(booking.type || "class")} | ${escapeHtml(subject || "-")}${escapeHtml(originalText)}</span>
+          ${bookingDebugLabel}
         </button>`;
       }
       if (slot.locked) {
@@ -9945,23 +10120,37 @@
           occurrenceKey: occurrenceKeyForSlot(slot, slot.date),
           reserved: Boolean(slot.reserved)
         }));
+        const fixedDebugLabel = slotDebugLabelHtml({
+          source: slot.source || "fixed",
+          assignment: slot.normalizedRecurringAssignmentId || slot.assignmentId || slot.recurringAssignmentId || slot.id || "",
+          occurrence: occurrenceKeyForSlot(slot, slot.date),
+          booking: ""
+        });
         if (slot.status === "public_holiday" || slot.publicHolidayId || slot.source === "public_holiday") {
           return `<button class="slot fixed status-public-holiday"${cellAttr}${occurrenceAttr} disabled>
             <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
             <span class="status-badge status-public-holiday">Public Holiday</span>
             <span class="slot-student">${escapeHtml(slot.studentName || "Regular class")}</span>
             <span class="slot-details">${escapeHtml(slot.type || "regular class")} | ${escapeHtml(subject || "-")}</span>
+            ${fixedDebugLabel}
           </button>`;
         }
-        if (slot.reserved) return `<button class="slot reserve" title="Reserved slot"${cellAttr}${occurrenceAttr} data-fixed-slot="${fixedData}">${escapeHtml(teacher.name)}<small>${escapeHtml(reservationLabel(slot))} | ${escapeHtml(subject)}</small></button>`;
+        if (slot.reserved) return `<button class="slot reserve" title="Reserved slot"${cellAttr}${occurrenceAttr} data-fixed-slot="${fixedData}">${escapeHtml(teacher.name)}<small>${escapeHtml(reservationLabel(slot))} | ${escapeHtml(subject)}</small>${fixedDebugLabel}</button>`;
         return `<button class="slot fixed" draggable="true" title="Drag to an open slot to move this fixed regular class" data-drag-fixed-slot="${fixedData}" data-fixed-slot="${fixedData}"${cellAttr}${occurrenceAttr}>
           <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
           <span class="slot-student">${escapeHtml(slot.studentName || "occupied")}</span>
           <span class="slot-details">regular class | ${escapeHtml(subject || "-")}</span>
+          ${fixedDebugLabel}
         </button>`;
       }
       const futureReservation = futureRegularReservationForDate(slot.teacherId, slot.date, slot.time);
-      return `<button class="slot"${cellAttr}${occurrenceAttr} data-slot="${escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, slotId: slot.id || "", occurrenceId, source: slot.source || "" }))}">${escapeHtml(teacher.name)}<small>${futureReservation ? `Temporary classes only until ${escapeHtml(formatDateFromAny(futureReservation.startDate))} | reserved for ${escapeHtml(futureReservation.studentName || "student")}` : `Available | ${escapeHtml(subject)} | 30 min slot, 25 min class`}</small></button>`;
+      const openDebugLabel = slotDebugLabelHtml({
+        source: slot.source || "open",
+        assignment: slot.normalizedRecurringAssignmentId || slot.assignmentId || slot.recurringAssignmentId || slot.id || "",
+        occurrence: occurrenceKeyForSlot(slot, slot.date),
+        booking: ""
+      });
+      return `<button class="slot"${cellAttr}${occurrenceAttr} data-slot="${escapeHtml(JSON.stringify({ teacherId: slot.teacherId, date: slot.date, day: slot.day, time: slot.time, subject, slotId: slot.id || "", occurrenceId, source: slot.source || "" }))}">${escapeHtml(teacher.name)}<small>${futureReservation ? `Temporary classes only until ${escapeHtml(formatDateFromAny(futureReservation.startDate))} | reserved for ${escapeHtml(futureReservation.studentName || "student")}` : `Available | ${escapeHtml(subject)} | 30 min slot, 25 min class`}</small>${openDebugLabel}</button>`;
     }
 
     function renderTeachers() {
@@ -16004,10 +16193,49 @@
         bytes: payloadBytes,
         legacyStatePatchTriggered: false
       });
+      if (SYNC_DEBUG) {
+        lastOccurrenceOutcomeDebug = {
+          generatedAt: new Date().toISOString(),
+          operation,
+          endpoint: "/api/bookings/outcome",
+          payloadBytes,
+          request: {
+            selectedUiOccurrence: occurrenceDebugRecordFromBooking(change.booking),
+            bookingId: body.bookingId || "",
+            occurrenceId: occurrenceIdForBooking(change.booking),
+            occurrenceKey: occurrenceKeyForBooking(change.booking),
+            recurringAssignmentId: change.booking.recurringAssignmentId || change.booking.assignmentId || change.booking.normalizedRecurringAssignmentId || recurringSourceSlotId(change.booking) || "",
+            sourceSlotId: change.booking.sourceSlotId || "",
+            date: dateOnly(change.booking.date || ""),
+            time: normalizeTimeValue(change.booking.time) || change.booking.time || "",
+            desiredOutcome: body.outcome || "",
+            expectedRecordVersion: body.expectedRecordVersion ?? null,
+            requestId: body.requestId || ""
+          },
+          response: null,
+          error: ""
+        };
+        console.info("[ClassOne occurrence cancel/outcome request]", lastOccurrenceOutcomeDebug);
+      }
       const data = await fetchNeonJson("/api/bookings/outcome", {
         method: "POST",
         body: JSON.stringify(body)
       }, `${label} delta sync`, SYNC_SAVE_TIMEOUT_MS);
+      if (SYNC_DEBUG && lastOccurrenceOutcomeDebug?.request?.requestId === body.requestId) {
+        lastOccurrenceOutcomeDebug.response = {
+          httpStatus: data.__httpStatus || 200,
+          canonicalBookingId: data.booking?.id || data.booking?.bookingId || "",
+          returnedOccurrence: data.booking ? occurrenceDebugRecordFromBooking(data.booking) : null,
+          returnedStatus: data.booking?.status || "",
+          returnedOutcome: data.booking?.outcome || "",
+          returnedClassOutcome: data.booking?.classOutcome || "",
+          resolutionActive: data.booking?.resolutionActive === true,
+          suppressRecurringOccurrence: data.booking?.suppressRecurringOccurrence === true,
+          recordVersion: Number(data.recordVersion || data.booking?.recordVersion || 0),
+          systemVersion: Number(data.version || 0)
+        };
+        console.info("[ClassOne occurrence cancel/outcome response]", lastOccurrenceOutcomeDebug);
+      }
       if (data.booking) {
         normaliseOccurrenceOutcome(data.booking, data.booking.status || data.booking.outcome || data.booking.classOutcome);
         upsertLocalRecord("bookings", data.booking);
