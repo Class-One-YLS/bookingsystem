@@ -10884,6 +10884,8 @@
             record?.finalStatus,
             record?.classOutcome,
             record?.outcomeStatus,
+            record?.resolutionStatus,
+            record?.resolutionOutcome,
             record?.businessStatus,
             record?.status
           ];
@@ -10926,10 +10928,14 @@
       if (status === "deleted") return -100;
       if (booking?.changedSlot) return 8;
       if (status === "student_not_show") return 7;
-      if (status === "booked") return 6;
-      if (status === "completed") return 5;
-      if (isCancelledStatus(status)) return 4;
+      if (isTerminalNonCompletedStatus(status)) return 6;
+      if (status === "booked") return 5;
+      if (status === "completed") return 4;
       return 1;
+    }
+
+    function isTerminalNonCompletedStatus(status) {
+      return status === "student_not_show" || isCancelledStatus(status);
     }
 
     function isHistoricalInactiveBooking(booking) {
@@ -10979,6 +10985,12 @@
         const candidateInactive = isHistoricalInactiveBooking(candidate);
         const existingInactive = isHistoricalInactiveBooking(existing);
         if (candidateInactive !== existingInactive) return !candidateInactive;
+      }
+      if (sameRecord || sameOccurrence) {
+        const candidateStatus = normalizeClassStatus(candidate);
+        const existingStatus = normalizeClassStatus(existing);
+        if (isTerminalNonCompletedStatus(candidateStatus) && existingStatus === "completed") return true;
+        if (candidateStatus === "completed" && isTerminalNonCompletedStatus(existingStatus)) return false;
       }
       const candidateTime = bookingAmendmentTime(candidate);
       const existingTime = bookingAmendmentTime(existing);
@@ -14988,10 +15000,30 @@
       return dates;
     }
 
+    function bookingCanAutoComplete(booking) {
+      const status = occurrenceResolutionStatus(booking) || normalizeClassStatus(booking) || String(booking?.status || "").toLowerCase();
+      return status === "booked" && slotHasPassed(booking.date, booking.time);
+    }
+
+    function slotHasTerminalNonCompletedOutcome(slot) {
+      const dateStr = dateOnly(slot?.date);
+      const targetTime = normalizeTimeValue(slot?.time) || slot?.time || "";
+      if (!slot?.teacherId || !dateStr || !targetTime) return false;
+      return bookingRecordsForResolution().some(booking => {
+        if (booking.teacherId !== slot.teacherId) return false;
+        if (dateOnly(booking.date) !== dateStr) return false;
+        if ((normalizeTimeValue(booking.time) || booking.time) !== targetTime) return false;
+        const status = occurrenceResolutionStatus(booking) || normalizeClassStatus(booking);
+        if (!isTerminalNonCompletedStatus(status)) return false;
+        const bookingOccurrenceKey = occurrenceKeyForBooking(booking);
+        return !bookingOccurrenceKey || recordsShareOccurrenceKey(booking, slot, dateStr);
+      });
+    }
+
     function finalizePassedBookings() {
       let changed = false;
       state.bookings.forEach(b => {
-        if (b.status === "booked" && slotHasPassed(b.date, b.time)) {
+        if (bookingCanAutoComplete(b)) {
           const now = new Date().toISOString();
           stampBookingStatus(b, "completed", now);
           b.finalizedAt = b.finalizedAt || now;
@@ -15015,6 +15047,7 @@
       datesBetween(start, end).forEach(date => {
         collectSlotsForDate(date).forEach(slot => {
           if (!slot.locked || slot.reserved || !slotHasPassed(slot.date, slot.time)) return;
+          if (slotHasTerminalNonCompletedOutcome(slot)) return;
           const existing = scheduleBookings().find(b =>
             b.teacherId === slot.teacherId &&
             dateOnly(b.date) === dateOnly(slot.date) &&
