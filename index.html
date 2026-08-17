@@ -3041,12 +3041,24 @@
         serverVersion: Number(rawPayload?.version || 0),
         updatedAt: rawPayload?.updatedAt || "",
         composed: rawPayload?.composed === true,
-        counts: extractedCounts
+        counts: extractedCounts,
+        scheduleCounts: nestedScheduleCountsFromPayload(extracted)
       });
       if (!hasCoreBusinessData(extractedCounts)) {
         throw new Error("Production Neon response appears empty. Existing frontend state was preserved.");
       }
       return { payload: extracted, rawCounts, counts: extractedCounts, rawKeys };
+    }
+
+    function nestedScheduleCountsFromPayload(payload = {}) {
+      const source = payload && typeof payload === "object" ? payload : {};
+      const teachers = coerceArrayCollection(source.teachers);
+      const students = coerceArrayCollection(source.students);
+      return {
+        teacherRegularSlots: teachers.reduce((sum, teacher) => sum + coerceArrayCollection(teacher?.regularSlots).length, 0),
+        teacherOverrideSlots: teachers.reduce((sum, teacher) => sum + coerceArrayCollection(teacher?.overrideSlots).length, 0),
+        studentRegularSlots: students.reduce((sum, student) => sum + coerceArrayCollection(student?.regularSlots).length, 0)
+      };
     }
 
     function normalizeLoadedStateShape(target = state) {
@@ -3555,6 +3567,76 @@
       ]);
     }
 
+    function normalizeLoadedRecurringAssignment(record = {}) {
+      if (!record || typeof record !== "object" || Array.isArray(record)) return null;
+      const sourceCollection = record.sourceCollection === "overrideSlots" ? "overrideSlots" : "regularSlots";
+      const assignmentId = String(
+        record.assignmentId ||
+        record.normalizedRecurringAssignmentId ||
+        record.recurringAssignmentId ||
+        record.recurringScheduleId ||
+        record.id ||
+        recurringAssignmentIdFromSlot(record, null, sourceCollection) ||
+        ""
+      );
+      if (!assignmentId) return null;
+      const teacherId = String(record.teacherId || "");
+      const day = record.day || record.weekday || "";
+      const time = normalizeTimeValue(record.time || record.classTime || "") || record.time || record.classTime || "";
+      if (!teacherId || !day || !time) return null;
+      const hasStudent = Boolean(record.studentId || record.studentName);
+      return {
+        ...record,
+        id: String(record.id || record.sourceSlotId || assignmentId),
+        assignmentId,
+        normalizedRecurringAssignmentId: assignmentId,
+        teacherId,
+        day,
+        weekday: record.weekday || day,
+        time,
+        subject: normalizeSubject(record.subject || ""),
+        type: record.type || "regular class",
+        status: record.status || (record.deleted ? "deleted" : record.unavailable ? "off" : "active"),
+        sourceCollection,
+        sourceSlotId: record.sourceSlotId || record.id || "",
+        studentSlotId: record.studentSlotId || "",
+        studentName: cleanStudentName(record.studentName || ""),
+        startDate: dateOnly(record.startDate || record.effectiveFrom || ""),
+        endDate: dateOnly(record.endDate || record.lastClassDate || record.lastLessonDate || ""),
+        locked: Boolean(record.locked || hasStudent) && !record.unavailable,
+        unavailable: Boolean(record.unavailable),
+        recordVersion: Number(record.recordVersion || 0),
+        createdAt: record.createdAt || "",
+        updatedAt: record.updatedAt || record.changedAt || record.createdAt || ""
+      };
+    }
+
+    function overlayLoadedRecurringAssignmentsIntoProfiles() {
+      const assignments = coerceArrayCollection(state.recurringAssignments)
+        .map(normalizeLoadedRecurringAssignment)
+        .filter(Boolean);
+      state.recurringAssignments = assignments;
+      let applied = 0;
+      assignments.forEach(assignment => {
+        const before = nestedScheduleCountsFromPayload(state);
+        applyRecurringAssignmentLocal(assignment);
+        const after = nestedScheduleCountsFromPayload(state);
+        if (
+          after.teacherRegularSlots !== before.teacherRegularSlots ||
+          after.teacherOverrideSlots !== before.teacherOverrideSlots ||
+          after.studentRegularSlots !== before.studentRegularSlots
+        ) applied += 1;
+      });
+      if (assignments.length) {
+        console.info("[ClassOne recurring assignment recovery]", {
+          topLevelRecurringAssignments: assignments.length,
+          appliedToProfiles: applied,
+          scheduleCounts: nestedScheduleCountsFromPayload(state)
+        });
+      }
+      return applied;
+    }
+
     function beginSyncPerf(label = "change") {
       const now = performance.now();
       syncPerf.active = {
@@ -3712,6 +3794,7 @@
         student.registeredRemark ||= "";
       });
       state.students = mergeDuplicateStudents(state.students);
+      overlayLoadedRecurringAssignmentsIntoProfiles();
       repairTeacherSlotsFromStudentProfiles();
       state.replacements.forEach(item => {
         item.studentName = cleanStudentName(item.studentName);
