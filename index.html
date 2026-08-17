@@ -2361,10 +2361,17 @@
 
     function currentUser() {
       const selectedId = uiStateGet("CurrentUserId", "");
+      const signedUser = sessionUser();
       let user = (state.users || []).find(item => item.id === selectedId && item.status !== "disabled");
+      if (!user && signedUser?.id) user = (state.users || []).find(item => item.id === signedUser.id && item.status !== "disabled");
+      if (!user && signedUser?.email) {
+        const signedEmail = String(signedUser.email || "").toLowerCase();
+        user = (state.users || []).find(item => String(item.email || "").toLowerCase() === signedEmail && item.status !== "disabled");
+      }
+      if (!user && signedUser && signedUser.status !== "disabled") user = signedUser;
       if (!user) user = (state.users || []).find(item => item.role === "master_admin" && item.status !== "disabled");
       if (!user) user = (state.users || []).find(item => item.status !== "disabled");
-      if (user && selectedId !== user.id) uiStateSet("CurrentUserId", user.id);
+      if (user?.id && selectedId !== user.id) uiStateSet("CurrentUserId", user.id);
       return user || null;
     }
 
@@ -12146,9 +12153,9 @@
       return [...(state.roles || [])].sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
     }
 
-    function renderAccessControls() {
+    function renderAccessControls(userOverride = null) {
       renderAuthState();
-      const user = currentUser();
+      const user = userOverride || currentUser();
       if (!isAuthenticated()) return;
       document.querySelectorAll(".nav-btn[data-tab]").forEach(button => {
         const visible = hasTabAccess(button.dataset.tab, user);
@@ -12157,7 +12164,7 @@
       const active = activeTabId();
       if (!hasTabAccess(active, user)) {
         const fallback = firstPermittedTab(user);
-        document.querySelector(`.nav-btn[data-tab="${fallback}"]`)?.click();
+        document.querySelector(`.nav-btn[data-tab="${CSS.escape(fallback)}"]`)?.click();
         accessDeniedToast("Opened an available section for your account.");
       }
       document.body.classList.toggle("viewer-mode", !hasActionPermission("edit", user));
@@ -12494,13 +12501,29 @@
       return tabId;
     }
 
-    function restoreSessionActiveTab() {
+    function tabButtonFor(tabId) {
+      if (!tabId) return null;
+      return document.querySelector(`.nav-btn[data-tab="${CSS.escape(tabId)}"]`);
+    }
+
+    function tabCanOpen(tabId, user = currentUser()) {
+      return Boolean(tabId && document.getElementById(tabId) && tabButtonFor(tabId) && hasTabAccess(tabId, user));
+    }
+
+    function restoreSessionActiveTab(options = {}) {
+      const user = options.user || currentUser();
       const hashTab = String(window.location.hash || "").replace(/^#/, "");
       const requestedTab = hashTab && document.getElementById(hashTab) ? hashTab : "";
-      const savedTab = requestedTab || uiSessionGet("active_tab", "");
-      if (!savedTab || !hasTabAccess(savedTab)) return false;
-      const button = document.querySelector(`.nav-btn[data-tab="${CSS.escape(savedTab)}"]`);
-      if (!button || button.classList.contains("hide")) return false;
+      const savedTab = uiSessionGet("active_tab", "");
+      const fallbackTab = firstPermittedTab(user);
+      const candidates = [requestedTab, savedTab, fallbackTab, "schedule"]
+        .filter((tab, index, list) => tab && list.indexOf(tab) === index);
+      const chosenTab = candidates.find(tab => tabCanOpen(tab, user));
+      if (!chosenTab) return false;
+      const button = tabButtonFor(chosenTab);
+      if (!button) return false;
+      if (button.classList.contains("hide") && hasTabAccess(chosenTab, user)) button.classList.remove("hide");
+      if (savedTab !== chosenTab) uiSessionSet("active_tab", chosenTab);
       button.click();
       return true;
     }
@@ -14540,13 +14563,19 @@
         hydrateSelects();
         setupMonths();
         await autoPullOnStart();
-        restoreSessionActiveTab();
         const user = (state.users || []).find(item => String(item.email || "").toLowerCase() === email.toLowerCase());
         if (user) uiStateSet("CurrentUserId", user.id);
+        renderAccessControls(user || signedInUser);
+        restoreSessionActiveTab({ user: user || signedInUser });
         setStatus(`Signed in as ${signedInUser?.name || email}.`);
       } catch (pullError) {
-        renderAll();
-        restoreSessionActiveTab();
+        try {
+          renderAll();
+        } catch (renderError) {
+          console.error("[ClassOne login] Workspace render failed after sign-in.", renderError);
+        }
+        renderAccessControls(signedInUser);
+        restoreSessionActiveTab({ user: signedInUser });
         setStatus(`Signed in, but latest Neon data could not load: ${pullError.message}`, "warn");
       } finally {
         setWorkspaceLoading(false);
@@ -14594,6 +14623,8 @@
       $("loginPassword").value = "";
       setLoginMessage("");
       renderAuthState();
+      renderAccessControls(data.user);
+      restoreSessionActiveTab({ user: data.user });
       setWorkspaceLoading(true);
       requestAnimationFrame(() => loadWorkspaceAfterSignIn(email, data.user));
     }
@@ -17751,7 +17782,7 @@
         hydrateSelects();
         setupMonths();
         renderAll();
-        restoreSessionActiveTab();
+        if (isAuthenticated()) restoreSessionActiveTab();
         setupCompactSearchFields();
         if (!isAuthenticated()) {
           setRetrySaveVisible(false);
