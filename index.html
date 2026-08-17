@@ -4687,6 +4687,10 @@
     function hydrateSelects() {
       const teacherOptions = [...activeTeachers()].sort(byName).map(t => ({ value: t.id, label: `${t.name} (${(t.subjects || []).join(", ") || "No subject"})` }));
       const timetableTeacherOptions = [...timetableTeachers()].sort(byName).map(t => ({ value: t.id, label: `${t.name} (${(t.subjects || []).join(", ") || "Imported timetable"})` }));
+      const studentOptions = fixedRegularStudentOptions().map(student => ({
+        value: student.id,
+        label: cleanStudentName(student.name || "Unnamed student")
+      }));
       ["assessmentTeacher", "trialTeacher"].forEach(id => fillSelect($(id), teacherOptions, "Choose teacher"));
       ["subjectFilter", "teacherDirectorySubject", "noShowSubjectFilter"].forEach(id => fillSelect($(id), SUBJECTS, "All Subjects"));
       ["timeFromFilter", "timeToFilter", "teacherLeaveFromTime", "teacherLeaveToTime"].forEach(id => fillSelect($(id), halfHourOptions()));
@@ -14579,16 +14583,29 @@
     async function loadWorkspaceAfterSignIn(email, signedInUser) {
       setWorkspaceLoading(true);
       try {
+        let postLoginWarning = false;
         if (signedInUser?.id) uiStateSet("CurrentUserId", signedInUser.id);
-        await withTimeout(hydratePersistentState(), 3000, "Browser cache took too long.");
-        hydrateSelects();
-        setupMonths();
-        await autoPullOnStart({ allowPendingSyncPush: false });
+        try {
+          await withTimeout(hydratePersistentState(), 3000, "Browser cache took too long.");
+          hydrateSelects();
+          setupMonths();
+        } catch (startupError) {
+          postLoginWarning = true;
+          console.error("[ClassOne login] Post-login controls could not initialize.", startupError);
+          setStatus(`Signed in, but part of the screen could not initialize: ${startupError.message}`, "warn");
+        }
+        try {
+          await autoPullOnStart({ allowPendingSyncPush: false });
+        } catch (neonError) {
+          postLoginWarning = true;
+          console.error("[ClassOne login] Latest Neon data could not load after sign-in.", neonError);
+          setStatus(`Signed in, but latest Neon data could not load: ${neonError.message}`, "warn");
+        }
         const user = (state.users || []).find(item => String(item.email || "").toLowerCase() === email.toLowerCase());
         if (user) uiStateSet("CurrentUserId", user.id);
         renderAccessControls(user || signedInUser);
         restoreSessionActiveTab({ user: user || signedInUser });
-        setStatus(`Signed in as ${signedInUser?.name || email}.`);
+        if (!postLoginWarning) setStatus(`Signed in as ${signedInUser?.name || email}.`);
       } catch (pullError) {
         try {
           renderAll();
@@ -14597,7 +14614,7 @@
         }
         renderAccessControls(signedInUser);
         restoreSessionActiveTab({ user: signedInUser });
-        setStatus(`Signed in, but latest Neon data could not load: ${pullError.message}`, "warn");
+        setStatus(`Signed in, but the workspace could not finish rendering: ${pullError.message}`, "warn");
       } finally {
         setWorkspaceLoading(false);
       }
