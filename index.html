@@ -2758,6 +2758,30 @@
     const isCancelledStatus = (status) => CANCELLED_STATUSES.includes(status);
     const slotDateTime = (date, time) => new Date(`${date}T${time || "00:00"}:00`);
     const slotHasPassed = (date, time) => slotDateTime(date, time) < new Date();
+    const TERMINAL_DISPLAY_STATUSES = new Set(["cancelled", "student_not_show", "teacher_leave", "public_holiday", "completed"]);
+    function occurrenceDurationMinutes(record) {
+      const duration = Number(record?.minutes || record?.durationMinutes || record?.duration || record?.classMinutes || 25);
+      return Number.isFinite(duration) && duration > 0 ? duration : 25;
+    }
+    function occurrenceEndTimeMs(record) {
+      const date = dateOnly(record?.date || record?.occurrenceDate || "");
+      const time = normalizeTimeValue(record?.time || record?.startTime || "") || record?.time || record?.startTime || "";
+      const normalizedTime = String(time || "").match(/^\d{1,2}:\d{2}/) ? String(time).slice(0, 5) : "";
+      if (!date || !normalizedTime) return 0;
+      const startMs = Date.parse(`${date}T${normalizedTime}:00+08:00`);
+      if (!Number.isFinite(startMs)) return 0;
+      return startMs + occurrenceDurationMinutes(record) * 60 * 1000;
+    }
+    function occurrenceDisplayStatus(record, fallbackStatus = "booked", nowMs = Date.now()) {
+      let normalized = normalizeClassStatus(record) || normalizeClassStatus(fallbackStatus) || fallbackStatus || "";
+      const normalizedKey = String(normalized || "").trim().toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
+      if (["active", "regular", "regular_class", "confirmed"].includes(normalizedKey)) normalized = "booked";
+      if (["available", "off", "deleted", "reserved"].includes(normalizedKey)) return normalizedKey;
+      if (TERMINAL_DISPLAY_STATUSES.has(normalized)) return normalized;
+      const endMs = occurrenceEndTimeMs(record);
+      if (endMs && endMs <= nowMs) return "completed";
+      return normalizeClassStatus(normalized) || normalized || "booked";
+    }
     const datePart = (value) => String(value || "").split("T")[0].split(" ")[0];
     const dayFromISO = (value) => {
       const date = parseISODate(dateOnly(value));
@@ -6583,7 +6607,7 @@
     }
 
     function calendarCellFromBooking(booking, teacher, slot = null) {
-      const status = occurrenceResolutionStatus(booking) || normalizeClassStatus(booking) || booking.status || "booked";
+      const status = occurrenceDisplayStatus(booking, occurrenceResolutionStatus(booking) || normalizeClassStatus(booking) || booking.status || "booked");
       const recurringScheduleId = booking.normalizedRecurringAssignmentId ||
         booking.assignmentId ||
         booking.recurringAssignmentId ||
@@ -6636,7 +6660,7 @@
         createdAt: booking.createdAt || "",
         updatedAt: booking.updatedAt || booking.statusChangedAt || booking.slotRevisionAt || "",
         resolvedAt: new Date().toISOString(),
-        booking,
+        booking: { ...booking, status },
         slot
       };
     }
@@ -6654,6 +6678,9 @@
         slot.recurringScheduleId ||
         slot.id ||
         "";
+      const status = isOffSlot
+        ? unavailableStatus
+        : (slot.reserved ? "reserved" : (slot.locked ? occurrenceDisplayStatus({ ...slot, date: dateOnly(slot.date), time: normalizeTimeValue(slot.time) || slot.time, status: slot.status || "booked" }) : "available"));
       return {
         cellKey: `${slot.teacherId || teacher?.id || ""}|${dateOnly(slot.date)}|${normalizeTimeValue(slot.time) || slot.time}`,
         teacherId: slot.teacherId || teacher?.id || "",
@@ -6678,7 +6705,7 @@
         studentName: slot.reserved ? (slot.reservationName || slot.studentName || "") : (slot.studentName || ""),
         subject: slot.subject || "",
         type: isOffSlot ? (unavailableStatus === "teacher_leave" ? "teacher leave" : "off") : (slot.reserved ? "reserve" : (slot.locked ? "regular class" : "open slot")),
-        status: isOffSlot ? unavailableStatus : (slot.locked || slot.reserved ? "booked" : "available"),
+        status,
         teacherLeaveId: slot.teacherLeaveId || "",
         minutes: 25,
         remark: slot.remark || "",
@@ -6692,7 +6719,7 @@
         updatedAt: slot.updatedAt || slot.slotRevisionAt || "",
         resolvedAt: new Date().toISOString(),
         booking: null,
-        slot
+        slot: { ...slot, status }
       };
     }
 
@@ -10036,8 +10063,12 @@
           </button>`;
         }
         if (slot.reserved) return `<button class="slot reserve" title="Reserved slot"${cellAttr}${occurrenceAttr} data-fixed-slot="${fixedData}">${escapeHtml(teacher.name)}<small>${escapeHtml(reservationLabel(slot))} | ${escapeHtml(subject)}</small>${fixedDebugLabel}</button>`;
-        return `<button class="slot fixed" draggable="true" title="Drag to an open slot to move this fixed regular class" data-drag-fixed-slot="${fixedData}" data-fixed-slot="${fixedData}"${cellAttr}${occurrenceAttr}>
+        const fixedStatus = normalizeClassStatus(slot.status);
+        const fixedStatusClass = fixedStatus && fixedStatus !== "booked" ? ` ${statusClass(fixedStatus)}` : "";
+        const fixedStatusBadge = fixedStatus === "completed" ? `<span class="completed-badge">Completed</span>` : "";
+        return `<button class="slot fixed${fixedStatusClass}" draggable="true" title="Drag to an open slot to move this fixed regular class" data-drag-fixed-slot="${fixedData}" data-fixed-slot="${fixedData}"${cellAttr}${occurrenceAttr}>
           <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
+          ${fixedStatusBadge}
           <span class="slot-student">${escapeHtml(slot.studentName || "occupied")}</span>
           <span class="slot-details">regular class | ${escapeHtml(subject || "-")}</span>
           ${fixedDebugLabel}
