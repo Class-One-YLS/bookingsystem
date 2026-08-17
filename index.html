@@ -2290,6 +2290,7 @@
     let liveFormFieldDrafts = new Map();
     let isInitialDataLoading = false;
     let initialDataLoadComplete = false;
+    let recurringRecoveryNeedsScheduleRerender = false;
     let pendingReplacementId = "";
     let pendingReplacementCreditId = "";
     let pendingOpenAndBook = false;
@@ -3826,6 +3827,7 @@
           }
         }
       });
+      if (teacherRegularSlotsProduced || teacherOverrideSlotsProduced) recurringRecoveryNeedsScheduleRerender = true;
 
       if (rawAssignments.length) {
         const visibleTimetableOccurrencesThisWeek = activeAssignments
@@ -5154,6 +5156,8 @@
         value: student.id,
         label: cleanStudentName(student.name || "Unnamed student")
       }));
+      fillSelect($("teacherFilter"), timetableTeacherOptions, "All Teachers");
+      fillSelect($("overviewTeacherFilter"), timetableTeacherOptions, "All Teachers");
       ["assessmentTeacher", "trialTeacher"].forEach(id => fillSelect($(id), teacherOptions, "Choose teacher"));
       ["subjectFilter", "teacherDirectorySubject", "noShowSubjectFilter"].forEach(id => fillSelect($(id), SUBJECTS, "All Subjects"));
       ["timeFromFilter", "timeToFilter", "teacherLeaveFromTime", "teacherLeaveToTime"].forEach(id => fillSelect($(id), halfHourOptions()));
@@ -7699,6 +7703,28 @@
       return (start == null || value >= start) && (end == null || value < end);
     }
 
+    function safeScheduleSelectValue(id, fallback = "all") {
+      const el = $(id);
+      if (!el) return fallback;
+      const value = String(el.value || "").trim();
+      const validValues = [...el.options].map(option => option.value);
+      if (value && validValues.includes(value)) return value;
+      const nextValue = validValues.includes(fallback) ? fallback : (validValues[0] || fallback);
+      el.value = nextValue;
+      return nextValue || fallback;
+    }
+
+    function normalizedScheduleFilters() {
+      return {
+        teacher: safeScheduleSelectValue("teacherFilter", "all"),
+        subject: safeScheduleSelectValue("subjectFilter", "all"),
+        timeFrom: safeScheduleSelectValue("timeFromFilter", "all"),
+        timeTo: safeScheduleSelectValue("timeToFilter", "all"),
+        status: safeScheduleSelectValue("statusFilter", "all"),
+        type: safeScheduleSelectValue("typeFilter", "all")
+      };
+    }
+
     function scheduleItemType(slot, booking) {
       if (booking) return booking.type || "regular class";
       if (slot.reserved) return "reserve";
@@ -7757,31 +7783,43 @@
       const dates = weekDates();
       finalizePassedClassesForRange(dates[0], dates[dates.length - 1]);
       const times = new Set();
-      const teacherFilterForTimes = $("teacherFilter")?.value || "all";
+      const scheduleFilters = normalizedScheduleFilters();
+      const teacherFilterForTimes = scheduleFilters.teacher;
       const resolvedByDate = new Map(dates.map(date => [localISO(date), resolvedCellsForDate(date)]));
+      const resolvedCells = [...resolvedByDate.values()].flat();
       weeklyResolvedCellsByKey = new Map();
       weeklyBookingsById = new Map();
       weeklyBookingsByOccurrenceId = new Map();
-      [...resolvedByDate.values()].flat().forEach(cell => {
+      resolvedCells.forEach(cell => {
         const key = cell.cellKey || teacherDateTimeKey(cell.teacherId, cell.date, cell.time);
         if (key) weeklyResolvedCellsByKey.set(key, cell);
         if (cell.bookingId && cell.booking) weeklyBookingsById.set(cell.bookingId, cell.booking);
         if (cell.occurrenceId && cell.booking) weeklyBookingsByOccurrenceId.set(cell.occurrenceId, cell.booking);
       });
-      [...resolvedByDate.values()].flat().forEach(cell => times.add(cell.time));
+      resolvedCells.forEach(cell => times.add(cell.time));
       dates.forEach(date => weeklyRawTimeCandidatesForDate(localISO(date), teacherFilterForTimes).forEach(time => times.add(time)));
       const sortedTimes = [...times].sort((a, b) => minutes(a) - minutes(b));
       const summary = { open: 0, booked: 0, fixed: 0, visibleTeachers: new Set() };
+      const renderDiagnostics = {
+        resolvedOccurrences: resolvedCells.filter(cell => cell.kind !== "open" && cell.status !== "available" && !cell.available).length,
+        resolvedCells: resolvedCells.length,
+        afterFilters: 0,
+        teachersVisible: 0,
+        cellsBuilt: 0,
+        cardsRendered: 0,
+        domCards: 0,
+        filters: { ...scheduleFilters }
+      };
       let html = `<div class="cell head schedule-corner"></div>${dates.map(d => `<div class="cell head">${DAYS[(d.getDay() + 6) % 7].slice(0, 3)}<br><span class="subtle">${d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}</span></div>`).join("")}`;
       sortedTimes.forEach(t => {
         html += `<div class="cell time-cell ${minutes(t) < 720 ? "time-am" : "time-pm"}" data-time="${escapeHtml(t)}">${timeLabel(t)}</div>`;
         dates.forEach(d => {
-          const teacherFilter = $("teacherFilter").value;
-          const subjectFilter = $("subjectFilter").value;
-          const statusFilter = $("statusFilter").value;
-          const typeFilter = $("typeFilter").value;
-          const timeFrom = $("timeFromFilter").value;
-          const timeTo = $("timeToFilter").value;
+          const teacherFilter = scheduleFilters.teacher;
+          const subjectFilter = scheduleFilters.subject;
+          const statusFilter = scheduleFilters.status;
+          const typeFilter = scheduleFilters.type;
+          const timeFrom = scheduleFilters.timeFrom;
+          const timeTo = scheduleFilters.timeTo;
           const cellDate = localISO(d);
           const cellDay = DAYS[(d.getDay() + 6) % 7];
           const baseCells = (resolvedByDate.get(cellDate) || []).filter(cell => cell.time === t);
@@ -7811,6 +7849,8 @@
             const matchesType = typeFilter === "all" || scheduleItemType(x.slot, x.booking) === typeFilter;
             return matchesStatus && matchesType;
           });
+          renderDiagnostics.afterFilters += filtered.length;
+          renderDiagnostics.cellsBuilt += 1;
           filtered.forEach(x => {
             summary.visibleTeachers.add(x.cell.teacherId);
             if (x.cell.kind === "off" || x.cell.status === "off" || normalizeAvailabilityStatus(x.slot) === "off") return;
@@ -7818,10 +7858,14 @@
             else if (x.slot.locked) summary.fixed += 1;
             else summary.open += 1;
           });
+          renderDiagnostics.cardsRendered += filtered.length;
           html += `<div class="cell" data-cell-date="${cellDate}" data-cell-day="${cellDay}" data-cell-time="${t}">${filtered.map(x => slotHtml(x.slot, x.booking)).join("") || ""}</div>`;
         });
       });
       $("scheduleGrid").innerHTML = html || `<div class="empty">No slots yet.</div>`;
+      renderDiagnostics.teachersVisible = summary.visibleTeachers.size;
+      renderDiagnostics.domCards = document.querySelectorAll("#scheduleGrid .slot").length;
+      console.info("WEEKLY TIMETABLE RENDER", renderDiagnostics);
       renderSalesSummary(summary);
       renderPendingReplacementBanner();
       smartScrollSchedule(resolvedByDate);
@@ -13254,6 +13298,12 @@
       }
     }
 
+    function renderScheduleAfterRecurringRecoveryIfNeeded() {
+      if (!recurringRecoveryNeedsScheduleRerender) return;
+      recurringRecoveryNeedsScheduleRerender = false;
+      if ($("scheduleGrid")) renderSchedule();
+    }
+
     function clearTeacherForm() {
       $("teacherId").value = "";
       $("teacherName").value = "";
@@ -15617,6 +15667,7 @@
           initialDataLoadComplete = true;
           processExpiredReservations();
           renderAllForStartup("pending browser sync render");
+          renderScheduleAfterRecurringRecoveryIfNeeded();
           startAutoNeonRefresh();
       return;
     }
@@ -15641,6 +15692,7 @@
         setupMonths();
         initialDataLoadComplete = false;
         renderAllForStartup("Neon startup render");
+        renderScheduleAfterRecurringRecoveryIfNeeded();
         initialDataLoadComplete = true;
         startAutoNeonRefresh();
         return;
@@ -15651,6 +15703,7 @@
         initialDataLoadComplete = true;
         processExpiredReservations();
         renderAllForStartup("local startup render");
+        renderScheduleAfterRecurringRecoveryIfNeeded();
         return;
       }
       startAutoLoadCountdown(Math.ceil(SYNC_READ_TIMEOUT_MS / 1000), "Google Sheet data");
@@ -15664,6 +15717,7 @@
       initialDataLoadComplete = true;
       processExpiredReservations();
       renderAllForStartup("Google Sheet startup render");
+      renderScheduleAfterRecurringRecoveryIfNeeded();
     }
 
     function modalIsOpen() {
