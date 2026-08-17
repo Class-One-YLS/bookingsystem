@@ -10558,12 +10558,21 @@
       return "";
     }
 
+    function templateUiAvailable() {
+      return ["templateList", "templateId", "templateTitle", "templateCategory", "templateBody", "templatePreview"].every(id => Boolean($(id)));
+    }
+
+    function archiveUiAvailable() {
+      return ["archivedTeacherList", "archivedTeacherPager", "archivedStudentList", "archivedStudentPager", "completedClassList", "completedClassPager"].every(id => Boolean($(id)));
+    }
+
     function dateOnly(value) {
       if (!value) return "";
       return String(value).slice(0, 10);
     }
 
     function renderTemplates() {
+      if (!templateUiAvailable()) return;
       const templates = state.settings.replyTemplates || [];
       const selectedId = $("templateId")?.value || templates[0]?.id || "";
       const selected = templates.find(template => template.id === selectedId) || templates[0];
@@ -10588,6 +10597,7 @@
     }
 
     function clearTemplateForm() {
+      if (!templateUiAvailable()) return;
       $("templateId").value = "";
       $("templateTitle").value = "";
       $("templateCategory").value = "";
@@ -10596,6 +10606,7 @@
     }
 
     function saveTemplate() {
+      if (!templateUiAvailable()) return;
       const title = $("templateTitle").value.trim();
       const body = $("templateBody").value.trim();
       if (!title || !body) return alert("Template title and message are required.");
@@ -10611,7 +10622,7 @@
     }
 
     function renderArchive() {
-      if (!$("archivedTeacherList") || !$("archivedStudentList") || !$("completedClassList")) return;
+      if (!archiveUiAvailable()) return;
       const archivedTeachers = [...state.teachers].filter(t => isTeacherArchived(t) && !isImportedOnlyTeacher(t)).sort(byName);
       const archivedStudents = [...state.students].filter(s => s.status === "archived").sort(byName);
       const completedClasses = [...state.bookings].filter(b => b.status === "completed").sort((a, b) => `${b.date || ""}${b.time || ""}`.localeCompare(`${a.date || ""}${a.time || ""}`));
@@ -12803,10 +12814,10 @@
       renderTeachers();
       renderStudents();
       renderTeacherStudentRecords();
-      renderArchive();
+      if (archiveUiAvailable()) renderArchive();
       renderTeacherOverview();
       renderStudentRegularSlotDraft();
-      renderTemplates();
+      if (templateUiAvailable()) renderTemplates();
       renderReplacements();
       renderReplacementCredits();
       renderPublicHolidayCalendar();
@@ -16612,8 +16623,9 @@
         setActionButtonLabel($("addStudentRegularSlotBtn"), "Update Regular Slot");
         $("cancelStudentRegularEditBtn").classList.remove("hide");
       }
-            const templateBtn = e.target.closest("[data-template-id]");
+      const templateBtn = e.target.closest("[data-template-id]");
       if (templateBtn) {
+        if (!templateUiAvailable()) return;
         const template = (state.settings.replyTemplates || []).find(item => item.id === templateBtn.dataset.templateId);
         if (template) {
           $("templateId").value = template.id;
@@ -17578,10 +17590,12 @@
     $("registeredStudentSearch").addEventListener("input", () => { registeredStudentPage = 1; renderRegisteredStudents(); scrollToListStart("registeredStudentList"); });
     ["teacherStudentRecordTeacher", "teacherStudentRecordStatus"].forEach(id => $(id).addEventListener("change", () => { teacherStudentRecordPage = 1; renderTeacherStudentRecords(); scrollToListStart("teacherStudentRecordList"); }));
     $("teacherStudentRecordSearch").addEventListener("input", () => { teacherStudentRecordPage = 1; renderTeacherStudentRecords(); scrollToListStart("teacherStudentRecordList"); });
-    $("newTemplateBtn").onclick = clearTemplateForm;
-    $("saveTemplateBtn").onclick = saveTemplate;
-    $("templateBody").addEventListener("input", () => $("templatePreview").textContent = $("templateBody").value);
-    $("deleteTemplateBtn").onclick = () => {
+    if ($("newTemplateBtn")) $("newTemplateBtn").onclick = clearTemplateForm;
+    if ($("saveTemplateBtn")) $("saveTemplateBtn").onclick = saveTemplate;
+    if ($("templateBody")) $("templateBody").addEventListener("input", () => {
+      if ($("templatePreview")) $("templatePreview").textContent = $("templateBody").value;
+    });
+    if ($("deleteTemplateBtn")) $("deleteTemplateBtn").onclick = () => {
       const id = $("templateId").value;
       if (!id) return clearTemplateForm();
       if (!confirm("Delete this reply template?")) return;
@@ -17591,7 +17605,7 @@
       clearTemplateForm();
       save();
     };
-    $("copyTemplateBtn").onclick = async () => {
+    if ($("copyTemplateBtn")) $("copyTemplateBtn").onclick = async () => {
       const message = $("templateBody").value;
       if (!message) return alert("Choose or type a template message first.");
       try {
