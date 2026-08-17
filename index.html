@@ -4452,11 +4452,16 @@
         linkedBooking.feedbackActionStatus = existing.actionStatus;
         linkedBooking.updatedAt = now;
       }
-      logAction(before ? "Teacher Feedback Updated" : "Teacher Feedback Added", teacher.name, before, existing.feedback, `${existing.studentName || "General"} | ${existing.category}`);
-      save(false);
+      const activityLog = logAction(before ? "Teacher Feedback Updated" : "Teacher Feedback Added", teacher.name, before, existing.feedback, `${existing.studentName || "General"} | ${existing.category}`);
+      persistState();
       renderTeacherFeedbackList(teacher.id);
       renderTeachers();
       setStatus("Teacher feedback saved.");
+      syncRecordTransactionAsync({
+        teacherFeedback: [existing],
+        bookings: [linkedBooking].filter(Boolean),
+        activityLogs: [activityLog]
+      }, "Teacher feedback saved", { operation: "teacher_feedback_save", teacherView: Boolean(linkedBooking) });
     }
 
     function upsertFeedbackFromOutcome(booking) {
@@ -6517,7 +6522,7 @@
       leave.affectedOverrideIds = openResult.affectedOverrideIds || [];
       leave.replacementRecordIds = result.replacementRecordIds || [];
       const actionName = existingLeave ? "Teacher Leave Updated" : "Teacher Leave Added";
-      logAction(actionName, teacherById(values.teacherId)?.name || values.teacherId, existingLeave ? "Existing leave updated" : "", `${teacherLeaveSummary(leave)} | ${result.changed} booked class${result.changed === 1 ? "" : "es"} marked Teacher Leave | ${openResult.openSlotsBlocked} open slot${openResult.openSlotsBlocked === 1 ? "" : "s"} changed to OFF | ${result.replacementsCreated} replacement record${result.replacementsCreated === 1 ? "" : "s"} created`, leave.remark || "", {
+      const activityLog = logAction(actionName, teacherById(values.teacherId)?.name || values.teacherId, existingLeave ? "Existing leave updated" : "", `${teacherLeaveSummary(leave)} | ${result.changed} booked class${result.changed === 1 ? "" : "es"} marked Teacher Leave | ${openResult.openSlotsBlocked} open slot${openResult.openSlotsBlocked === 1 ? "" : "s"} changed to OFF | ${result.replacementsCreated} replacement record${result.replacementsCreated === 1 ? "" : "s"} created`, leave.remark || "", {
         undo: makeUndoSnapshot(beforeSnapshot, snapshotCollections({
           teachers: snapshotTeacherIds,
           teacherLeaves: [leave.id],
@@ -6528,13 +6533,25 @@
       });
       $("teacherLeaveModal").classList.add("hide");
       editingTeacherLeaveId = "";
-      save(false);
       renderSchedule();
       renderTeacherOverview();
       renderReplacements();
       renderActivityLog();
-      const synced = await autoPushIfConfigured(`Teacher leave saved. ${result.changed} class${result.changed === 1 ? "" : "es"} updated, ${openResult.openSlotsBlocked} open slot${openResult.openSlotsBlocked === 1 ? "" : "s"} blocked.`);
-      setStatus(synced ? `Teacher leave added. ${result.changed} booked class${result.changed === 1 ? "" : "es"} updated and ${openResult.openSlotsBlocked} open slot${openResult.openSlotsBlocked === 1 ? "" : "s"} changed to OFF.` : `Teacher leave saved locally and is syncing to Neon. Not synced to Teacher View yet.`, synced ? "success" : "warn");
+      try {
+        await syncRecordTransaction({
+          teachers: snapshotTeacherIds.map(id => teacherById(id)).filter(Boolean),
+          teacherLeaves: [leave],
+          bookings: (state.bookings || []).filter(item => item.teacherLeaveId === leave.id),
+          replacements: (state.replacements || []).filter(item => item.teacherLeaveId === leave.id),
+          replacementCredits: (state.replacementCredits || []).filter(item => item.teacherLeaveId === leave.id || (item.sourceBookingId && (leave.affectedBookingIds || []).includes(item.sourceBookingId))),
+          activityLogs: [activityLog]
+        }, "Teacher leave saved", { operation: existingLeave ? "teacher_leave_update" : "teacher_leave_create" });
+        setStatus(`Teacher leave added. ${result.changed} booked class${result.changed === 1 ? "" : "es"} updated and ${openResult.openSlotsBlocked} open slot${openResult.openSlotsBlocked === 1 ? "" : "s"} changed to OFF.`, "success");
+      } catch (error) {
+        persistState();
+        markTeacherViewOutdated("Teacher leave saved in this browser only. Not synced to Teacher View yet.");
+        setStatus(`Teacher leave saved locally. Sync pending: ${error.message}`, "warn");
+      }
       } finally {
         teacherLeaveSaveInProgress = false;
         if (saveButton) saveButton.disabled = false;
@@ -7418,14 +7435,18 @@
       teacher.updatedBy = currentUserEmail();
       teacher.deviceId = currentDeviceId();
       const after = snapshotCollections({ teachers: [teacher.id], bookings: (state.bookings || []).filter(booking => booking.teacherId === teacher.id && studentNameKey(booking.studentName || "") === targetStudentKey).map(booking => booking.id) });
-      logAction("Recurring Source Cleanup", studentName, label, `Regular sources: ${regularSlotsUpdated}, date-specific sources: ${overrideSlotsUpdated}, future bookings deleted: ${bookingsDeleted}`, reason || "Stopped duplicate recurring class source.", {
+      const activityLog = logAction("Recurring Source Cleanup", studentName, label, `Regular sources: ${regularSlotsUpdated}, date-specific sources: ${overrideSlotsUpdated}, future bookings deleted: ${bookingsDeleted}`, reason || "Stopped duplicate recurring class source.", {
         undo: makeUndoSnapshot(before, after)
       });
-      save(false);
+      persistState();
       renderSchedule();
       renderTeacherOverview();
       renderActivityLog();
-      scheduleAutoPush();
+      syncRecordTransactionAsync({
+        teachers: [teacher],
+        bookings: (state.bookings || []).filter(booking => booking.teacherId === teacher.id && studentNameKey(booking.studentName || "") === targetStudentKey),
+        activityLogs: [activityLog]
+      }, "Recurring source cleanup", { operation: "recurring_source_cleanup" });
       const result = { ok: true, teacherId: teacher.id, teacherName: teacher.name, studentName, date: dateISO, time: targetTime, regularSlotsUpdated, overrideSlotsUpdated, bookingsDeleted };
       console.info("[ClassOne recurring source cleanup]", result);
       return result;
@@ -8100,10 +8121,11 @@
       teacher.updatedAt = new Date().toISOString();
       const periodLabel = periods.map(period => `${period.days.map(day => day.slice(0, 3)).join("/")} ${timeLabel(period.from)}-${timeLabel(period.to)}`).join(", ");
       const undoAfter = snapshotCollections({ teachers: [teacher.id] });
-      logAction("Teacher Slots Bulk Edited", teacher.name, periodLabel, `${changed} ${actionLabel}; ${skipped} booked skipped; ${unchanged} unchanged`, "Updated from Teacher Overview Edit Slots.", {
+      const activityLog = logAction("Teacher Slots Bulk Edited", teacher.name, periodLabel, `${changed} ${actionLabel}; ${skipped} booked skipped; ${unchanged} unchanged`, "Updated from Teacher Overview Edit Slots.", {
         undo: makeUndoSnapshot(undoBefore, undoAfter)
       });
-      save(false);
+      persistState();
+      syncRecordTransactionAsync({ teachers: [teacher], activityLogs: [activityLog] }, "Teacher slots bulk edited", { operation: "teacher_slots_bulk_edit" });
       setTeacherSlotEditMode(false);
       setStatus(`${teacher.name}: ${changed} slot${changed === 1 ? "" : "s"} updated, ${skipped} booked skipped, ${unchanged} unchanged.`);
     }
@@ -8446,10 +8468,11 @@
       }
       teacher.updatedAt = new Date().toISOString();
       const undoAfter = snapshotCollections({ teachers: [teacher.id] });
-      logAction("Teacher Regular Slot Opened", teacher.name, "OFF", `${data.day} ${timeLabel(data.time)} open`, "Opened directly from Teacher Overview.", {
+      const activityLog = logAction("Teacher Regular Slot Opened", teacher.name, "OFF", `${data.day} ${timeLabel(data.time)} open`, "Opened directly from Teacher Overview.", {
         undo: makeUndoSnapshot(undoBefore, undoAfter)
       });
-      save(false);
+      persistState();
+      syncRecordTransactionAsync({ teachers: [teacher], activityLogs: [activityLog] }, "Teacher regular slot opened", { operation: "teacher_slot_open" });
       if (teacherSlotEditMode) setTeacherSlotEditMode(false);
       else renderTeacherOverview();
       setStatus(`${teacher.name}: ${data.day} ${timeLabel(data.time)} is now an open weekly slot.`);
@@ -8472,10 +8495,11 @@
         return alert("The slot could not be changed to OFF. Please refresh and try again.");
       }
       const undoAfter = snapshotCollections({ teachers: [teacher.id] });
-      logAction("Teacher Slot Set To OFF", teacher.name, `${data.day} ${timeLabel(data.time)} open`, "OFF", "Changed in Teacher Overview Edit Slots mode.", {
+      const activityLog = logAction("Teacher Slot Set To OFF", teacher.name, `${data.day} ${timeLabel(data.time)} open`, "OFF", "Changed in Teacher Overview Edit Slots mode.", {
         undo: makeUndoSnapshot(undoBefore, undoAfter)
       });
-      save(false);
+      persistState();
+      syncRecordTransactionAsync({ teachers: [teacher], activityLogs: [activityLog] }, "Teacher slot set to OFF", { operation: "teacher_slot_set_off" });
       setTeacherSlotEditMode(false);
       setStatus(`${teacher.name}: ${data.day} ${timeLabel(data.time)} OFF saved locally · Syncing.`);
     }
@@ -8589,10 +8613,11 @@
       const now = new Date().toISOString();
       slot.updatedAt = now;
       teacher.updatedAt = now;
-      logAction(after ? (before ? "Open Slot Remark Updated" : "Open Slot Remark Added") : "Open Slot Remark Deleted", teacher.name, before || "No remark", after || "Remark removed", `${data.day} ${timeLabel(data.time)} | admin only`);
+      const activityLog = logAction(after ? (before ? "Open Slot Remark Updated" : "Open Slot Remark Added") : "Open Slot Remark Deleted", teacher.name, before || "No remark", after || "Remark removed", `${data.day} ${timeLabel(data.time)} | admin only`);
       $("teacherOpenSlotRemarkModal").classList.add("hide");
-      save(false);
+      persistState();
       renderTeacherOverview();
+      syncRecordTransactionAsync({ teachers: [teacher], activityLogs: [activityLog] }, after ? "Open slot remark saved" : "Open slot remark deleted", { operation: "teacher_slot_remark" });
       setStatus(after ? "Open slot remark saved. It is visible only to admin." : "Open slot remark deleted.");
     }
 
@@ -8702,9 +8727,10 @@
         });
         selectedStudent.updatedAt = now;
         teacher.updatedAt = now;
-        logAction("Future Regular Class Reserved", `${reserveName} with ${teacher.name}`, "Open weekly slot", `${data.day} ${timeLabel(data.time)} | starts ${regularStartDate}`, "Temporary classes remain allowed before the start date.");
+        const activityLog = logAction("Future Regular Class Reserved", `${reserveName} with ${teacher.name}`, "Open weekly slot", `${data.day} ${timeLabel(data.time)} | starts ${regularStartDate}`, "Temporary classes remain allowed before the start date.");
         $("reserveRegularSlotModal").classList.add("hide");
-        save(false);
+        persistState();
+        syncRecordTransactionAsync({ teachers: [teacher], students: [selectedStudent], activityLogs: [activityLog] }, "Future regular class reserved", { operation: "regular_reservation_future" });
         setStatus(`${futureRegularReservationLabel({ studentName: reserveName, startDate: regularStartDate })}.`);
         return;
       }
@@ -8731,9 +8757,10 @@
         updatedAt: now
       });
       teacher.updatedAt = now;
-      logAction("Regular Slot Reserved", `${reserveName} with ${teacher.name}`, "Open weekly slot", `${data.day} ${timeLabel(data.time)} | ${startDate} to ${endDate}`, `${person.label}; reservation expires automatically after 14 days.`);
+      const activityLog = logAction("Regular Slot Reserved", `${reserveName} with ${teacher.name}`, "Open weekly slot", `${data.day} ${timeLabel(data.time)} | ${startDate} to ${endDate}`, `${person.label}; reservation expires automatically after 14 days.`);
       $("reserveRegularSlotModal").classList.add("hide");
-      save(false);
+      persistState();
+      syncRecordTransactionAsync({ teachers: [teacher], activityLogs: [activityLog] }, "Regular slot reserved", { operation: "regular_slot_reserve" });
       setStatus(`${teacher.name}'s ${data.day} ${timeLabel(data.time)} slot is reserved for ${reserveName} for 14 days.`);
     }
 
@@ -8761,21 +8788,23 @@
         });
       }
       teacher.updatedAt = reservation.updatedAt;
-      logAction("Regular Slot Reservation Released", `${name} with ${teacher.name}`, reservationLabel(reservation), `${reservation.day} ${timeLabel(reservation.time)} open`, "Released manually before expiry.");
-      save(false);
+      const activityLog = logAction("Regular Slot Reservation Released", `${name} with ${teacher.name}`, reservationLabel(reservation), `${reservation.day} ${timeLabel(reservation.time)} open`, "Released manually before expiry.");
+      persistState();
+      syncRecordTransactionAsync({ teachers: [teacher], activityLogs: [activityLog] }, "Regular slot reservation released", { operation: "regular_slot_reservation_release" });
       setStatus(`Reservation for ${name} was released. The slot is open again.`);
     }
 
     function processExpiredReservations() {
       const today = todayISO();
       const expired = [];
+      const activityLogs = [];
       (state.teachers || []).forEach(teacher => {
         (teacher.regularSlots || []).forEach(slot => {
           if (!slot.reserved || slot.releasedAt || !dateOnly(slot.endDate) || dateOnly(slot.endDate) >= today || slot.reservationExpiredNotifiedAt) return;
           slot.reservationExpiredNotifiedAt = new Date().toISOString();
           slot.updatedAt = slot.reservationExpiredNotifiedAt;
           expired.push({ teacher, slot, name: cleanStudentName(slot.reservationName || slot.studentName || "Student") });
-          logAction("Regular Slot Reservation Expired", `${slot.reservationName || slot.studentName || "Student"} with ${teacher.name}`, `${slot.day} ${timeLabel(slot.time)} reserved until ${slot.endDate}`, "Slot open again", "Automatic 14-day reservation expiry.");
+          activityLogs.push(logAction("Regular Slot Reservation Expired", `${slot.reservationName || slot.studentName || "Student"} with ${teacher.name}`, `${slot.day} ${timeLabel(slot.time)} reserved until ${slot.endDate}`, "Slot open again", "Automatic 14-day reservation expiry."));
         });
       });
       if (!expired.length) return;
@@ -8785,7 +8814,10 @@
       state.settings.lastLocalChangeAt = new Date().toISOString();
       state.settings.localRevision = Number(state.settings.localRevision || 0) + 1;
       persistState();
-      scheduleAutoPush();
+      syncRecordTransactionAsync({
+        teachers: [...new Set(expired.map(item => item.teacher.id))].map(id => teacherById(id)).filter(Boolean),
+        activityLogs
+      }, "Expired reservations processed", { operation: "reservation_expiry" });
       const first = expired[0];
       const message = expired.length === 1
         ? `This slot changed to open again. Reserve for ${first.name} has ended.`
@@ -8928,12 +8960,13 @@
         return alert("The slot could not be changed to OFF. Please refresh and try again.");
       }
       const undoAfter = snapshotCollections({ teachers: [teacher.id] });
-      logAction("Teacher Regular Slot Set To OFF", teacher.name, `${data.day} ${timeLabel(data.time)} open`, "OFF from today", "Changed from Teacher Overview.", {
+      const activityLog = logAction("Teacher Regular Slot Set To OFF", teacher.name, `${data.day} ${timeLabel(data.time)} open`, "OFF from today", "Changed from Teacher Overview.", {
         undo: makeUndoSnapshot(undoBefore, undoAfter)
       });
       $("fixedRegularBookingModal").classList.add("hide");
-      save(false);
+      persistState();
       renderTeacherOverview();
+      syncRecordTransactionAsync({ teachers: [teacher], activityLogs: [activityLog] }, "Teacher regular slot set to OFF", { operation: "teacher_slot_set_off" });
       setStatus(`${teacher.name}: ${data.day} ${timeLabel(data.time)} OFF saved locally · Syncing.`);
     }
 
@@ -9766,13 +9799,24 @@
       });
       teacher.updatedAt = now;
       const undoAfter = snapshotCollections({ teachers: [teacher.id], bookings: affectedBookingIds });
-      logAction("Open Slot Set To OFF", teacher.name, before, teacherLogSummary(teacher), `${availabilityScopeLabel(mode, offRule)} | ${timeLabel(offRule.time)}${affectedBookings.length ? ` | ${affectedBookings.length} booking record${affectedBookings.length === 1 ? "" : "s"} superseded` : ""}`, {
+      const activityLog = logAction("Open Slot Set To OFF", teacher.name, before, teacherLogSummary(teacher), `${availabilityScopeLabel(mode, offRule)} | ${timeLabel(offRule.time)}${affectedBookings.length ? ` | ${affectedBookings.length} booking record${affectedBookings.length === 1 ? "" : "s"} superseded` : ""}`, {
         undo: makeUndoSnapshot(undoBefore, undoAfter)
       });
       $("offSlotModal").classList.add("hide");
-      save(false);
-      renderAll();
-      await autoPushIfConfigured(affectedBookings.length ? "Slot set to OFF and previous booking superseded." : "Open slot set to OFF.");
+      renderSchedule();
+      renderTeacherOverview();
+      renderActivityLog();
+      try {
+        await syncRecordTransaction({
+          teachers: [teacher],
+          bookings: affectedBookings,
+          activityLogs: [activityLog]
+        }, affectedBookings.length ? "Slot set to OFF and previous booking superseded" : "Open slot set to OFF", { operation: "availability_set_off" });
+      } catch (error) {
+        persistState();
+        markTeacherViewOutdated("Set OFF saved in this browser only. Not synced to Teacher View yet.");
+        setStatus(`Set OFF saved locally. Sync pending: ${error.message}`, "warn");
+      }
     }
 
     async function confirmOpenSlot(openAndBook = pendingOpenAndBook) {
@@ -9803,12 +9847,13 @@
       const before = teacherLogSummary(teacher);
       const undoBefore = snapshotCollections({ teachers: [teacher.id] });
       upsertTeacherOverrideSlot(teacher, openRule);
-      logAction("Open Slot Added", teacher.name, before, teacherLogSummary(teacher), `${availabilityScopeLabel(mode, openRule)} | ${timeLabel(openRule.time)} | ${subject}`, {
+      const activityLog = logAction("Open Slot Added", teacher.name, before, teacherLogSummary(teacher), `${availabilityScopeLabel(mode, openRule)} | ${timeLabel(openRule.time)} | ${subject}`, {
         undo: makeUndoSnapshot(undoBefore, snapshotCollections({ teachers: [teacher.id] }))
       });
       $("openSlotModal").classList.add("hide");
-      save(false);
-      renderAll();
+      renderSchedule();
+      renderTeacherOverview();
+      renderActivityLog();
       pendingOpenAndBook = false;
       if (openAndBook) {
         openBookingModalForSlot({ ...data, date: startDate, day: dayFromISO(startDate), subject });
@@ -9817,7 +9862,16 @@
         $("bookingEndDate").value = mode === "temporary" ? endDate : "";
         updateBookingPeriodFields();
       }
-      await autoPushIfConfigured("Open slot added.");
+      try {
+        await syncRecordTransaction({
+          teachers: [teacher],
+          activityLogs: [activityLog]
+        }, "Open slot added", { operation: "availability_set_available" });
+      } catch (error) {
+        persistState();
+        markTeacherViewOutdated("Open slot saved in this browser only. Not synced to Teacher View yet.");
+        setStatus(`Open slot saved locally. Sync pending: ${error.message}`, "warn");
+      }
     }
 
     function teacherLeaveRows(teacher) {
@@ -9878,7 +9932,7 @@
       leave.deviceId = currentDeviceId();
       leave.undoSummary = summary;
       const undoAfter = snapshotCollections(teacherLeaveAffectedCollectionIds(leave));
-      logAction(
+      const activityLog = logAction(
         "Teacher Leave Undone",
         teacherById(leave.teacherId)?.name || leave.teacherId,
         `${teacherLeaveSummary(leave)} | active`,
@@ -9889,12 +9943,26 @@
       $("teacherLeaveExistsModal")?.classList.add("hide");
       $("teacherLeaveModal")?.classList.add("hide");
       editingTeacherLeaveId = "";
-      save(false);
       renderSchedule();
       renderTeacherOverview();
       renderReplacements();
       renderActivityLog();
-      const synced = await autoPushIfConfigured("Teacher leave undone.");
+      let synced = false;
+      try {
+        await syncRecordTransaction({
+          teachers: [teacherById(leave.teacherId)].filter(Boolean),
+          teacherLeaves: [leave],
+          bookings: (state.bookings || []).filter(item => item.teacherLeaveId === leave.id || (leave.affectedBookingIds || []).includes(item.id)),
+          replacements: (state.replacements || []).filter(item => item.teacherLeaveId === leave.id),
+          replacementCredits: (state.replacementCredits || []).filter(item => item.teacherLeaveId === leave.id || (item.sourceBookingId && (leave.affectedBookingIds || []).includes(item.sourceBookingId))),
+          activityLogs: [activityLog]
+        }, "Teacher leave undone", { operation: "teacher_leave_undo" });
+        synced = true;
+      } catch (error) {
+        persistState();
+        markTeacherViewOutdated("Teacher leave undo saved in this browser only. Not synced to Teacher View yet.");
+        setStatus(`Teacher leave undone locally. Sync pending: ${error.message}`, "warn");
+      }
       const manualReview = summary.keptUsedReplacementCount || summary.keptUsedCreditCount || summary.skippedConflictCount;
       setStatus(
         `${synced ? "Teacher leave undone and synced." : "Teacher leave undone locally. Not synced to Teacher View yet."}${manualReview ? " Some linked replacements/credits need manual review." : ""}`,
@@ -10702,14 +10770,19 @@
         teachers: affectedTeacherIds,
         bookings: affectedBookingIds
       });
-      logAction("Dropped Student Cleanup", cleanName, "", "", `Deleted future classes after ${dropDate} and ended recurring slots. Bookings: ${bookingCount}, teacher slots: ${teacherSlotCount}, student slots: ${studentSlotCount}.`, {
+      const activityLog = logAction("Dropped Student Cleanup", cleanName, "", "", `Deleted future classes after ${dropDate} and ended recurring slots. Bookings: ${bookingCount}, teacher slots: ${teacherSlotCount}, student slots: ${studentSlotCount}.`, {
         undo: makeUndoSnapshot(undoBefore, undoAfter)
       });
-      save(false);
+      persistState();
       renderSchedule();
       renderTeacherOverview();
       renderActivityLog();
-      scheduleAutoPush();
+      syncRecordTransactionAsync({
+        students: student ? [student] : [],
+        teachers: affectedTeacherIds.map(id => teacherById(id)).filter(Boolean),
+        bookings: affectedBookingIds.map(id => state.bookings.find(booking => booking.id === id)).filter(Boolean),
+        activityLogs: [activityLog]
+      }, "Dropped student cleanup", { operation: "dropped_student_cleanup" });
       setStatus(`${cleanName} cleanup complete. Deleted ${bookingCount} future booking${bookingCount === 1 ? "" : "s"} after ${formatDateFromAny(dropDate)}.`);
       return { ok: true, studentName: cleanName, lastLessonDate: dropDate, bookingCount, teacherSlotCount, studentSlotCount };
     }
@@ -10779,10 +10852,16 @@
       state.teacherStudentNotes = (state.teacherStudentNotes || []).filter(note => note.studentId !== student.id && (!nameKey || studentNameKey(note.studentName || "") !== nameKey));
       state.replacementCredits = (state.replacementCredits || []).filter(credit => credit.studentId !== student.id && (!nameKey || studentNameKey(credit.studentName || "") !== nameKey));
       const undoAfter = snapshotCollections({ students: [student.id], teachers: affectedTeacherIds, bookings: affectedBookingIds, teacherStudentNotes: affectedNoteIds, replacementCredits: affectedCreditIds });
-      logAction("Student Dropped And Removed", student.name, before, studentLogSummary(student), `Last lesson date: ${formatDateFromAny(dropDate)}. Future linked classes deleted; completed history remains.`, {
+      const activityLog = logAction("Student Dropped And Removed", student.name, before, studentLogSummary(student), `Last lesson date: ${formatDateFromAny(dropDate)}. Future linked classes deleted; completed history remains.`, {
         undo: makeUndoSnapshot(undoBefore, undoAfter)
       });
-      return true;
+      return {
+        ok: true,
+        student,
+        teachers: affectedTeacherIds.map(id => teacherById(id)).filter(Boolean),
+        bookings: affectedBookingIds.map(id => state.bookings.find(booking => booking.id === id)).filter(Boolean),
+        activityLog
+      };
     }
 
     function selectedStudentRegularDays() {
@@ -11412,11 +11491,14 @@
         credit.status = "void";
       }
       credit.updatedAt = new Date().toISOString();
-      logAction("Replacement Credit Removed", credit.studentName || credit.id, before, "No remaining credit", credit.reason || "");
-      save(false);
+      const activityLog = logAction("Replacement Credit Removed", credit.studentName || credit.id, before, "No remaining credit", credit.reason || "");
+      persistState();
       renderReplacementCredits();
       setStatus("Replacement credit removed.");
-      autoPushIfConfigured("Replacement credit removed.");
+      syncRecordTransactionAsync({
+        replacementCredits: [credit],
+        activityLogs: [activityLog]
+      }, "Replacement credit removed", { operation: "replacement_credit_remove", teacherView: false });
     }
 
     function refundReplacementCreditForBooking(booking) {
@@ -12104,9 +12186,11 @@
       const before = existingIndex >= 0 ? cloneForUndo(state.publicHolidays[existingIndex]) : null;
       if (existingIndex >= 0) state.publicHolidays[existingIndex] = holiday;
       else state.publicHolidays.push(holiday);
+      const replacementCreditIdsBefore = new Set((state.replacementCredits || []).filter(credit => credit.publicHolidayId === holiday.id).map(credit => credit.id));
+      const replacementIdsBefore = new Set((state.replacements || []).filter(item => item.publicHolidayId === holiday.id).map(item => item.id));
       const affected = publicHolidayAffectedOccurrences(holiday);
       const creditSummary = reconcilePublicHolidayCredits(holiday, affected, new Set(holiday.replacementCreditStudentSelections), now);
-      logAction(
+      const activityLog = logAction(
         before ? "Public Holiday Updated" : "Public Holiday Added",
         holiday.name,
         before ? holidayRangeLabel(before) : "",
@@ -12116,16 +12200,30 @@
       pendingPublicHolidayDraft = null;
       $("publicHolidayAffectedModal").classList.add("hide");
       $("publicHolidayModal").classList.add("hide");
-      save(false);
       renderPublicHolidayCalendar();
       renderSchedule();
       renderReplacements();
       renderActivityLog();
-      const synced = await autoPushIfConfigured(`Public holiday saved. ${affected.length} regular class${affected.length === 1 ? "" : "es"} affected.`);
+      let synced = false;
+      try {
+        const touchedCredits = (state.replacementCredits || []).filter(credit => credit.publicHolidayId === holiday.id || replacementCreditIdsBefore.has(credit.id));
+        const touchedReplacements = (state.replacements || []).filter(item => item.publicHolidayId === holiday.id || replacementIdsBefore.has(item.id));
+        await syncRecordTransaction({
+          publicHolidays: [holiday],
+          replacementCredits: touchedCredits,
+          replacements: touchedReplacements,
+          activityLogs: [activityLog]
+        }, "Public holiday saved", { operation: before ? "public_holiday_update" : "public_holiday_create" });
+        synced = true;
+      } catch (error) {
+        persistState();
+        markTeacherViewOutdated("Public holiday saved in this browser only. Not synced to Teacher View yet.");
+        setStatus(`Public holiday saved locally. Sync pending: ${error.message}`, "warn");
+      }
       setStatus(synced ? "Public holiday saved and synced to Teacher View." : "Public holiday saved locally. Not synced to Teacher View yet.", synced ? "success" : "warn");
     }
 
-    function removePublicHoliday(holidayId) {
+    async function removePublicHoliday(holidayId) {
       const holiday = (state.publicHolidays || []).find(item => item.id === holidayId);
       if (!holiday) return;
       const usedCredits = (state.replacementCredits || []).filter(credit => credit.publicHolidayId === holiday.id && credit.status !== "void" && Number(credit.used || 0) > 0);
@@ -12152,12 +12250,23 @@
         replacement.status = "No Replacement Needed";
         replacement.updatedAt = now;
       });
-      logAction("Public Holiday Removed", holiday.name || holiday.id, holidayRangeLabel(before), "", `${usedCredits.length} used linked credit${usedCredits.length === 1 ? "" : "s"} kept for review.`);
-      save(false);
+      const activityLog = logAction("Public Holiday Removed", holiday.name || holiday.id, holidayRangeLabel(before), "", `${usedCredits.length} used linked credit${usedCredits.length === 1 ? "" : "s"} kept for review.`);
       renderPublicHolidayCalendar();
       renderSchedule();
       renderReplacements();
-      scheduleAutoPush();
+      renderActivityLog();
+      try {
+        await syncRecordTransaction({
+          publicHolidays: [holiday],
+          replacementCredits: (state.replacementCredits || []).filter(credit => credit.publicHolidayId === holiday.id),
+          replacements: (state.replacements || []).filter(replacement => replacement.publicHolidayId === holiday.id),
+          activityLogs: [activityLog]
+        }, "Public holiday removed", { operation: "public_holiday_remove" });
+      } catch (error) {
+        persistState();
+        markTeacherViewOutdated("Public holiday removal saved in this browser only. Not synced to Teacher View yet.");
+        setStatus(`Public holiday removed locally. Sync pending: ${error.message}`, "warn");
+      }
     }
 
     function moveValidationMessage(booking, slot) {
@@ -12300,12 +12409,23 @@
         const booking = bookingByOccurrenceId(occurrenceId) || bookingByExactRecordId($("moveBookingId").value);
         const slot = JSON.parse($("moveSlot").value || "null");
         const remark = $("moveRemark").value.trim();
-        moveBookedOccurrence(booking, slot, remark, { sourceWasDraft: pendingMoveDraftBookingId === booking?.id });
+        const moveResult = moveBookedOccurrence(booking, slot, remark, { sourceWasDraft: pendingMoveDraftBookingId === booking?.id });
+        const activityLog = state.activityLogs?.[0] || null;
         pendingMoveDraftBookingId = "";
         $("moveBookingModal").classList.add("hide");
-        save(false);
-        renderAll();
-        await autoPushIfConfigured("Class moved.");
+        renderSchedule();
+        renderTeacherOverview();
+        renderActivityLog();
+        try {
+          await syncRecordTransaction({
+            bookings: [moveResult.sourceBooking, moveResult.destinationBooking],
+            activityLogs: [activityLog].filter(Boolean)
+          }, "Class moved", { operation: "booking_move" });
+        } catch (error) {
+          persistState();
+          markTeacherViewOutdated("Class move saved in this browser only. Not synced to Teacher View yet.");
+          setStatus(`Class moved locally. Sync pending: ${error.message}`, "warn");
+        }
       } finally {
         moveBookingSaveInProgress = false;
         if (button) button.disabled = false;
@@ -12366,10 +12486,14 @@
       if (mode === "temporary" && (!endDate || endDate < startDate)) return alert("Choose a valid temporary end date.");
       const dates = mode === "one_date" ? [startDate] : (mode === "temporary" ? weeklyDatesInRange(startDate, endDate, targetDay) : [startDate]);
       if (dates.some(date => slotHasPassed(date, targetTime))) return alert("Cannot move to a time that has already passed.");
+      const transactionTeacherIds = new Set([targetTeacherId]);
+      const transactionBookings = [];
+      let activityLog = null;
 
       if (data.kind === "booking") {
         const booking = bookingByOccurrenceId(data.occurrenceId) || bookingByExactRecordId(data.bookingId);
         if (!booking) return alert("Booking not found.");
+        transactionTeacherIds.add(booking.teacherId);
         const recurring = recurringSlotForBooking(booking);
         if (mode !== "one_date" && !recurring) return alert("Temporary or ongoing changes are only available for recurring regular classes.");
         if (mode !== "one_date" && booking.teacherId === targetTeacherId && recurring?.day === targetDay && recurring?.time === targetTime) return alert("Choose a different teacher, weekday or time for this recurring change.");
@@ -12398,9 +12522,12 @@
           booking.updatedAt = changedAt;
           booking.slotRevisionAt = changedAt;
           if (remark) booking.remark = [booking.remark, `Time changed: ${remark}`].filter(Boolean).join("\n");
+          transactionBookings.push(booking);
         } else {
           const sourceTeacher = teacherById(booking.teacherId);
           const targetTeacher = teacherById(targetTeacherId);
+          transactionTeacherIds.add(sourceTeacher?.id || "");
+          transactionTeacherIds.add(targetTeacher?.id || "");
           const originalEnd = recurring.endDate || "";
           recurring.endDate = dateOffsetISO(startDate, -1);
           if (mode === "temporary") sourceTeacher.overrideSlots.push({ ...recurring, id: uid("slot"), startDate: dateOffsetISO(endDate, 1), endDate: originalEnd });
@@ -12413,12 +12540,14 @@
             const now = new Date().toISOString();
             stampBookingStatus(item, "deleted", now);
             item.archived = true;
+            transactionBookings.push(item);
           });
           syncStudentRegularSlotRange(booking.studentName, sourceTeacher, recurring, targetTeacher, targetSlot, startDate, endDate, mode === "temporary" ? "temporary" : "long_term");
         }
-        logAction("Time Slot Edited", booking.studentName || booking.id, before, mode === "one_date" ? bookingLogSummary(booking) : `${teacherById(targetTeacherId)?.name || ""} ${targetDay} ${timeLabel(targetTime)} from ${formatDateFromAny(startDate)}`, remark);
+        activityLog = logAction("Time Slot Edited", booking.studentName || booking.id, before, mode === "one_date" ? bookingLogSummary(booking) : `${teacherById(targetTeacherId)?.name || ""} ${targetDay} ${timeLabel(targetTime)} from ${formatDateFromAny(startDate)}`, remark);
       } else {
         const source = data.slot;
+        transactionTeacherIds.add(source.teacherId);
         if (mode === "one_date" && source.teacherId === targetTeacherId && source.date === startDate && source.time === targetTime) return alert("Choose a different date, teacher or time.");
         const validation = validateScheduleTargets({ teacherId: targetTeacherId, dates, time: targetTime, excludeSlotId: source.slotId || "" });
         if (validation.conflicts.length) return alert(conflictListMessage(validation.conflicts, "edit this available slot"));
@@ -12434,12 +12563,23 @@
         sourceTeacher.overrideSlots ||= [];
         const sourceStartDate = mode === "one_date" ? source.date : startDate;
         sourceTeacher.overrideSlots.push(availabilityRuleFromForm(source, mode, sourceStartDate, endDate, { subject: source.subject || "", unavailable: true, source: "edited-slot-old-time", remark: "Moved available slot", createdAt: new Date().toISOString() }));
-        logAction("Available Slot Edited", sourceTeacher.name, `${source.day} ${timeLabel(source.time)}`, `${targetDay} ${timeLabel(targetTime)}`, remark);
+        activityLog = logAction("Available Slot Edited", sourceTeacher.name, `${source.day} ${timeLabel(source.time)}`, `${targetDay} ${timeLabel(targetTime)}`, remark);
       }
       $("editTimeSlotModal").classList.add("hide");
-      save(false);
-      renderAll();
-      await autoPushIfConfigured("Time slot updated.");
+      renderSchedule();
+      renderTeacherOverview();
+      renderActivityLog();
+      try {
+        await syncRecordTransaction({
+          teachers: [...transactionTeacherIds].map(id => teacherById(id)).filter(Boolean),
+          bookings: transactionBookings,
+          activityLogs: [activityLog].filter(Boolean)
+        }, "Time slot updated", { operation: "time_slot_update" });
+      } catch (error) {
+        persistState();
+        markTeacherViewOutdated("Time slot update saved in this browser only. Not synced to Teacher View yet.");
+        setStatus(`Time slot updated locally. Sync pending: ${error.message}`, "warn");
+      }
     }
 
     function renderReplacementListAndSummary(options = {}) {
@@ -13767,7 +13907,7 @@
       });
     }
 
-    function finalizePassedBookings() {
+    function finalizePassedBookings(result = null) {
       let changed = false;
       state.bookings.forEach(b => {
         if (bookingCanAutoComplete(b)) {
@@ -13782,14 +13922,16 @@
             replacement.latestAction = "Replacement class completed";
             replacement.lastActionAt = now;
             replacement.updatedAt = now;
+            if (result) result.replacements.push(replacement);
           }
+          if (result) result.bookings.push(b);
           changed = true;
         }
       });
       return changed;
     }
 
-    function finalizeFixedSlotsForRange(start, end) {
+    function finalizeFixedSlotsForRange(start, end, result = null) {
       let changed = false;
       datesBetween(start, end).forEach(date => {
         collectSlotsForDate(date).forEach(slot => {
@@ -13803,7 +13945,7 @@
           if (existing) return;
           const teacher = teacherById(slot.teacherId);
           const now = new Date().toISOString();
-          state.bookings.push({
+          const booking = {
             id: fixedSnapshotBookingId(slot),
             teacherId: slot.teacherId,
             studentId: "",
@@ -13823,24 +13965,26 @@
             completedAt: slotDateTime(slot.date, slot.time).toISOString(),
             finalizedAt: now,
             source: "fixed_regular_snapshot"
-          });
+          };
+          state.bookings.push(booking);
+          if (result) result.bookings.push(booking);
           changed = true;
         });
       });
       return changed;
     }
 
-    function finalizePassedClassesForRange(start, end, show = false) {
-      const changed = finalizePassedBookings() || finalizeFixedSlotsForRange(start, end);
+    function finalizePassedClassesForRange(start, end, show = false, result = null) {
+      const changed = finalizePassedBookings(result) || finalizeFixedSlotsForRange(start, end, result);
       if (changed) persistState();
       if (show) setStatus(changed ? "Passed classes finalized into history." : "No new passed classes to finalize.");
       return changed;
     }
 
-    function archivePast(show = true) {
+    function archivePast(show = true, result = null) {
       const now = new Date();
       const start = new Date(now.getFullYear(), now.getMonth(), 1);
-      return finalizePassedClassesForRange(start, now, show);
+      return finalizePassedClassesForRange(start, now, show, result);
     }
 
     async function fetchJsonWithTimeout(url, options = {}, label = "Google Apps Script", timeoutMs = SYNC_READ_TIMEOUT_MS) {
@@ -14482,7 +14626,7 @@
 
     function outcomeDeltaSupported(status) {
       const normalized = normalizeClassStatus(status) || status;
-      return ENABLE_BOOKING_OUTCOME_DELTA_SYNC && neonConfigured() && ["cancelled", "completed", "student_not_show", "booked"].includes(normalized);
+      return ENABLE_BOOKING_OUTCOME_DELTA_SYNC && neonConfigured() && ["cancelled", "completed", "student_not_show", "teacher_leave", "public_holiday", "booked"].includes(normalized);
     }
 
     function upsertLocalRecord(collectionName, record) {
@@ -14649,7 +14793,8 @@
       const allowedEndpoints = new Set([
         "/api/bookings/outcome",
         "/api/bookings/create",
-        "/api/recurring-assignments/upsert"
+        "/api/recurring-assignments/upsert",
+        "/api/records/transaction"
       ]);
       let queue = Promise.resolve();
       const recentByKey = new Map();
@@ -15095,6 +15240,97 @@
       persistState();
       setStatus(`${label} synced.`, "success");
       return data;
+    }
+
+    const RECORD_TRANSACTION_COLLECTIONS = new Set([
+      "bookings",
+      "replacements",
+      "replacementCredits",
+      "activityLogs",
+      "teachers",
+      "students",
+      "teacherLeaves",
+      "publicHolidays",
+      "teacherStudentNotes",
+      "teacherFeedback"
+    ]);
+
+    function recordTransactionRecords(input = {}) {
+      const records = {};
+      Object.entries(input || {}).forEach(([collectionName, list]) => {
+        if (!RECORD_TRANSACTION_COLLECTIONS.has(collectionName)) return;
+        const source = Array.isArray(list) ? list : [list];
+        const unique = new Map();
+        source.forEach(item => {
+          if (!item || typeof item !== "object") return;
+          const id = String(item.id || item.bookingId || item.creditId || item.replacementId || "");
+          if (!id) return;
+          unique.set(id, item);
+        });
+        if (unique.size) records[collectionName] = [...unique.values()].map(cloneJson);
+      });
+      return records;
+    }
+
+    function recordTransactionRequestId(records = {}, operation = "record_transaction") {
+      const parts = [];
+      Object.entries(records).forEach(([collectionName, list]) => {
+        (Array.isArray(list) ? list : []).forEach(record => {
+          parts.push(`${collectionName}:${record.id || record.bookingId || record.creditId || record.replacementId || ""}:${record.updatedAt || record.changedAt || record.createdAt || ""}`);
+        });
+      });
+      return [operation, currentDeviceId(), ...parts.sort()].join("_").replace(/[^a-zA-Z0-9_.:-]+/g, "_").slice(0, 900);
+    }
+
+    async function syncRecordTransaction(recordsInput = {}, label = "Records saved", options = {}) {
+      const records = recordTransactionRecords(recordsInput);
+      if (!Object.keys(records).length) return false;
+      const body = {
+        key: neonStateKey(),
+        requestId: options.requestId || recordTransactionRequestId(records, options.operation || "record_transaction"),
+        operation: options.operation || "record_transaction",
+        records,
+        updatedBy: `${currentUser()?.name || safeStorageGet("classOneStaffName") || "Class One Admin"} · ${currentDeviceId().slice(0, 12)}`
+      };
+      const payloadBytes = jsonByteSize(body);
+      const data = await deltaSync.send({
+        entity: "record_transaction",
+        operation: body.operation,
+        id: Object.entries(records).map(([name, list]) => `${name}:${list.length}`).join(","),
+        endpoint: "/api/records/transaction",
+        body,
+        label: `${label} record sync`,
+        applyResponse(response) {
+          Object.entries(response.records || records).forEach(([collectionName, list]) => {
+            (Array.isArray(list) ? list : []).forEach(record => {
+              upsertLocalRecord(collectionName, record);
+              if (confirmedRemotePayload) upsertPayloadRecord(confirmedRemotePayload, collectionName, record);
+            });
+          });
+        },
+        afterResponse(response) {
+          console.info("[ClassOne record transaction delta]", {
+            marker: "RECORD TRANSACTION DELTA SYNC",
+            operation: body.operation,
+            endpoint: "/api/records/transaction",
+            bytes: payloadBytes,
+            status: response.__httpStatus || 200,
+            systemVersion: Number(response.version || 0),
+            collections: Object.fromEntries(Object.entries(records).map(([name, list]) => [name, list.length]))
+          });
+        }
+      });
+      persistState();
+      setStatus(`${label} synced.`, "success");
+      return data;
+    }
+
+    function syncRecordTransactionAsync(recordsInput = {}, label = "Records saved", options = {}) {
+      syncRecordTransaction(recordsInput, label, options).catch(error => {
+        persistState();
+        if (options.teacherView !== false) markTeacherViewOutdated(`${label} saved in this browser only. Not synced to Teacher View yet.`);
+        setStatus(`${label} saved locally. Sync pending: ${error.message}`, "warn");
+      });
     }
 
     async function fetchNeonManifest(label = "Neon version check", timeoutMs = 15000, stateKey = neonStateKey()) {
@@ -16250,9 +16486,13 @@
           }
           refreshBookingOutcomeUi(`Class marked as ${bookingStatusLabel(nextStatus)}`);
         } else {
-          save(false, { render: false, label: "class outcome" });
-          if (SYNC_DEBUG) console.info("[ClassOne outcome perf counters]", classOnePerformanceCounters());
-          await autoPushIfConfigured(scope === "permanent" ? "Regular class ended." : `Class marked as ${bookingStatusLabel(nextStatus)}.`);
+          persistState();
+          const message = scope === "permanent"
+            ? "Permanent regular-class outcome changes must use the recurring assignment sync path. No full-state save was attempted."
+            : `Class outcome "${bookingStatusLabel(nextStatus)}" is not supported by record-level sync. No full-state save was attempted.`;
+          markTeacherViewOutdated(message);
+          setStatus(message, "error");
+          alert(message);
         }
       } finally {
         outcomeSaveInProgress = false;
@@ -16336,13 +16576,19 @@
       const creditIdsAfter = (state.replacementCredits || [])
         .filter(item => replacementCreditMatchesBooking(item, booking))
         .map(item => item.id);
-      logAction("Booking Deleted", booking.studentName || booking.id, before, "Deleted", `${refundedCredit ? "Replacement credit refunded. " : ""}${restoredOff ? "Date-specific slot returned to OFF. " : ""}${booking.remark || "Deleted from class outcome."}`, {
+      const activityLog = logAction("Booking Deleted", booking.studentName || booking.id, before, "Deleted", `${refundedCredit ? "Replacement credit refunded. " : ""}${restoredOff ? "Date-specific slot returned to OFF. " : ""}${booking.remark || "Deleted from class outcome."}`, {
         undo: makeUndoSnapshot(undoBefore, snapshotCollections({
           bookings: [booking.id],
           replacements: [...new Set([...replacementIdsBefore, ...replacementIdsAfter])],
           replacementCredits: [...new Set([...creditIdsBefore, ...creditIdsAfter])]
         }))
       });
+      return {
+        booking,
+        replacements: (state.replacements || []).filter(item => new Set([...replacementIdsBefore, ...replacementIdsAfter]).has(item.id)),
+        replacementCredits: (state.replacementCredits || []).filter(item => new Set([...creditIdsBefore, ...creditIdsAfter]).has(item.id)),
+        activityLog
+      };
     }
 
     async function confirmDeleteRecurringBooking() {
@@ -16364,6 +16610,7 @@
       const scopeText = scope === "one_date" ? formatDateFromAny(startDate) : scope === "temporary" ? `${formatDateFromAny(startDate)} to ${formatDateFromAny(endDate)}` : `from ${formatDateFromAny(startDate)} onward`;
       if (!confirm(`Delete ${booking.studentName || "this regular class"} ${scopeText}?`)) return;
 
+      const deleteResults = [];
       if (scope === "permanent") {
         endRecurringClass(booking, recurringSlot, startDate, remark || "Deleted permanently from Teacher Overview.");
         addOpenRuleForScope({
@@ -16379,7 +16626,7 @@
       } else {
         const dates = scope === "one_date" ? [startDate] : weeklyDatesInRange(startDate, endDate, recurringSlot.day);
         const affected = dates.map(date => bookingForRecurringDeletion(booking, recurringSlot, date));
-        affected.forEach(item => markBookingDeleted(item, remark || "Removed from fixed regular timetable."));
+        affected.forEach(item => deleteResults.push(markBookingDeleted(item, remark || "Removed from fixed regular timetable.")));
         addOpenRuleForScope({
           teacherId: booking.teacherId,
           day: recurringSlot.day,
@@ -16391,10 +16638,37 @@
           remark: remark || "Regular class deleted; teacher slot opened"
         });
       }
+      const touchedTeacher = teacherById(booking.teacherId);
+      const touchedStudent = studentById(booking.studentId) || (state.students || []).find(item => studentNameKey(item.name) === studentNameKey(booking.studentName));
+      const touchedBookings = (state.bookings || []).filter(item =>
+        item.teacherId === booking.teacherId &&
+        studentNameKey(item.studentName) === studentNameKey(booking.studentName) &&
+        (item.sourceSlotId === recurringSlot.id || item.recurringScheduleId === recurringSlot.id || (normalizeTimeValue(item.time) || item.time) === (normalizeTimeValue(recurringSlot.time) || recurringSlot.time)) &&
+        dateOnly(item.date) >= startDate &&
+        (scope !== "temporary" || dateOnly(item.date) <= endDate)
+      );
+      const activityLogs = [...new Map([
+        state.activityLogs?.[0] || null,
+        ...deleteResults.map(result => result.activityLog)
+      ].filter(Boolean).map(item => [item.id, item])).values()];
       $("deleteRecurringBookingModal").classList.add("hide");
-      save(false);
-      renderAll();
-      await autoPushIfConfigured(scope === "permanent" ? "Regular class ended." : "Regular class booking deleted and slot opened.");
+      renderSchedule();
+      renderTeacherOverview();
+      renderActivityLog();
+      try {
+        await syncRecordTransaction({
+          teachers: [touchedTeacher].filter(Boolean),
+          students: [touchedStudent].filter(Boolean),
+          bookings: touchedBookings,
+          replacements: deleteResults.flatMap(result => result.replacements || []),
+          replacementCredits: deleteResults.flatMap(result => result.replacementCredits || []),
+          activityLogs
+        }, scope === "permanent" ? "Regular class ended" : "Regular class booking deleted and slot opened", { operation: "recurring_booking_delete" });
+      } catch (error) {
+        persistState();
+        markTeacherViewOutdated("Recurring booking delete saved in this browser only. Not synced to Teacher View yet.");
+        setStatus(`Recurring booking deleted locally. Sync pending: ${error.message}`, "warn");
+      }
       } finally {
         confirmDeleteRecurringBooking.inProgress = false;
         if (confirmButton) confirmButton.disabled = false;
@@ -16406,12 +16680,25 @@
       if (!booking) return alert("Booking not found.");
       const label = `${booking.studentName || "this class"} on ${formatClassDateTime(booking.date, booking.time)}`;
       if (!confirm(`Delete booking for ${label}?`)) return;
-      markBookingDeleted(booking);
+      const deleteResult = markBookingDeleted(booking);
       $("bookingOutcomeModal").classList.add("hide");
       clearOutcomeModalDraft();
-      save(false);
-      renderAll();
-      await autoPushIfConfigured("Booking deleted.");
+      renderSchedule();
+      renderTeacherOverview();
+      renderReplacements();
+      renderActivityLog();
+      try {
+        await syncRecordTransaction({
+          bookings: [deleteResult?.booking || booking],
+          replacements: deleteResult?.replacements || [],
+          replacementCredits: deleteResult?.replacementCredits || [],
+          activityLogs: [deleteResult?.activityLog].filter(Boolean)
+        }, "Booking deleted", { operation: "booking_delete" });
+      } catch (error) {
+        persistState();
+        markTeacherViewOutdated("Booking delete saved in this browser only. Not synced to Teacher View yet.");
+        setStatus(`Booking deleted locally. Sync pending: ${error.message}`, "warn");
+      }
     }
 
     function replacementMatchesBooking(item, booking) {
@@ -16557,8 +16844,11 @@
           }
           refreshBookingOutcomeUi(`${changed} cancellation${changed === 1 ? "" : "s"} withdrawn`);
         } else {
-          save(false);
-          await autoPushIfConfigured(`${changed} cancellation${changed === 1 ? "" : "s"} withdrawn. Original class restored.`);
+          persistState();
+          const message = "Restore cancellation is not supported by record-level sync in this browser/API combination. No full-state save was attempted.";
+          markTeacherViewOutdated(message);
+          setStatus(message, "error");
+          alert(message);
         }
       }
       if (errors.length) alert(errors.join("\n"));
@@ -16568,6 +16858,9 @@
       const ids = undoReplacementIds(replacementValue);
       let changed = 0;
       const errors = [];
+      const touchedBookings = [];
+      const touchedReplacements = [];
+      const activityLogs = [];
       ids.forEach(replacementId => {
       const replacement = (state.replacements || []).find(item => item.id === replacementId);
         if (!replacement) {
@@ -16588,16 +16881,29 @@
         booking.archived = true;
         booking.updatedAt = now;
         booking.remark = [booking.remark, "No replacement needed."].filter(Boolean).join("\n");
+        touchedBookings.push(booking);
       }
-      logAction("Cancellation Kept Without Replacement", replacement.studentName || replacement.id, before, `${replacement.status} | ${replacement.latestAction}`, replacement.reason || "");
+      touchedReplacements.push(replacement);
+      activityLogs.push(logAction("Cancellation Kept Without Replacement", replacement.studentName || replacement.id, before, `${replacement.status} | ${replacement.latestAction}`, replacement.reason || ""));
         changed += 1;
       });
       $("undoCancellationModal").classList.add("hide");
       selectedReplacementIds.clear();
       if (changed) {
-        save(false);
-        renderAll();
-        await autoPushIfConfigured(`${changed} cancelled class${changed === 1 ? "" : "es"} kept without replacement.`);
+        renderSchedule();
+        renderReplacements();
+        renderActivityLog();
+        try {
+          await syncRecordTransaction({
+            bookings: touchedBookings,
+            replacements: touchedReplacements,
+            activityLogs
+          }, `${changed} cancelled class${changed === 1 ? "" : "es"} kept without replacement`, { operation: "replacement_no_credit" });
+        } catch (error) {
+          persistState();
+          markTeacherViewOutdated("Cancellation replacement decision saved in this browser only. Not synced to Teacher View yet.");
+          setStatus(`Replacement decision saved locally. Sync pending: ${error.message}`, "warn");
+        }
       }
       if (errors.length) alert(errors.join("\n"));
     }
@@ -16703,12 +17009,18 @@
         (normalizeTimeValue(b.time) || b.time) === (normalizeTimeValue(time) || time)
       );
       if (duplicate) return alert(`This slot is already booked by ${duplicate.studentName}.`);
-      const booking = { id: uid("booking"), teacherId, date, day, time, subject, studentId: student ? student.id : "", studentName: childName, type: kind === "assessment" ? "assessment" : "trial class", status: "booked", archived: false, minutes: 25, createdAt: new Date().toISOString() };
+      const now = new Date().toISOString();
+      const booking = { id: uid("booking"), teacherId, date, day, time, subject, studentId: student ? student.id : "", studentName: childName, type: kind === "assessment" ? "assessment" : "trial class", status: "booked", archived: false, minutes: 25, createdAt: now, updatedAt: now, deviceId: currentDeviceId() };
       state.bookings.push(booking);
-      save(false);
-      renderAll();
+      renderSchedule();
       [prefix + "Student", prefix + "ChildName", prefix + "Date", prefix + "Time", prefix + "Teacher"].forEach(id => $(id).value = id.endsWith("Student") || id.endsWith("Teacher") ? "all" : "");
-      await autoPushIfConfigured(`${kind === "assessment" ? "Assessment" : "Trial"} booked.`);
+      try {
+        await syncBookingCreateDeltas([{ booking }], `${kind === "assessment" ? "Assessment" : "Trial"} booked`);
+      } catch (error) {
+        persistState();
+        markTeacherViewOutdated(`${kind === "assessment" ? "Assessment" : "Trial"} saved in this browser only. Not synced to Teacher View yet.`);
+        setStatus(`${kind === "assessment" ? "Assessment" : "Trial"} saved locally. Sync pending: ${error.message}`, "warn");
+      }
     }
 
     async function animateClick(button, action) {
@@ -17039,11 +17351,16 @@
             linkedBooking.feedbackActionStatus = item.actionStatus || "No action needed";
             linkedBooking.updatedAt = new Date().toISOString();
           }
-          logAction(item.archived ? "Teacher Feedback Archived" : "Teacher Feedback Restored", item.teacherName || item.teacherId, before, `${item.archived ? "Archived" : "Active"} | ${item.feedback || ""}`, item.studentName || "");
-          save(false);
+          const activityLog = logAction(item.archived ? "Teacher Feedback Archived" : "Teacher Feedback Restored", item.teacherName || item.teacherId, before, `${item.archived ? "Archived" : "Active"} | ${item.feedback || ""}`, item.studentName || "");
+          persistState();
           renderTeacherFeedbackList(item.teacherId);
           renderTeachers();
           setStatus(item.archived ? "Teacher feedback archived." : "Teacher feedback restored.");
+          syncRecordTransactionAsync({
+            teacherFeedback: [item],
+            bookings: [linkedBooking].filter(Boolean),
+            activityLogs: [activityLog]
+          }, item.archived ? "Teacher feedback archived" : "Teacher feedback restored", { operation: "teacher_feedback_archive", teacherView: Boolean(linkedBooking) });
         }
       }
       const archiveTeacher = e.target.closest("[data-archive-teacher]");
@@ -17161,10 +17478,13 @@
         const undoBefore = snapshotCollections({ teachers: [teacherId] });
         teacher[key] = (teacher[key] || []).filter(s => s.id !== slotId);
         teacher.updatedAt = new Date().toISOString();
-        logAction("Teacher Slot Deleted", teacher?.name || teacherId, before, teacherLogSummary(teacher), `${type} slot removed.`, {
+        const activityLog = logAction("Teacher Slot Deleted", teacher?.name || teacherId, before, teacherLogSummary(teacher), `${type} slot removed.`, {
           undo: makeUndoSnapshot(undoBefore, snapshotCollections({ teachers: [teacherId] }))
         });
-        save();
+        persistState();
+        renderTeachers();
+        renderTeacherOverview();
+        syncRecordTransactionAsync({ teachers: [teacher].filter(Boolean), activityLogs: [activityLog] }, "Teacher slot deleted", { operation: "teacher_slot_delete" });
       }
       const removeStudentRegular = e.target.closest("[data-remove-student-regular]");
       if (removeStudentRegular) {
@@ -17212,9 +17532,16 @@
           replacement.latestAction = action || status;
           replacement.lastActionAt = now;
           replacement.updatedAt = now;
-          logAction("Replacement Updated", replacement.studentName || replacement.subject, before, `${replacement.status} | ${replacement.latestAction}`, replacementOriginalClassTime(replacement));
-          save();
+          const activityLog = logAction("Replacement Updated", replacement.studentName || replacement.subject, before, `${replacement.status} | ${replacement.latestAction}`, replacementOriginalClassTime(replacement));
+          persistState();
           setStatus(`Replacement marked as ${status}.`);
+          syncRecordTransaction({
+            replacements: [replacement],
+            activityLogs: [activityLog]
+          }, "Replacement updated", { operation: "replacement_update" }).catch(error => {
+            persistState();
+            setStatus(`Replacement updated locally. Sync pending: ${error.message}`, "warn");
+          });
         }
       }
       const replacementSummary = e.target.closest("[data-replacement-summary]");
@@ -17473,14 +17800,24 @@
             renderRegisteredStudents();
             return;
           }
-          if (!dropStudentFromSystem(student, lastLessonDate)) {
+          const dropResult = dropStudentFromSystem(student, lastLessonDate);
+          if (!dropResult) {
             renderRegisteredStudents();
             return;
           }
-          save(false);
-          renderAll();
-          autoPushIfConfigured("Student dropped and removed.").catch(error => {
-            setStatus(`Save failed. Your changes are safe in this browser. ${error.message}`, "error");
+          renderSchedule();
+          renderStudents();
+          renderTeacherOverview();
+          renderActivityLog();
+          syncRecordTransaction({
+            students: [dropResult.student],
+            teachers: dropResult.teachers,
+            bookings: dropResult.bookings,
+            activityLogs: [dropResult.activityLog]
+          }, "Student dropped", { operation: "student_drop" }).catch(error => {
+            persistState();
+            markTeacherViewOutdated("Student drop saved in this browser only. Not synced to Teacher View yet.");
+            setStatus(`Student drop saved locally. Sync pending: ${error.message}`, "warn");
           });
           setStatus(`${student.name} dropped from ${formatDateFromAny(lastLessonDate)}. Future recurring classes stopped.`);
           return;
@@ -17529,14 +17866,18 @@
       setRetrySaveVisible(true);
     });
     $("archivePastBtn").onclick = async () => {
-      const changed = archivePast();
+      const finalizedRecords = { bookings: [], replacements: [] };
+      const changed = archivePast(true, finalizedRecords);
       renderAll();
       if (!changed) return;
-      const savedLocally = save(false, { render: false, label: "finalize passed classes" });
-      if (!savedLocally) return;
       try {
-        await autoPushIfConfigured("Passed classes finalized.");
+        await syncRecordTransaction({
+          bookings: finalizedRecords.bookings,
+          replacements: finalizedRecords.replacements
+        }, "Passed classes finalized", { operation: "finalize_passed_classes" });
       } catch (err) {
+        persistState();
+        markTeacherViewOutdated("Passed classes finalized in this browser only. Not synced to Teacher View yet.");
         setStatus(`Passed classes finalized locally. Neon sync failed: ${err.message}`, "error");
       }
     };
@@ -17607,19 +17948,34 @@
         alert(error.message);
       }
     };
-    $("addSlotBtn").onclick = () => { addSlot($("slotTeacher").value, $("slotDay").value, $("slotTime").value, $("slotSubject").value); save(); };
+    $("addSlotBtn").onclick = () => {
+      addSlot($("slotTeacher").value, $("slotDay").value, $("slotTime").value, $("slotSubject").value);
+      const teacher = teacherById($("slotTeacher").value);
+      persistState();
+      renderTeachers();
+      renderTeacherOverview();
+      syncRecordTransactionAsync({ teachers: [teacher].filter(Boolean) }, "Teacher slot added", { operation: "teacher_slot_add" });
+    };
     $("bulkAddBtn").onclick = () => {
       const groups = { weekday: DAYS.slice(0, 5), weekend: DAYS.slice(5), all: DAYS };
       const start = minutes($("bulkStart").value), end = minutes($("bulkEnd").value);
       groups[$("bulkDays").value].forEach(day => {
         for (let m = start; m < end; m += 30) addSlot($("bulkTeacher").value, day, `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`, $("bulkSubject").value);
       });
-      save();
+      const teacher = teacherById($("bulkTeacher").value);
+      persistState();
+      renderTeachers();
+      renderTeacherOverview();
+      syncRecordTransactionAsync({ teachers: [teacher].filter(Boolean) }, "Teacher slots bulk added", { operation: "teacher_slots_bulk_add" });
     };
     $("addOverrideBtn").onclick = () => {
       const d = new Date($("overrideDate").value + "T00:00:00");
       addSlot($("overrideTeacher").value, DAYS[(d.getDay() + 6) % 7], $("overrideTime").value, $("overrideSubject").value, $("overrideDate").value);
-      save();
+      const teacher = teacherById($("overrideTeacher").value);
+      persistState();
+      renderTeachers();
+      renderTeacherOverview();
+      syncRecordTransactionAsync({ teachers: [teacher].filter(Boolean) }, "Teacher override slot added", { operation: "teacher_override_slot_add" });
     };
     $("saveStudentBtn").onclick = async () => {
       const name = cleanStudentName($("studentName").value);
@@ -17644,11 +18000,25 @@
       if (existing.id && $("studentRegisteredStatus").value === "drop") {
         const lastLessonDate = promptStudentLastLessonDate(existing);
         if (!lastLessonDate || !confirm(`Drop ${existing.name || name} after ${formatDateFromAny(lastLessonDate)}?\n\nFuture regular classes after this date will stop. Completed lesson history will remain.`)) return;
-        if (!dropStudentFromSystem(existing, lastLessonDate)) return;
+        const dropResult = dropStudentFromSystem(existing, lastLessonDate);
+        if (!dropResult) return;
         $("studentProfileModal").classList.add("hide");
-        save(false);
-        renderAll();
-        await autoPushIfConfigured("Student dropped and removed.");
+        renderSchedule();
+        renderStudents();
+        renderTeacherOverview();
+        renderActivityLog();
+        try {
+          await syncRecordTransaction({
+            students: [dropResult.student],
+            teachers: dropResult.teachers,
+            bookings: dropResult.bookings,
+            activityLogs: [dropResult.activityLog]
+          }, "Student dropped", { operation: "student_drop" });
+        } catch (error) {
+          persistState();
+          markTeacherViewOutdated("Student drop saved in this browser only. Not synced to Teacher View yet.");
+          setStatus(`Student drop saved locally. Sync pending: ${error.message}`, "warn");
+        }
         setStatus(`${existing.name || name} dropped from ${formatDateFromAny(lastLessonDate)}. Future recurring classes stopped.`);
         return;
       }
@@ -17965,8 +18335,11 @@
           setStatus(`Booking saved locally. Sync pending: ${error.message}`, "warn");
         }
       } else {
-        save(false);
-        await autoPushIfConfigured(type === "replacement class" ? "Replacement class booked." : "Booking confirmed.");
+        persistState();
+        markTeacherViewOutdated("Booking was not synced because this booking path is not delta-enabled.");
+        const message = "This booking action is not supported by record-level sync yet. No full-state save was attempted.";
+        setStatus(message, "error");
+        alert(message);
       }
     };
     $("restoreCancelledClassBtn").onclick = () => restoreCancelledClass($("undoReplacementId").value);
@@ -18017,14 +18390,21 @@
       const studentName = student ? student.name : typedName;
       const before = `${studentName}: ${replacementCreditBalance(studentId, studentName)} credit`;
       const credit = addReplacementCredit({ studentId, studentName, amount, reason: $("creditReason").value.trim(), remark: $("creditRemark").value.trim() });
-      logAction("Replacement Credit Added", studentName, before, `${studentName}: ${replacementCreditBalance(studentId, studentName)} credit`, $("creditReason").value.trim(), {
+      const activityLog = logAction("Replacement Credit Added", studentName, before, `${studentName}: ${replacementCreditBalance(studentId, studentName)} credit`, $("creditReason").value.trim(), {
         undo: makeUndoSnapshot({ replacementCredits: [] }, snapshotCollections({ replacementCredits: [credit.id] }))
       });
       $("replacementCreditModal").classList.add("hide");
-      save(false);
       renderReplacementCredits();
       setStatus("Replacement credit added.");
-      await autoPushIfConfigured("Replacement credit added.");
+      try {
+        await syncRecordTransaction({
+          replacementCredits: [credit],
+          activityLogs: [activityLog]
+        }, "Replacement credit added", { operation: "replacement_credit_create" });
+      } catch (error) {
+        persistState();
+        setStatus(`Replacement credit saved locally. Sync pending: ${error.message}`, "warn");
+      }
     };
     setControlValue("publicHolidayYear", uiSessionGet("public_holiday_year", getCurrentBusinessDate().currentYear));
     $("publicHolidayYear").addEventListener("change", () => {
