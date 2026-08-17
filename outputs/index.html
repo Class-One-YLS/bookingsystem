@@ -4536,12 +4536,12 @@
     function activeBusinessField() {
       const active = document.activeElement;
       if (!active?.matches?.("input, textarea, select")) return null;
-      if (active.closest("#loginPage")) return null;
+      if (active.closest("#loginModal")) return null;
       return active;
     }
 
     function markAnyFormEditing(el = null) {
-      if (el?.closest?.("#loginPage")) return;
+      if (el?.closest?.("#loginModal")) return;
       isAnyFormEditing = true;
       isUserEditingForm = true;
     }
@@ -12528,6 +12528,26 @@
       return true;
     }
 
+    function unlockAuthenticatedWorkspace(user = currentUser()) {
+      if (!isAuthenticated()) return false;
+      document.body.classList.remove("auth-locked");
+      $("loginModal")?.classList.add("hide");
+      $("loginModal")?.classList.remove("auth-screen");
+      $("closeLoginBtn")?.classList.remove("hide");
+      $("signOutBtn")?.classList.remove("hide");
+      if (user?.id) uiStateSet("CurrentUserId", user.id);
+      try {
+        renderAccessControls(user);
+      } catch (error) {
+        console.error("[ClassOne login] Access controls failed after sign-in.", error);
+      }
+      if (!restoreSessionActiveTab({ user })) {
+        const scheduleButton = tabButtonFor("schedule");
+        if (scheduleButton && hasTabAccess("schedule", user)) scheduleButton.click();
+      }
+      return true;
+    }
+
     function renderSectionNav(tabId = activeTabId()) {
       const section = $(tabId);
       if (!section) return;
@@ -14562,7 +14582,7 @@
         await withTimeout(hydratePersistentState(), 3000, "Browser cache took too long.");
         hydrateSelects();
         setupMonths();
-        await autoPullOnStart();
+        await autoPullOnStart({ allowPendingSyncPush: false });
         const user = (state.users || []).find(item => String(item.email || "").toLowerCase() === email.toLowerCase());
         if (user) uiStateSet("CurrentUserId", user.id);
         renderAccessControls(user || signedInUser);
@@ -14622,9 +14642,7 @@
       if (data.user?.id) uiStateSet("CurrentUserId", data.user.id);
       $("loginPassword").value = "";
       setLoginMessage("");
-      renderAuthState();
-      renderAccessControls(data.user);
-      restoreSessionActiveTab({ user: data.user });
+      unlockAuthenticatedWorkspace(data.user);
       setWorkspaceLoading(true);
       requestAnimationFrame(() => loadWorkspaceAfterSignIn(email, data.user));
     }
@@ -14953,10 +14971,11 @@
       autoLoadCountdownTimer = null;
     }
 
-    async function autoPullOnStart() {
+    async function autoPullOnStart(options = {}) {
       applySettingsInputs();
+      const allowPendingSyncPush = options.allowPendingSyncPush !== false;
       if (neonConfigured()) {
-        if (hasUnsavedBusinessChanges && state.settings.pendingLocalSync) {
+        if (allowPendingSyncPush && hasUnsavedBusinessChanges && state.settings.pendingLocalSync) {
           setStatus("Syncing saved browser changes...", "success", false);
           try {
             keepBrowserDraftOffline = false;
@@ -14974,8 +14993,8 @@
           processExpiredReservations();
           renderAll();
           startAutoNeonRefresh();
-          return;
-        }
+      return;
+    }
         startAutoLoadCountdown(Math.ceil(SYNC_READ_TIMEOUT_MS / 1000), "Neon database");
         try {
           const result = await neonPull(false, { render: false });
@@ -17725,19 +17744,19 @@
     });
     document.addEventListener("focusin", event => {
       if (!event.target?.matches?.("input, textarea, select")) return;
-      if (event.target.closest("#loginPage")) return;
+      if (event.target.closest("#loginModal")) return;
       markAnyFormEditing(event.target);
     });
     document.addEventListener("input", event => {
       if (!event.target?.matches?.("input, textarea, select")) return;
-      if (event.target.closest("#loginPage")) return;
+      if (event.target.closest("#loginModal")) return;
       markAnyFormEditing(event.target);
       formEditSequence += 1;
       rememberLiveFormFieldDraft(event.target);
     }, true);
     document.addEventListener("change", event => {
       if (!event.target?.matches?.("input, textarea, select")) return;
-      if (event.target.closest("#loginPage")) return;
+      if (event.target.closest("#loginModal")) return;
       markAnyFormEditing(event.target);
       formEditSequence += 1;
       rememberLiveFormFieldDraft(event.target);
@@ -17745,7 +17764,7 @@
     document.addEventListener("focusout", event => {
       if (!event.target?.matches?.("input, textarea, select")) return;
       setTimeout(() => {
-        if (document.activeElement?.matches?.("input, textarea, select") && !document.activeElement.closest("#loginPage")) return;
+        if (document.activeElement?.matches?.("input, textarea, select") && !document.activeElement.closest("#loginModal")) return;
         clearAnyFormEditingIfSafe();
       }, 250);
     });
@@ -17782,7 +17801,7 @@
         hydrateSelects();
         setupMonths();
         renderAll();
-        if (isAuthenticated()) restoreSessionActiveTab();
+        if (isAuthenticated()) unlockAuthenticatedWorkspace(sessionUser() || currentUser());
         setupCompactSearchFields();
         if (!isAuthenticated()) {
           setRetrySaveVisible(false);
@@ -17795,16 +17814,16 @@
             renderAll();
             restoreSessionActiveTab();
             setupCompactSearchFields();
-            setTimeout(() => autoPullOnStart(), 250);
+            setTimeout(() => autoPullOnStart({ allowPendingSyncPush: false }), 250);
           })
           .catch(err => {
             setStatus(`${err.message} Continuing with Neon auto-load.`, "warn");
-            setTimeout(() => autoPullOnStart(), 250);
+            setTimeout(() => autoPullOnStart({ allowPendingSyncPush: false }), 250);
           });
       } catch (err) {
         applySettingsInputs();
         setStatus(`Startup error: ${err.message}. Trying Neon auto-load.`, "error");
-        setTimeout(() => autoPullOnStart(), 250);
+        setTimeout(() => autoPullOnStart({ allowPendingSyncPush: false }), 250);
       }
     }
 
