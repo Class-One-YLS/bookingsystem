@@ -3567,74 +3567,289 @@
       ]);
     }
 
+    function firstRecordValue(record = {}, keys = []) {
+      for (const key of keys) {
+        const value = record[key];
+        if (value !== undefined && value !== null && String(value).trim() !== "") return value;
+      }
+      return "";
+    }
+
+    function recordFlagIsTrue(record = {}, keys = []) {
+      const value = firstRecordValue(record, keys);
+      if (value === true) return true;
+      return ["true", "1", "yes", "y"].includes(String(value || "").trim().toLowerCase());
+    }
+
+    function recordFlagIsFalse(record = {}, keys = []) {
+      const value = firstRecordValue(record, keys);
+      if (value === false) return true;
+      return ["false", "0", "no", "n"].includes(String(value || "").trim().toLowerCase());
+    }
+
+    function normalizeRecurringWeekday(value) {
+      const raw = String(value ?? "").trim();
+      if (!raw) return "";
+      const lower = raw.toLowerCase();
+      const aliases = {
+        monday: "Monday", mon: "Monday",
+        tuesday: "Tuesday", tue: "Tuesday", tues: "Tuesday",
+        wednesday: "Wednesday", wed: "Wednesday",
+        thursday: "Thursday", thu: "Thursday", thur: "Thursday", thurs: "Thursday",
+        friday: "Friday", fri: "Friday",
+        saturday: "Saturday", sat: "Saturday",
+        sunday: "Sunday", sun: "Sunday"
+      };
+      if (aliases[lower]) return aliases[lower];
+      if (/^\d+$/.test(raw)) {
+        const numeric = Number(raw);
+        if (numeric >= 1 && numeric <= 7) return DAYS[numeric - 1];
+        if (numeric === 0) return "Sunday";
+      }
+      return DAYS.find(day => day.toLowerCase() === lower) || "";
+    }
+
+    function recurringAssignmentIdFromRecord(record = {}) {
+      return String(firstRecordValue(record, [
+        "assignmentId", "assignment_id",
+        "normalizedRecurringAssignmentId", "normalized_recurring_assignment_id",
+        "recurringAssignmentId", "recurring_assignment_id",
+        "recurringScheduleId", "recurring_schedule_id",
+        "recurringClassId", "recurring_class_id",
+        "sourceSlotId", "source_slot_id",
+        "id"
+      ]) || "").trim();
+    }
+
+    function normalizedRecurringStatus(record = {}) {
+      return String(firstRecordValue(record, ["status", "assignmentStatus", "assignment_status", "state"]) || "").trim().toLowerCase();
+    }
+
+    function recurringAssignmentIsCurrent(record = {}) {
+      const status = normalizedRecurringStatus(record);
+      const inactiveFlag = recordFlagIsFalse(record, ["active", "isActive", "is_active"]);
+      return !(
+        recordFlagIsTrue(record, ["deleted", "archived", "removed", "isDeleted", "is_deleted"]) ||
+        inactiveFlag ||
+        Boolean(record.deletedAt || record.deleted_at || record.removedAt || record.removed_at) ||
+        Boolean(record.supersededBy || record.superseded_by || record.supersededByAssignmentId || record.superseded_by_assignment_id) ||
+        ["deleted", "removed", "archived", "inactive", "superseded"].includes(status)
+      );
+    }
+
+    function recurringAssignmentRecency(record = {}) {
+      const timestamps = [
+        record.updatedAt, record.updated_at,
+        record.changedAt, record.changed_at,
+        record.statusChangedAt, record.status_changed_at,
+        record.supersededAt, record.superseded_at,
+        record.createdAt, record.created_at
+      ].map(activityTime);
+      return Math.max(0, ...timestamps, Number(record.recordVersion || record.record_version || 0));
+    }
+
+    function findTeacherByCanonicalId(id) {
+      const key = String(id || "").trim();
+      if (!key) return null;
+      return (state.teachers || []).find(teacher =>
+        String(teacher.id || "").trim() === key ||
+        (Array.isArray(teacher.aliasIds) && teacher.aliasIds.map(value => String(value || "").trim()).includes(key))
+      ) || null;
+    }
+
+    function findStudentByCanonicalId(id) {
+      const key = String(id || "").trim();
+      if (!key) return null;
+      return (state.students || []).find(student =>
+        String(student.id || "").trim() === key ||
+        (Array.isArray(student.aliasIds) && student.aliasIds.map(value => String(value || "").trim()).includes(key))
+      ) || null;
+    }
+
     function normalizeLoadedRecurringAssignment(record = {}) {
       if (!record || typeof record !== "object" || Array.isArray(record)) return null;
-      const sourceCollection = record.sourceCollection === "overrideSlots" ? "overrideSlots" : "regularSlots";
-      const assignmentId = String(
-        record.assignmentId ||
-        record.normalizedRecurringAssignmentId ||
-        record.recurringAssignmentId ||
-        record.recurringScheduleId ||
-        record.id ||
-        recurringAssignmentIdFromSlot(record, null, sourceCollection) ||
-        ""
-      );
+      const assignmentId = recurringAssignmentIdFromRecord(record);
       if (!assignmentId) return null;
-      const teacherId = String(record.teacherId || "");
-      const day = record.day || record.weekday || "";
-      const time = normalizeTimeValue(record.time || record.classTime || "") || record.time || record.classTime || "";
+      const teacherId = String(firstRecordValue(record, ["teacherId", "teacher_id", "teacherID"]) || "").trim();
+      const studentId = String(firstRecordValue(record, ["studentId", "student_id", "studentID"]) || "").trim();
+      const rawDay = firstRecordValue(record, ["day", "weekday", "weekDay", "week_day", "dayName", "day_name", "dayOfWeek", "day_of_week"]);
+      const day = normalizeRecurringWeekday(rawDay);
+      const rawTime = firstRecordValue(record, ["time", "classTime", "class_time", "startTime", "start_time", "slotTime", "slot_time"]);
+      const time = normalizeTimeValue(rawTime) || String(rawTime || "").trim();
       if (!teacherId || !day || !time) return null;
-      const hasStudent = Boolean(record.studentId || record.studentName);
+      const sourceCollectionText = String(firstRecordValue(record, ["sourceCollection", "source_collection", "collection", "profileCollection", "profile_collection"]) || "").toLowerCase();
+      const sourceCollection = sourceCollectionText.includes("override") ? "overrideSlots" : "regularSlots";
+      const student = findStudentByCanonicalId(studentId);
+      const studentName = cleanStudentName(student?.name || firstRecordValue(record, ["studentName", "student_name", "childName", "child_name", "reservationName", "reservation_name"]) || "");
+      const unavailable = recordFlagIsTrue(record, ["unavailable", "isUnavailable", "is_unavailable"]) || ["off", "unavailable", "closed"].includes(normalizedRecurringStatus(record));
+      const hasStudent = Boolean(studentId || studentName);
+      const sourceSlotId = String(firstRecordValue(record, ["sourceSlotId", "source_slot_id", "slotId", "slot_id", "id"]) || assignmentId).trim();
+      const studentSlotId = String(firstRecordValue(record, ["studentSlotId", "student_slot_id"]) || sourceSlotId || assignmentId).trim();
       return {
         ...record,
-        id: String(record.id || record.sourceSlotId || assignmentId),
+        id: String(firstRecordValue(record, ["id"]) || sourceSlotId || assignmentId),
         assignmentId,
         normalizedRecurringAssignmentId: assignmentId,
+        recurringAssignmentId: firstRecordValue(record, ["recurringAssignmentId", "recurring_assignment_id"]) || assignmentId,
         teacherId,
+        studentId,
         day,
-        weekday: record.weekday || day,
+        weekday: day,
         time,
-        subject: normalizeSubject(record.subject || ""),
-        type: record.type || "regular class",
-        status: record.status || (record.deleted ? "deleted" : record.unavailable ? "off" : "active"),
+        subject: normalizeSubject(firstRecordValue(record, ["subject", "classSubject", "class_subject"]) || ""),
+        type: firstRecordValue(record, ["type", "classType", "class_type"]) || "regular class",
+        status: normalizedRecurringStatus(record) || (record.deleted ? "deleted" : unavailable ? "off" : "active"),
         sourceCollection,
-        sourceSlotId: record.sourceSlotId || record.id || "",
-        studentSlotId: record.studentSlotId || "",
-        studentName: cleanStudentName(record.studentName || ""),
-        startDate: dateOnly(record.startDate || record.effectiveFrom || ""),
-        endDate: dateOnly(record.endDate || record.lastClassDate || record.lastLessonDate || ""),
-        locked: Boolean(record.locked || hasStudent) && !record.unavailable,
-        unavailable: Boolean(record.unavailable),
-        recordVersion: Number(record.recordVersion || 0),
-        createdAt: record.createdAt || "",
-        updatedAt: record.updatedAt || record.changedAt || record.createdAt || ""
+        sourceSlotId,
+        studentSlotId,
+        studentName,
+        startDate: dateOnly(firstRecordValue(record, ["startDate", "start_date", "effectiveFrom", "effective_from"]) || ""),
+        endDate: dateOnly(firstRecordValue(record, ["endDate", "end_date", "lastClassDate", "last_class_date", "lastLessonDate", "last_lesson_date"]) || ""),
+        locked: Boolean(recordFlagIsTrue(record, ["locked", "reserved"]) || hasStudent) && !unavailable,
+        unavailable,
+        active: recordFlagIsFalse(record, ["active", "isActive", "is_active"]) ? false : true,
+        recordVersion: Number(record.recordVersion || record.record_version || 0),
+        createdAt: firstRecordValue(record, ["createdAt", "created_at"]) || "",
+        updatedAt: firstRecordValue(record, ["updatedAt", "updated_at", "changedAt", "changed_at", "createdAt", "created_at"]) || "",
+        source: record.source || "recurring_assignments_v2"
       };
     }
 
-    function overlayLoadedRecurringAssignmentsIntoProfiles() {
-      const assignments = coerceArrayCollection(state.recurringAssignments)
-        .map(normalizeLoadedRecurringAssignment)
-        .filter(Boolean);
-      state.recurringAssignments = assignments;
-      let applied = 0;
+    function dedupeRecurringAssignmentsForDisplay(assignments = []) {
+      const byId = new Map();
       assignments.forEach(assignment => {
-        const before = nestedScheduleCountsFromPayload(state);
-        applyRecurringAssignmentLocal(assignment);
-        const after = nestedScheduleCountsFromPayload(state);
-        if (
-          after.teacherRegularSlots !== before.teacherRegularSlots ||
-          after.teacherOverrideSlots !== before.teacherOverrideSlots ||
-          after.studentRegularSlots !== before.studentRegularSlots
-        ) applied += 1;
+        if (!recurringAssignmentIsCurrent(assignment)) return;
+        const key = assignment.assignmentId || assignment.id;
+        const current = byId.get(key);
+        if (!current || recurringAssignmentRecency(assignment) >= recurringAssignmentRecency(current)) byId.set(key, assignment);
       });
-      if (assignments.length) {
-        console.info("[ClassOne recurring assignment recovery]", {
-          topLevelRecurringAssignments: assignments.length,
-          appliedToProfiles: applied,
+      return [...byId.values()];
+    }
+
+    function assignmentAppearsInVisibleWeek(assignment, matchedTeacherIds = new Set()) {
+      if (!assignment || !matchedTeacherIds.has(String(assignment.teacherId || ""))) return false;
+      const weekStart = $("weekSelect")?.value || weekStartFromDate($("weekDateInput")?.value || todayISO());
+      const start = parseISODate(weekStart);
+      return DAYS.some((day, index) => {
+        if (assignment.day !== day) return false;
+        const date = new Date(start);
+        date.setDate(start.getDate() + index);
+        const dateStr = localISO(date);
+        const startDate = dateOnly(assignment.startDate);
+        const endDate = dateOnly(assignment.endDate);
+        return (!startDate || startDate <= dateStr) && (!endDate || endDate >= dateStr);
+      });
+    }
+
+    function upsertRecoveredTeacherRecurringSlot(teacher, assignment) {
+      const collectionName = assignment.sourceCollection === "overrideSlots" ? "overrideSlots" : "regularSlots";
+      teacher[collectionName] ||= [];
+      const teacherSlot = {
+        ...assignment,
+        id: assignment.sourceSlotId || assignment.id || assignment.assignmentId,
+        normalizedRecurringAssignmentId: assignment.assignmentId,
+        assignmentId: assignment.assignmentId,
+        teacherId: assignment.teacherId,
+        day: assignment.day,
+        weekday: assignment.day,
+        time: normalizeTimeValue(assignment.time) || assignment.time
+      };
+      const index = teacher[collectionName].findIndex(slot =>
+        String(slot.normalizedRecurringAssignmentId || slot.assignmentId || "") === String(assignment.assignmentId) ||
+        (teacherSlot.id && String(slot.id || "") === String(teacherSlot.id))
+      );
+      if (index >= 0) teacher[collectionName][index] = { ...teacher[collectionName][index], ...teacherSlot };
+      else teacher[collectionName].push(teacherSlot);
+      return collectionName;
+    }
+
+    function upsertRecoveredStudentRecurringSlot(student, assignment) {
+      if (!student || !assignment.studentId) return false;
+      student.regularSlots ||= [];
+      const studentSlot = {
+        id: assignment.studentSlotId || assignment.sourceSlotId || assignment.assignmentId,
+        normalizedRecurringAssignmentId: assignment.assignmentId,
+        assignmentId: assignment.assignmentId,
+        teacherId: assignment.teacherId,
+        day: assignment.day,
+        weekday: assignment.day,
+        time: normalizeTimeValue(assignment.time) || assignment.time,
+        subject: assignment.subject || "",
+        startDate: assignment.startDate || "",
+        endDate: assignment.endDate || "",
+        source: assignment.source || assignment.sourceCollection || "recurring_assignments_v2",
+        recordVersion: Number(assignment.recordVersion || 0),
+        updatedAt: assignment.updatedAt || ""
+      };
+      const index = student.regularSlots.findIndex(slot =>
+        String(slot.normalizedRecurringAssignmentId || slot.assignmentId || "") === String(assignment.assignmentId) ||
+        String(slot.id || "") === String(studentSlot.id)
+      );
+      if (index >= 0) student.regularSlots[index] = { ...student.regularSlots[index], ...studentSlot };
+      else student.regularSlots.push(studentSlot);
+      return true;
+    }
+
+    function overlayLoadedRecurringAssignmentsIntoProfiles() {
+      const rawAssignments = coerceArrayCollection(state.recurringAssignments);
+      const normalizedByIndex = rawAssignments.map(normalizeLoadedRecurringAssignment);
+      const normalizedAssignments = normalizedByIndex.filter(Boolean);
+      const activeAssignments = dedupeRecurringAssignmentsForDisplay(normalizedAssignments);
+      state.recurringAssignments = rawAssignments.map((record, index) => normalizedByIndex[index] || record);
+
+      const matchedTeacherIds = new Set();
+      const unmatchedTeacherIds = new Set();
+      const matchedStudentIds = new Set();
+      const unmatchedStudentIds = new Set();
+      let teacherRegularSlotsProduced = 0;
+      let teacherOverrideSlotsProduced = 0;
+      let studentRegularSlotsProduced = 0;
+
+      activeAssignments.forEach(assignment => {
+        const teacher = findTeacherByCanonicalId(assignment.teacherId);
+        if (!teacher) {
+          unmatchedTeacherIds.add(String(assignment.teacherId || ""));
+          return;
+        }
+        matchedTeacherIds.add(String(assignment.teacherId || ""));
+        const collectionName = upsertRecoveredTeacherRecurringSlot(teacher, assignment);
+        if (collectionName === "overrideSlots") teacherOverrideSlotsProduced += 1;
+        else teacherRegularSlotsProduced += 1;
+
+        if (assignment.studentId) {
+          const student = findStudentByCanonicalId(assignment.studentId);
+          if (student) {
+            matchedStudentIds.add(String(assignment.studentId || ""));
+            if (upsertRecoveredStudentRecurringSlot(student, assignment)) studentRegularSlotsProduced += 1;
+          } else {
+            unmatchedStudentIds.add(String(assignment.studentId || ""));
+          }
+        }
+      });
+
+      if (rawAssignments.length) {
+        const visibleTimetableOccurrencesThisWeek = activeAssignments
+          .filter(assignment => assignment.sourceCollection !== "overrideSlots")
+          .filter(assignment => assignmentAppearsInVisibleWeek(assignment, matchedTeacherIds))
+          .length;
+        console.info("RECURRING ASSIGNMENT RECOVERY", {
+          loadedRecurringAssignments: rawAssignments.length,
+          normalizedRecurringAssignments: normalizedAssignments.length,
+          activeCurrentAssignments: activeAssignments.length,
+          matchedTeachers: matchedTeacherIds.size,
+          unmatchedTeacherRecords: unmatchedTeacherIds.size,
+          unmatchedTeacherIds: [...unmatchedTeacherIds].filter(Boolean).slice(0, 10),
+          matchedStudents: matchedStudentIds.size,
+          unmatchedStudentRecords: unmatchedStudentIds.size,
+          unmatchedStudentIds: [...unmatchedStudentIds].filter(Boolean).slice(0, 10),
+          teacherRegularSlotsProduced,
+          teacherOverrideSlotsProduced,
+          studentRegularSlotsProduced,
+          visibleTimetableOccurrencesThisWeek,
           scheduleCounts: nestedScheduleCountsFromPayload(state)
         });
       }
-      return applied;
+      return teacherRegularSlotsProduced + teacherOverrideSlotsProduced;
     }
 
     function beginSyncPerf(label = "change") {
