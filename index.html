@@ -2389,7 +2389,7 @@
     const ENABLE_BOOKING_OUTCOME_DELTA_SYNC = true;
     const ENABLE_BOOKING_CREATE_DELTA_SYNC = true;
     const ENABLE_RECURRING_ASSIGNMENT_DELTA_SYNC = true;
-    const CLASS_ONE_BUILD = "2026.08.14-phase2-verification.1";
+    const CLASS_ONE_BUILD = "2026.08.15-delta-sync-core.1";
     const FRONTEND_BUILD = CLASS_ONE_BUILD;
     const SYNC_READ_TIMEOUT_MS = 90000;
     const SYNC_SAVE_TIMEOUT_MS = 90000;
@@ -2400,6 +2400,8 @@
     const NEON_CHUNK_UPLOAD_CONCURRENCY = 4;
     const NEON_CHUNK_DOWNLOAD_CONCURRENCY = 6;
     const MAX_NEON_AUTO_CONFLICT_RETRIES = 2;
+    const DELTA_SYNC_WARN_BYTES = 100 * 1024;
+    const DELTA_SYNC_ABNORMAL_BYTES = 1024 * 1024;
     const MAX_REMOTE_UNDO_SNAPSHOTS = 2500;
     const STORE_KEY = "classOneBookingRevamp.v1";
     const DATA_BACKUP_KEY = "classone_data_backup";
@@ -7628,6 +7630,7 @@
       bookingBackfillStatus: classOneBookingBackfillStatus,
       recurringAssignmentBackfillStatus: classOneRecurringAssignmentBackfillStatus,
       phase2Status: classOnePhase2Status,
+      deltaSyncRecent: () => deltaSync.recent(),
       performanceCounters: classOnePerformanceCounters,
       resetPerformanceCounters: resetClassOnePerformanceCounters
     };
@@ -16112,6 +16115,112 @@
       };
     }
 
+    const deltaSync = (() => {
+      const allowedEndpoints = new Set([
+        "/api/bookings/outcome",
+        "/api/bookings/create",
+        "/api/recurring-assignments/upsert"
+      ]);
+      let queue = Promise.resolve();
+      const recentByKey = new Map();
+
+      function mutationKey(operation = {}) {
+        return [
+          operation.entity || "unknown",
+          operation.operation || "update",
+          operation.id || operation.requestId || ""
+        ].join(":");
+      }
+
+      function validateOperation(operation = {}) {
+        if (!allowedEndpoints.has(operation.endpoint)) {
+          throw new Error(`Delta sync endpoint is not allowlisted: ${operation.endpoint || "missing endpoint"}`);
+        }
+        if (!operation.body || typeof operation.body !== "object") throw new Error("Delta sync body is required.");
+        if (!operation.body.requestId) throw new Error("Delta sync requestId is required.");
+        if (!operation.entity || !operation.operation || !operation.id) {
+          throw new Error("Delta sync operation must include entity, operation and id.");
+        }
+      }
+
+      function warnIfLarge(operation, bytes) {
+        if (bytes > DELTA_SYNC_ABNORMAL_BYTES) {
+          console.error("[ClassOne delta sync] Abnormal payload size.", {
+            entity: operation.entity,
+            operation: operation.operation,
+            id: operation.id,
+            endpoint: operation.endpoint,
+            bytes,
+            largestFields: largestJsonFields(operation.body, 8)
+          });
+          return;
+        }
+        if (SYNC_DEBUG && bytes > DELTA_SYNC_WARN_BYTES) {
+          console.warn("[ClassOne delta sync] Large payload.", {
+            entity: operation.entity,
+            operation: operation.operation,
+            id: operation.id,
+            endpoint: operation.endpoint,
+            bytes,
+            largestFields: largestJsonFields(operation.body, 8)
+          });
+        }
+      }
+
+      async function execute(operation) {
+        validateOperation(operation);
+        const key = mutationKey(operation);
+        const payloadText = JSON.stringify(operation.body);
+        const bytes = jsonByteSize(payloadText);
+        warnIfLarge(operation, bytes);
+        recentByKey.set(key, {
+          entity: operation.entity,
+          operation: operation.operation,
+          id: operation.id,
+          endpoint: operation.endpoint,
+          requestId: operation.body.requestId,
+          bytes,
+          queuedAt: new Date().toISOString()
+        });
+        operation.beforeSend?.({ bytes, key });
+        const startedAt = performance.now();
+        const data = await fetchNeonJson(operation.endpoint, {
+          method: "POST",
+          body: payloadText
+        }, operation.label || `${operation.entity} delta sync`, operation.timeoutMs || SYNC_SAVE_TIMEOUT_MS);
+        const systemVersion = Number(data.version || state.settings.neonVersion || 0);
+        if (systemVersion) {
+          state.settings.neonVersion = systemVersion;
+          lastObservedNeonVersion = systemVersion;
+        }
+        lastObservedNeonUpdatedAt = data.updatedAt || new Date().toISOString();
+        state.settings.lastSyncedAt = new Date().toISOString();
+        operation.applyResponse?.(data);
+        if (systemVersion) markTeacherViewSynced(systemVersion);
+        else persistState();
+        recentByKey.set(key, {
+          ...recentByKey.get(key),
+          completedAt: new Date().toISOString(),
+          httpStatus: data.__httpStatus || 200,
+          systemVersion,
+          durationMs: Math.round(performance.now() - startedAt)
+        });
+        operation.afterResponse?.(data, { bytes, key, durationMs: Math.round(performance.now() - startedAt) });
+        await operation.verify?.(data);
+        return data;
+      }
+
+      function send(operation) {
+        queue = queue.catch(() => null).then(() => execute(operation));
+        return queue;
+      }
+
+      return {
+        send,
+        recent: () => Array.from(recentByKey.entries()).map(([key, value]) => ({ key, ...value }))
+      };
+    })();
+
     async function verifyBookingOutcomeComposedState(change, deltaResponse) {
       if (!SYNC_DEBUG || !deltaResponse?.booking?.id) return null;
       const bookingId = deltaResponse.booking.id;
@@ -16217,59 +16326,63 @@
         };
         console.info("[ClassOne occurrence cancel/outcome request]", lastOccurrenceOutcomeDebug);
       }
-      const data = await fetchNeonJson("/api/bookings/outcome", {
-        method: "POST",
-        body: JSON.stringify(body)
-      }, `${label} delta sync`, SYNC_SAVE_TIMEOUT_MS);
-      if (SYNC_DEBUG && lastOccurrenceOutcomeDebug?.request?.requestId === body.requestId) {
-        lastOccurrenceOutcomeDebug.response = {
-          httpStatus: data.__httpStatus || 200,
-          canonicalBookingId: data.booking?.id || data.booking?.bookingId || "",
-          returnedOccurrence: data.booking ? occurrenceDebugRecordFromBooking(data.booking) : null,
-          returnedStatus: data.booking?.status || "",
-          returnedOutcome: data.booking?.outcome || "",
-          returnedClassOutcome: data.booking?.classOutcome || "",
-          resolutionActive: data.booking?.resolutionActive === true,
-          suppressRecurringOccurrence: data.booking?.suppressRecurringOccurrence === true,
-          recordVersion: Number(data.recordVersion || data.booking?.recordVersion || 0),
-          systemVersion: Number(data.version || 0)
-        };
-        console.info("[ClassOne occurrence cancel/outcome response]", lastOccurrenceOutcomeDebug);
-      }
-      if (data.booking) {
-        normaliseOccurrenceOutcome(data.booking, data.booking.status || data.booking.outcome || data.booking.classOutcome);
-        upsertLocalRecord("bookings", data.booking);
-      }
-      if (data.replacementTask) upsertLocalRecord("replacements", data.replacementTask);
-      if (data.replacementCredit) upsertLocalRecord("replacementCredits", data.replacementCredit);
-      if (data.activityLog) upsertLocalRecord("activityLogs", data.activityLog);
-      if (confirmedRemotePayload) {
-        if (data.booking) upsertPayloadRecord(confirmedRemotePayload, "bookings", data.booking);
-        if (data.replacementTask) upsertPayloadRecord(confirmedRemotePayload, "replacements", data.replacementTask);
-        if (data.replacementCredit) upsertPayloadRecord(confirmedRemotePayload, "replacementCredits", data.replacementCredit);
-        if (data.activityLog) upsertPayloadRecord(confirmedRemotePayload, "activityLogs", data.activityLog);
-      }
-      state.settings.neonVersion = Number(data.version || state.settings.neonVersion || 0);
-      lastObservedNeonVersion = state.settings.neonVersion;
-      lastObservedNeonUpdatedAt = data.updatedAt || new Date().toISOString();
-      state.settings.lastSyncedAt = new Date().toISOString();
-      markTeacherViewSynced(state.settings.neonVersion);
-      persistState();
-      notifyTeacherViews(state.settings.neonVersion);
-      console.info("[ClassOne booking outcome delta]", {
-        marker: "BOOKING DELTA SYNC",
-        bookingId: change.booking.id,
+      const data = await deltaSync.send({
+        entity: "booking",
         operation,
+        id: change.booking.id,
         endpoint: "/api/bookings/outcome",
-        bytes: payloadBytes,
-        status: data.__httpStatus || 200,
-        recordVersion: Number(data.recordVersion || data.booking?.recordVersion || 0),
-        systemVersion: Number(data.version || 0),
-        legacyStatePatchTriggered: Boolean(recentBookingOutcomeDeltaSyncs.get(change.booking.id)?.legacyStatePatchTriggered),
-        previousStatePatchBytes: beforeBytes,
-        version: state.settings.neonVersion
+        body,
+        label: `${label} delta sync`,
+        applyResponse(response) {
+          if (SYNC_DEBUG && lastOccurrenceOutcomeDebug?.request?.requestId === body.requestId) {
+            lastOccurrenceOutcomeDebug.response = {
+              httpStatus: response.__httpStatus || 200,
+              canonicalBookingId: response.booking?.id || response.booking?.bookingId || "",
+              returnedOccurrence: response.booking ? occurrenceDebugRecordFromBooking(response.booking) : null,
+              returnedStatus: response.booking?.status || "",
+              returnedOutcome: response.booking?.outcome || "",
+              returnedClassOutcome: response.booking?.classOutcome || "",
+              resolutionActive: response.booking?.resolutionActive === true,
+              suppressRecurringOccurrence: response.booking?.suppressRecurringOccurrence === true,
+              recordVersion: Number(response.recordVersion || response.booking?.recordVersion || 0),
+              systemVersion: Number(response.version || 0)
+            };
+            console.info("[ClassOne occurrence cancel/outcome response]", lastOccurrenceOutcomeDebug);
+          }
+          if (response.booking) {
+            normaliseOccurrenceOutcome(response.booking, response.booking.status || response.booking.outcome || response.booking.classOutcome);
+            upsertLocalRecord("bookings", response.booking);
+          }
+          if (response.replacementTask) upsertLocalRecord("replacements", response.replacementTask);
+          if (response.replacementCredit) upsertLocalRecord("replacementCredits", response.replacementCredit);
+          if (response.activityLog) upsertLocalRecord("activityLogs", response.activityLog);
+          if (confirmedRemotePayload) {
+            if (response.booking) upsertPayloadRecord(confirmedRemotePayload, "bookings", response.booking);
+            if (response.replacementTask) upsertPayloadRecord(confirmedRemotePayload, "replacements", response.replacementTask);
+            if (response.replacementCredit) upsertPayloadRecord(confirmedRemotePayload, "replacementCredits", response.replacementCredit);
+            if (response.activityLog) upsertPayloadRecord(confirmedRemotePayload, "activityLogs", response.activityLog);
+          }
+        },
+        afterResponse(response) {
+          console.info("[ClassOne booking outcome delta]", {
+            marker: "BOOKING DELTA SYNC",
+            bookingId: change.booking.id,
+            operation,
+            endpoint: "/api/bookings/outcome",
+            bytes: payloadBytes,
+            status: response.__httpStatus || 200,
+            recordVersion: Number(response.recordVersion || response.booking?.recordVersion || 0),
+            systemVersion: Number(response.version || 0),
+            legacyStatePatchTriggered: Boolean(recentBookingOutcomeDeltaSyncs.get(change.booking.id)?.legacyStatePatchTriggered),
+            previousStatePatchBytes: beforeBytes,
+            version: state.settings.neonVersion
+          });
+        },
+        verify(response) {
+          return verifyBookingOutcomeComposedState(change, response);
+        }
       });
-      await verifyBookingOutcomeComposedState(change, data);
+      persistState();
       return data;
     }
 
@@ -16322,39 +16435,41 @@
         bytes: payloadBytes,
         legacyStatePatchTriggered: false
       });
-      const data = await fetchNeonJson("/api/bookings/create", {
-        method: "POST",
-        body: JSON.stringify(body)
-      }, `${label} delta sync`, SYNC_SAVE_TIMEOUT_MS);
-      if (data.booking) upsertLocalRecord("bookings", data.booking);
-      if (data.supersededBooking) upsertLocalRecord("bookings", data.supersededBooking);
-      if (data.replacementTask) upsertLocalRecord("replacements", data.replacementTask);
-      if (data.replacementCredit) upsertLocalRecord("replacementCredits", data.replacementCredit);
-      if (data.activityLog) upsertLocalRecord("activityLogs", data.activityLog);
-      if (confirmedRemotePayload) {
-        if (data.booking) upsertPayloadRecord(confirmedRemotePayload, "bookings", data.booking);
-        if (data.supersededBooking) upsertPayloadRecord(confirmedRemotePayload, "bookings", data.supersededBooking);
-        if (data.replacementTask) upsertPayloadRecord(confirmedRemotePayload, "replacements", data.replacementTask);
-        if (data.replacementCredit) upsertPayloadRecord(confirmedRemotePayload, "replacementCredits", data.replacementCredit);
-        if (data.activityLog) upsertPayloadRecord(confirmedRemotePayload, "activityLogs", data.activityLog);
-      }
-      state.settings.neonVersion = Number(data.version || state.settings.neonVersion || 0);
-      lastObservedNeonVersion = state.settings.neonVersion;
-      lastObservedNeonUpdatedAt = data.updatedAt || new Date().toISOString();
-      state.settings.lastSyncedAt = new Date().toISOString();
-      markTeacherViewSynced(state.settings.neonVersion);
-      persistState();
-      notifyTeacherViews(state.settings.neonVersion);
-      console.info("[ClassOne booking create delta]", {
-        marker: "BOOKING CREATE DELTA SYNC",
-        bookingId: change.booking.id,
+      const data = await deltaSync.send({
+        entity: "booking",
+        operation: "create",
+        id: change.booking.id,
         endpoint: "/api/bookings/create",
-        bytes: payloadBytes,
-        status: data.__httpStatus || 200,
-        recordVersion: Number(data.recordVersion || data.booking?.recordVersion || 0),
-        systemVersion: Number(data.version || 0),
-        legacyStatePatchTriggered: Boolean(recentBookingCreateDeltaSyncs.get(change.booking.id)?.legacyStatePatchTriggered)
+        body,
+        label: `${label} delta sync`,
+        applyResponse(response) {
+          if (response.booking) upsertLocalRecord("bookings", response.booking);
+          if (response.supersededBooking) upsertLocalRecord("bookings", response.supersededBooking);
+          if (response.replacementTask) upsertLocalRecord("replacements", response.replacementTask);
+          if (response.replacementCredit) upsertLocalRecord("replacementCredits", response.replacementCredit);
+          if (response.activityLog) upsertLocalRecord("activityLogs", response.activityLog);
+          if (confirmedRemotePayload) {
+            if (response.booking) upsertPayloadRecord(confirmedRemotePayload, "bookings", response.booking);
+            if (response.supersededBooking) upsertPayloadRecord(confirmedRemotePayload, "bookings", response.supersededBooking);
+            if (response.replacementTask) upsertPayloadRecord(confirmedRemotePayload, "replacements", response.replacementTask);
+            if (response.replacementCredit) upsertPayloadRecord(confirmedRemotePayload, "replacementCredits", response.replacementCredit);
+            if (response.activityLog) upsertPayloadRecord(confirmedRemotePayload, "activityLogs", response.activityLog);
+          }
+        },
+        afterResponse(response) {
+          console.info("[ClassOne booking create delta]", {
+            marker: "BOOKING CREATE DELTA SYNC",
+            bookingId: change.booking.id,
+            endpoint: "/api/bookings/create",
+            bytes: payloadBytes,
+            status: response.__httpStatus || 200,
+            recordVersion: Number(response.recordVersion || response.booking?.recordVersion || 0),
+            systemVersion: Number(response.version || 0),
+            legacyStatePatchTriggered: Boolean(recentBookingCreateDeltaSyncs.get(change.booking.id)?.legacyStatePatchTriggered)
+          });
+        }
       });
+      persistState();
       return data;
     }
 
@@ -16406,35 +16521,37 @@
           legacyStatePatchTriggered: false
         });
       });
-      const data = await fetchNeonJson("/api/recurring-assignments/upsert", {
-        method: "POST",
-        body: JSON.stringify(body)
-      }, `${label} delta sync`, SYNC_SAVE_TIMEOUT_MS);
-      (data.assignments || (data.assignment ? [data.assignment] : [])).forEach(assignment => {
-        applyRecurringAssignmentLocal(assignment);
-        if (confirmedRemotePayload) upsertPayloadRecurringAssignment(confirmedRemotePayload, assignment);
-      });
-      if (data.activityLog) {
-        upsertLocalRecord("activityLogs", data.activityLog);
-        if (confirmedRemotePayload) upsertPayloadRecord(confirmedRemotePayload, "activityLogs", data.activityLog);
-      }
-      state.settings.neonVersion = Number(data.version || state.settings.neonVersion || 0);
-      lastObservedNeonVersion = state.settings.neonVersion;
-      lastObservedNeonUpdatedAt = data.updatedAt || new Date().toISOString();
-      state.settings.lastSyncedAt = new Date().toISOString();
-      markTeacherViewSynced(state.settings.neonVersion);
-      persistState();
-      notifyTeacherViews(state.settings.neonVersion);
-      console.info("[ClassOne recurring assignment delta]", {
-        marker: "RECURRING ASSIGNMENT DELTA SYNC",
-        assignmentIds: items.map(item => item.assignmentId),
+      const data = await deltaSync.send({
+        entity: "recurring_assignment",
+        operation: options.operation || "upsert",
+        id: items.map(item => item.assignmentId).join(","),
         endpoint: "/api/recurring-assignments/upsert",
-        bytes: payloadBytes,
-        status: data.__httpStatus || 200,
-        recordVersion: Number(data.recordVersion || data.assignment?.recordVersion || 0),
-        systemVersion: Number(data.version || 0),
-        legacyStatePatchTriggered: items.some(item => recentRecurringAssignmentDeltaSyncs.get(item.assignmentId)?.legacyStatePatchTriggered)
+        body,
+        label: `${label} delta sync`,
+        applyResponse(response) {
+          (response.assignments || (response.assignment ? [response.assignment] : [])).forEach(assignment => {
+            applyRecurringAssignmentLocal(assignment);
+            if (confirmedRemotePayload) upsertPayloadRecurringAssignment(confirmedRemotePayload, assignment);
+          });
+          if (response.activityLog) {
+            upsertLocalRecord("activityLogs", response.activityLog);
+            if (confirmedRemotePayload) upsertPayloadRecord(confirmedRemotePayload, "activityLogs", response.activityLog);
+          }
+        },
+        afterResponse(response) {
+          console.info("[ClassOne recurring assignment delta]", {
+            marker: "RECURRING ASSIGNMENT DELTA SYNC",
+            assignmentIds: items.map(item => item.assignmentId),
+            endpoint: "/api/recurring-assignments/upsert",
+            bytes: payloadBytes,
+            status: response.__httpStatus || 200,
+            recordVersion: Number(response.recordVersion || response.assignment?.recordVersion || 0),
+            systemVersion: Number(response.version || 0),
+            legacyStatePatchTriggered: items.some(item => recentRecurringAssignmentDeltaSyncs.get(item.assignmentId)?.legacyStatePatchTriggered)
+          });
+        }
       });
+      persistState();
       setStatus(`${label} synced.`, "success");
       return data;
     }
