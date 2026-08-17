@@ -2782,6 +2782,10 @@
       if (endMs && endMs <= nowMs) return "completed";
       return normalizeClassStatus(normalized) || normalized || "booked";
     }
+    function slotHasEnded(date, time, minutesValue = 25) {
+      const endMs = occurrenceEndTimeMs({ date, time, minutes: minutesValue });
+      return Boolean(endMs && endMs <= Date.now());
+    }
     const datePart = (value) => String(value || "").split("T")[0].split(" ")[0];
     const dayFromISO = (value) => {
       const date = parseISODate(dateOnly(value));
@@ -7808,7 +7812,6 @@
     function renderSchedule() {
       renderWeeklyTimetableCallCount += 1;
       const dates = weekDates();
-      finalizePassedClassesForRange(dates[0], dates[dates.length - 1]);
       const times = new Set();
       const scheduleFilters = normalizedScheduleFilters();
       const teacherFilterForTimes = scheduleFilters.teacher;
@@ -13746,7 +13749,7 @@
 
     function bookingCanAutoComplete(booking) {
       const status = occurrenceResolutionStatus(booking) || normalizeClassStatus(booking) || String(booking?.status || "").toLowerCase();
-      return status === "booked" && slotHasPassed(booking.date, booking.time);
+      return status === "booked" && slotHasEnded(booking.date, booking.time, booking.minutes || 25);
     }
 
     function slotHasTerminalNonCompletedOutcome(slot) {
@@ -13790,7 +13793,7 @@
       let changed = false;
       datesBetween(start, end).forEach(date => {
         collectSlotsForDate(date).forEach(slot => {
-          if (!slot.locked || slot.reserved || !slotHasPassed(slot.date, slot.time)) return;
+          if (!slot.locked || slot.reserved || !slotHasEnded(slot.date, slot.time, slot.minutes || 25)) return;
           if (slotHasTerminalNonCompletedOutcome(slot)) return;
           const existing = scheduleBookings().find(b =>
             b.teacherId === slot.teacherId &&
@@ -14303,6 +14306,15 @@
       return new Set((Array.isArray(teachers) ? teachers : []).map(item => item?.id).filter(Boolean));
     }
 
+    function recurringAssignmentIdsFromStatePatchBody(bodyText) {
+      const body = safeParseJson(bodyText);
+      const assignments = body.patch?.changes?.recurringAssignments || body.changes?.recurringAssignments || [];
+      return new Set((Array.isArray(assignments) ? assignments : [])
+        .map(item => item?.assignmentId || item?.normalizedRecurringAssignmentId || item?.recurringAssignmentId || item?.id)
+        .filter(Boolean)
+        .map(String));
+    }
+
     function statePatchDebugInfo(bodyText) {
       const body = safeParseJson(bodyText);
       const patch = body.patch || body;
@@ -14317,9 +14329,9 @@
         .sort((a, b) => b.bytes - a.bytes);
       const payloadBytes = jsonByteSize(bodyText || "");
       const bookingIds = bookingIdsFromStatePatchBody(bodyText);
-      const teacherIds = teacherIdsFromStatePatchBody(bodyText);
+      const assignmentIds = recurringAssignmentIdsFromStatePatchBody(bodyText);
       const alreadyNormalized = [...bookingIds].some(id => recentBookingOutcomeDeltaSyncs.has(id) || recentBookingCreateDeltaSyncs.has(id)) ||
-        [...teacherIds].some(teacherId => [...recentRecurringAssignmentDeltaSyncs.values()].some(item => String(item.teacherId || "") === String(teacherId || "")));
+        [...assignmentIds].some(assignmentId => recentRecurringAssignmentDeltaSyncs.has(assignmentId));
       return {
         payloadBytes,
         collections,
@@ -14362,7 +14374,7 @@
     }
 
     function detectDeltaLegacyStatePatch(path, options = {}, label = "") {
-      if (!SYNC_DEBUG || !path.startsWith("/api/state-patch")) return;
+      if (!path.startsWith("/api/state-patch")) return;
       pruneDeltaDebugWindow();
       const ids = bookingIdsFromStatePatchBody(options.body || "");
       ids.forEach(bookingId => {
@@ -14384,16 +14396,16 @@
           setStatus("MIGRATION ERROR: migrated booking mutation also triggered legacy state sync. See console.", "error");
         });
       });
-      const teacherIds = teacherIdsFromStatePatchBody(options.body || "");
-      teacherIds.forEach(teacherId => {
-        recentRecurringAssignmentDeltaSyncs.forEach(item => {
-          if (String(item.teacherId || "") !== String(teacherId || "")) return;
+      const assignmentIds = recurringAssignmentIdsFromStatePatchBody(options.body || "");
+      assignmentIds.forEach(assignmentId => {
+        const item = recentRecurringAssignmentDeltaSyncs.get(String(assignmentId || ""));
+        if (item) {
           item.legacyStatePatchTriggered = true;
           item.legacyStatePatchLabel = label;
           item.legacyStatePatchStack = (new Error("Legacy state-patch after recurring assignment delta")).stack || "";
           const warning = {
             assignmentId: item.assignmentId,
-            teacherId,
+            teacherId: item.teacherId || "",
             operation: item.operation,
             deltaEndpoint: item.endpoint,
             endpoint: "/api/state-patch",
@@ -14402,7 +14414,7 @@
           };
           console.warn("MIGRATION ERROR: recurring assignment was persisted through both delta sync and legacy state sync.", warning);
           setStatus("MIGRATION ERROR: migrated recurring assignment also triggered legacy state sync. See console.", "error");
-        });
+        }
       });
     }
 
@@ -14663,15 +14675,20 @@
 
       function warnIfLarge(operation, bytes) {
         if (bytes > DELTA_SYNC_ABNORMAL_BYTES) {
-          console.error("[ClassOne delta sync] Abnormal payload size.", {
+          const details = {
             entity: operation.entity,
             operation: operation.operation,
             id: operation.id,
             endpoint: operation.endpoint,
             bytes,
             largestFields: largestJsonFields(operation.body, 8)
-          });
-          return;
+          };
+          console.error("[ClassOne delta sync] Abnormal payload size.", details);
+          const error = new Error(`Delta sync payload is abnormally large (${Math.round(bytes / 1024)} KB). Refusing to send a booking-level mutation as a large payload.`);
+          error.code = "DELTA_PAYLOAD_TOO_LARGE";
+          error.payloadBytes = bytes;
+          error.details = details;
+          throw error;
         }
         if (SYNC_DEBUG && bytes > DELTA_SYNC_WARN_BYTES) {
           console.warn("[ClassOne delta sync] Large payload.", {
@@ -16018,9 +16035,6 @@
       }
       if (nextStatus === "booked") booking.publicHolidayOverride = true;
       booking.archived = false;
-      if (booking.status === "booked" && slotHasPassed(booking.date, booking.time)) {
-        stampBookingStatus(booking, "completed", now);
-      }
       booking.changedAt = now;
       let replacementSideEffects = {};
       if (replacementReasonForStatus(nextStatus)) replacementSideEffects = handleReplacementForOutcome(booking, replacementNeeded);
