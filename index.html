@@ -2220,6 +2220,17 @@
       "roles"
     ];
     const STATE_ARRAY_COLLECTIONS = [...new Set([...BUSINESS_COLLECTIONS, "recurringAssignments"])];
+    const CORE_STARTUP_COLLECTIONS = [
+      "teachers",
+      "students",
+      "bookings",
+      "recurringAssignments",
+      "teacherLeaves",
+      "publicHolidays",
+      "replacements",
+      "replacementCredits"
+    ];
+    let lastSuccessfulServerCounts = null;
     let teacherDirectoryPage = 1;
     const revealedTeacherPasscodes = new Set();
     let archivedTeacherPage = 1;
@@ -2966,6 +2977,53 @@
       return Object.values(value).filter(item => item && typeof item === "object");
     }
 
+    function collectionCountsFromPayload(payload = {}) {
+      const source = payload && typeof payload === "object" ? payload : {};
+      return Object.fromEntries(CORE_STARTUP_COLLECTIONS.map(key => [key, coerceArrayCollection(source[key]).length]));
+    }
+
+    function coreRecordCount(counts = {}) {
+      return Number(counts.teachers || 0) + Number(counts.students || 0) + Number(counts.bookings || 0) + Number(counts.recurringAssignments || 0);
+    }
+
+    function hasCoreBusinessData(counts = {}) {
+      return coreRecordCount(counts) > 0;
+    }
+
+    function currentStateLooksSuspiciouslyEmpty() {
+      return Boolean(lastSuccessfulServerCounts && hasCoreBusinessData(lastSuccessfulServerCounts) && !hasCoreBusinessData(collectionCountsFromPayload(state)));
+    }
+
+    function extractAppStatePayload(rawPayload = {}) {
+      if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) return {};
+      const candidates = [
+        { source: "direct", payload: rawPayload },
+        { source: "data", payload: rawPayload.data },
+        { source: "state", payload: rawPayload.state },
+        { source: "payload", payload: rawPayload.payload },
+        { source: "appState", payload: rawPayload.appState }
+      ].filter(candidate => candidate.payload && typeof candidate.payload === "object" && !Array.isArray(candidate.payload))
+        .map(candidate => ({ ...candidate, counts: collectionCountsFromPayload(candidate.payload) }))
+        .sort((a, b) => coreRecordCount(b.counts) - coreRecordCount(a.counts));
+      return candidates[0]?.payload || {};
+    }
+
+    function logStartupStateCounts(stage, payload = {}) {
+      const counts = collectionCountsFromPayload(payload);
+      console.info("[ClassOne state load]", {
+        stage,
+        teachers: counts.teachers,
+        students: counts.students,
+        bookings: counts.bookings,
+        recurringAssignments: counts.recurringAssignments,
+        teacherLeaves: counts.teacherLeaves,
+        publicHolidays: counts.publicHolidays,
+        replacements: counts.replacements,
+        replacementCredits: counts.replacementCredits
+      });
+      return counts;
+    }
+
     function normalizeLoadedStateShape(target = state) {
       STATE_ARRAY_COLLECTIONS.forEach(key => {
         target[key] = coerceArrayCollection(target[key]);
@@ -3012,12 +3070,13 @@
     }
 
     function businessPayloadFrom(value = {}) {
+      const source = extractAppStatePayload(value);
       const payload = {};
       BUSINESS_COLLECTIONS.forEach(key => {
-        payload[key] = stripInlineMedia(cloneJson(coerceArrayCollection(value[key])));
+        payload[key] = stripInlineMedia(cloneJson(coerceArrayCollection(source[key])));
       });
-      payload.activityLogs = compactRemoteActivityLogs(coerceArrayCollection(value.activityLogs));
-      payload.settings = sharedBusinessSettings(value.settings || {});
+      payload.activityLogs = compactRemoteActivityLogs(coerceArrayCollection(source.activityLogs));
+      payload.settings = sharedBusinessSettings(source.settings || {});
       return payload;
     }
 
@@ -3394,6 +3453,15 @@
     }
 
     function persistState() {
+      if (currentStateLooksSuspiciouslyEmpty()) {
+        console.error("[ClassOne state load]", {
+          stage: "blocked empty-state persistence",
+          lastSuccessfulServerCounts,
+          currentCounts: collectionCountsFromPayload(state)
+        });
+        setStatus("Blocked suspicious empty browser save. Latest Neon data was not overwritten.", "error");
+        return;
+      }
       const hasDraft = Boolean(hasUnsavedBusinessChanges && state.settings.pendingLocalSync && state.settings.businessDirty);
       const browserPayload = {
         ...state,
@@ -4263,7 +4331,11 @@
     function applyPulledPayload(payload) {
       const previousState = cloneJson(state);
       const keepSettings = { ...(state.settings || {}) };
-      const loadedPayload = payload && typeof payload === "object" ? cloneJson(payload) : {};
+      const rawPayload = payload && typeof payload === "object" ? payload : {};
+      logStartupStateCounts("raw payload", rawPayload);
+      const extractedSource = extractAppStatePayload(rawPayload);
+      const extractedCounts = logStartupStateCounts("extracted app state", extractedSource);
+      const loadedPayload = cloneJson(extractedSource);
       const loadedSettings = loadedPayload.settings && typeof loadedPayload.settings === "object" && !Array.isArray(loadedPayload.settings) ? loadedPayload.settings : {};
       const loadedReplyTemplates = coerceArrayCollection(loadedSettings.replyTemplates);
       const keptReplyTemplates = coerceArrayCollection(keepSettings.replyTemplates);
@@ -4283,9 +4355,18 @@
           : DEFAULT_REPLY_TEMPLATES.map(template => ({ ...template }))
       };
       normalizeLoadedStateShape(loadedPayload);
+      const normalizedCounts = logStartupStateCounts("after normalizeLoadedStateShape", loadedPayload);
+      if (hasCoreBusinessData(extractedCounts) && !hasCoreBusinessData(normalizedCounts)) {
+        throw new Error("Loaded Neon state contained business records, but normalization produced an empty core state.");
+      }
       try {
         replaceStateContents(loadedPayload);
         normalizeState();
+        const finalCounts = logStartupStateCounts("final frontend state", state);
+        if (hasCoreBusinessData(extractedCounts) && !hasCoreBusinessData(finalCounts)) {
+          throw new Error("Loaded Neon state contained business records, but final frontend state is empty.");
+        }
+        if (hasCoreBusinessData(finalCounts)) lastSuccessfulServerCounts = finalCounts;
       } catch (error) {
         replaceStateContents(previousState);
         normalizeState();
