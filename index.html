@@ -10943,11 +10943,17 @@
     function inactiveBookingCanYieldToActiveSlot(booking, slot) {
       if (!booking || !slot || !slotIsActiveOccurrence(slot) || !isHistoricalInactiveBooking(booking)) return false;
       if (isSupersededBookingRecord(booking)) return true;
+      const sameCell = Boolean(
+        booking.teacherId && slot.teacherId && booking.teacherId === slot.teacherId &&
+        dateOnly(booking.date || "") && dateOnly(booking.date) === dateOnly(slot.date || "") &&
+        (normalizeTimeValue(booking.time) || booking.time) === (normalizeTimeValue(slot.time) || slot.time)
+      );
+      if (sameCell && recordsShareStudentIdentity(booking, slot)) return false;
       const dateStr = dateOnly(booking.date || slot.date);
       if (recordsShareOccurrenceKey(booking, slot, dateStr)) return false;
       const bookingOccurrenceKey = occurrenceKeyForBooking(booking);
       const slotOccurrenceKey = occurrenceKeyForSlot(slot, dateStr);
-      if (bookingOccurrenceKey && slotOccurrenceKey) return true;
+      if (bookingOccurrenceKey && slotOccurrenceKey) return recordsHaveDifferentStudentIdentity(booking, slot) && !recordsShareStudentIdentity(booking, slot);
       return recordsHaveDifferentStudentIdentity(booking, slot) && !recordsShareStudentIdentity(booking, slot);
     }
 
@@ -14815,6 +14821,7 @@
         body,
         label: `${label} delta sync`,
         applyResponse(response) {
+          let bookingForLocalState = null;
           if (SYNC_DEBUG && lastOccurrenceOutcomeDebug?.request?.requestId === body.requestId) {
             lastOccurrenceOutcomeDebug.response = {
               httpStatus: response.__httpStatus || 200,
@@ -14831,14 +14838,19 @@
             console.info("[ClassOne occurrence cancel/outcome response]", lastOccurrenceOutcomeDebug);
           }
           if (response.booking) {
-            normaliseOccurrenceOutcome(response.booking, response.booking.status || response.booking.outcome || response.booking.classOutcome);
-            upsertLocalRecord("bookings", response.booking);
+            const existingBooking = state.bookings.find(item => item.id === response.booking.id);
+            bookingForLocalState = { ...(existingBooking || {}), ...response.booking };
+            ["sourceSlotId", "recurringSourceSlotId", "normalizedRecurringAssignmentId", "assignmentId", "recurringAssignmentId", "occurrenceKey", "sourceOccurrenceKey", "occurrenceId", "sourceOccurrenceId"].forEach(key => {
+              if (!bookingForLocalState[key] && existingBooking?.[key]) bookingForLocalState[key] = existingBooking[key];
+            });
+            normaliseOccurrenceOutcome(bookingForLocalState, bookingForLocalState.status || bookingForLocalState.outcome || bookingForLocalState.classOutcome);
+            upsertLocalRecord("bookings", bookingForLocalState);
           }
           if (response.replacementTask) upsertLocalRecord("replacements", response.replacementTask);
           if (response.replacementCredit) upsertLocalRecord("replacementCredits", response.replacementCredit);
           if (response.activityLog) upsertLocalRecord("activityLogs", response.activityLog);
           if (confirmedRemotePayload) {
-            if (response.booking) upsertPayloadRecord(confirmedRemotePayload, "bookings", response.booking);
+            if (bookingForLocalState) upsertPayloadRecord(confirmedRemotePayload, "bookings", bookingForLocalState);
             if (response.replacementTask) upsertPayloadRecord(confirmedRemotePayload, "replacements", response.replacementTask);
             if (response.replacementCredit) upsertPayloadRecord(confirmedRemotePayload, "replacementCredits", response.replacementCredit);
             if (response.activityLog) upsertPayloadRecord(confirmedRemotePayload, "activityLogs", response.activityLog);
