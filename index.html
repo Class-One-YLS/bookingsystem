@@ -852,7 +852,7 @@
             </div>
             <label class="login-remember" for="rememberLogin"><input id="rememberLogin" type="checkbox"> Remember Me</label>
             <div class="subtle hide login-error" id="loginMessage" role="status" aria-live="polite"></div>
-            <button class="btn mint login-submit" id="confirmLoginBtn" type="button"><span class="login-btn-text">Sign In</span></button>
+            <button class="btn mint login-submit" id="confirmLoginBtn" type="submit"><span class="login-btn-text">Sign In</span></button>
             <button class="btn ghost hide" id="signOutBtn" type="button">Sign Out</button>
           </form>
         </div>
@@ -2238,6 +2238,7 @@
     let isUserEditingForm = false;
     let isAnyFormEditing = false;
     let loginRequestInFlight = false;
+    let loginBindingsInitialized = false;
     let pendingSave = false;
     let lastNeonSaveFailed = false;
     let keepBrowserDraftOffline = false;
@@ -14605,14 +14606,16 @@
     async function signInUser() {
       if (loginRequestInFlight) return;
       if (!neonConfigured()) {
-        setLoginMessage("Unable to connect. Neon API URL and API key are required before sign in.");
-        return;
+        const message = "Unable to connect. Neon API URL and API key are required before sign in.";
+        setLoginMessage(message, "warn");
+        throw new Error(message);
       }
-      const email = $("loginEmail").value.trim();
+      const email = $("loginEmail").value.trim().toLowerCase();
       const password = $("loginPassword").value;
       if (!email) {
-        setLoginMessage("Please enter your email address.");
-        return;
+        const message = "Please enter your email address.";
+        setLoginMessage(message);
+        throw new Error(message);
       }
       loginRequestInFlight = true;
       setLoginMessage("");
@@ -14661,6 +14664,84 @@
         setTimeout(() => { isLoggingOut = false; }, 0);
       }
     }
+
+    function setLoginButtonLoading(loading) {
+      const button = $("confirmLoginBtn");
+      if (!button) return;
+      button.disabled = Boolean(loading);
+      button.classList.toggle("syncing", Boolean(loading));
+      const label = button.querySelector(".login-btn-text");
+      if (label) label.textContent = loading ? "Signing in..." : "Sign In";
+      else button.textContent = loading ? "Signing in..." : "Sign In";
+    }
+
+    async function handleLoginSubmit(event) {
+      event?.preventDefault?.();
+      const form = $("loginForm");
+      const emailInput = $("loginEmail");
+      const passwordInput = $("loginPassword");
+      const button = $("confirmLoginBtn");
+      if (!form || !emailInput || !passwordInput || !button) {
+        console.error("[ClassOne login] Login UI missing.", {
+          form: Boolean(form),
+          email: Boolean(emailInput),
+          password: Boolean(passwordInput),
+          button: Boolean(button)
+        });
+        return;
+      }
+      if (loginRequestInFlight) return;
+      const email = emailInput.value.trim();
+      const password = passwordInput.value;
+      if (!email || !password) {
+        setLoginMessage(!email ? "Please enter your email address." : "Please enter your password.");
+        return;
+      }
+      setLoginMessage("");
+      setLoginButtonLoading(true);
+      try {
+        await signInUser();
+      } catch (error) {
+        const message = /invalid email or password/i.test(String(error.message || ""))
+          ? "Incorrect email or password."
+          : (error.message || "Unable to sign in. Please try again.");
+        console.error("[ClassOne login] Sign in failed.", { message });
+        setStatus(`Sign in failed: ${message}`, "error");
+        setLoginMessage(message, /taking longer|connection/i.test(message) ? "warn" : "error");
+        setLoginButtonLoading(false);
+      }
+    }
+
+    function initLogin() {
+      if (loginBindingsInitialized) return true;
+      const form = $("loginForm");
+      const emailInput = $("loginEmail");
+      const passwordInput = $("loginPassword");
+      const button = $("confirmLoginBtn");
+      if (!form || !emailInput || !passwordInput || !button) {
+        console.error("[ClassOne login] Login initialization failed: missing required element.", {
+          form: Boolean(form),
+          email: Boolean(emailInput),
+          password: Boolean(passwordInput),
+          button: Boolean(button)
+        });
+        return false;
+      }
+      button.type = "submit";
+      form.addEventListener("submit", handleLoginSubmit);
+      button.onclick = null;
+      loginBindingsInitialized = true;
+      console.info("[ClassOne login]", {
+        handlerAttached: true,
+        buttonId: button.id,
+        buttonClass: button.className,
+        insideForm: Boolean(button.closest("form")),
+        buttonType: button.type
+      });
+      return true;
+    }
+
+    initLogin();
 
     async function neonPull(logManual = false, options = {}) {
       const pullStartedAt = performance.now();
@@ -17693,16 +17774,7 @@
     };
     $("toggleLoginPasswordBtn").onclick = () => togglePasswordVisibility("loginPassword", "toggleLoginPasswordBtn");
     $("toggleUserPasswordBtn").onclick = () => togglePasswordVisibility("userPassword", "toggleUserPasswordBtn");
-    $("confirmLoginBtn").onclick = () => animateClick($("confirmLoginBtn"), signInUser).catch(err => {
-      const message = err.message || "Invalid email or password. Please check your login details.";
-      setStatus(`Sign in failed: ${message}`, "error");
-      setLoginMessage(message, /taking longer|connection/i.test(message) ? "warn" : "error");
-    });
-    $("loginForm")?.addEventListener("keydown", event => {
-      if (event.key !== "Enter" || event.target?.tagName !== "INPUT") return;
-      event.preventDefault();
-      $("confirmLoginBtn")?.click();
-    });
+    initLogin();
     $("signOutBtn").onclick = signOutUser;
     $("dismissActionPopupBtn").onclick = () => {
       safeStorageSet(`classOneActionPopupDismissed.${todayISO()}`, "1");
