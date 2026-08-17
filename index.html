@@ -2220,6 +2220,7 @@
       "roles"
     ];
     const STATE_ARRAY_COLLECTIONS = [...new Set([...BUSINESS_COLLECTIONS, "recurringAssignments"])];
+    const PRODUCTION_STATE_KEY = "production";
     const CORE_STARTUP_COLLECTIONS = [
       "teachers",
       "students",
@@ -2287,6 +2288,7 @@
     let currentUserFormDraft = null;
     let formEditSequence = 0;
     let liveFormFieldDrafts = new Map();
+    let isInitialDataLoading = false;
     let initialDataLoadComplete = false;
     let pendingReplacementId = "";
     let pendingReplacementCreditId = "";
@@ -3024,6 +3026,29 @@
       return counts;
     }
 
+    function logProductionNeonLoad(stage, details = {}) {
+      console.info("[ClassOne production Neon load]", { stage, ...details });
+    }
+
+    function validatedProductionPayload(rawPayload = {}, sourceLabel = "payload") {
+      const rawKeys = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload) ? Object.keys(rawPayload) : [];
+      const extracted = extractAppStatePayload(rawPayload);
+      const rawCounts = logStartupStateCounts(`${sourceLabel} raw payload`, rawPayload);
+      const extractedCounts = logStartupStateCounts(`${sourceLabel} extracted app state`, extracted);
+      logProductionNeonLoad(`${sourceLabel} response`, {
+        rawResponseKeys: rawKeys,
+        dataPathUsed: rawPayload?.data && typeof rawPayload.data === "object" ? "payload.data" : "direct payload",
+        serverVersion: Number(rawPayload?.version || 0),
+        updatedAt: rawPayload?.updatedAt || "",
+        composed: rawPayload?.composed === true,
+        counts: extractedCounts
+      });
+      if (!hasCoreBusinessData(extractedCounts)) {
+        throw new Error("Production Neon response appears empty. Existing frontend state was preserved.");
+      }
+      return { payload: extracted, rawCounts, counts: extractedCounts, rawKeys };
+    }
+
     function normalizeLoadedStateShape(target = state) {
       STATE_ARRAY_COLLECTIONS.forEach(key => {
         target[key] = coerceArrayCollection(target[key]);
@@ -3453,6 +3478,7 @@
     }
 
     function persistState() {
+      if (isInitialDataLoading) return;
       if (currentStateLooksSuspiciouslyEmpty()) {
         console.error("[ClassOne state load]", {
           stage: "blocked empty-state persistence",
@@ -4375,6 +4401,10 @@
     }
 
     function save(show = true, options = {}) {
+      if (isInitialDataLoading) {
+        if (show) setStatus("Loading production data from Neon. Save is paused.", "warn", false);
+        return false;
+      }
       const localStartedAt = performance.now();
       if (!options.system && !hasActionPermission("save")) {
         return denyPermission("You do not have permission to save changes.");
@@ -4506,6 +4536,7 @@
     }
 
     function scheduleAutoPush() {
+      if (isInitialDataLoading) return;
       if (suppressAutoPush) return;
       if (keepBrowserDraftOffline) {
         setStatus("Browser draft kept offline. Not synced to Teacher View yet.", "warn", false);
@@ -14658,9 +14689,9 @@
       return data;
     }
 
-    async function fetchNeonManifest(label = "Neon version check", timeoutMs = 15000) {
+    async function fetchNeonManifest(label = "Neon version check", timeoutMs = 15000, stateKey = neonStateKey()) {
       const manifest = await fetchNeonJson(
-        `/api/state-chunk?key=${encodeURIComponent(neonStateKey())}`,
+        `/api/state-chunk?key=${encodeURIComponent(stateKey)}`,
         { method: "GET" },
         label,
         timeoutMs
@@ -14689,7 +14720,7 @@
       }
     }
 
-    async function downloadNeonChunks(manifest, label = "Neon load") {
+    async function downloadNeonChunks(manifest, label = "Neon load", stateKey = neonStateKey()) {
       const total = Number(manifest.totalChunks || 0);
       const chunks = new Array(total);
       for (let start = 0; start < total; start += NEON_CHUNK_DOWNLOAD_CONCURRENCY) {
@@ -14698,7 +14729,7 @@
           (_, offset) => start + offset
         );
         const parts = await Promise.all(indexes.map(index => fetchNeonJson(
-          `/api/state-chunk?key=${encodeURIComponent(neonStateKey())}&version=${encodeURIComponent(manifest.version)}&chunk=${index}`,
+          `/api/state-chunk?key=${encodeURIComponent(stateKey)}&version=${encodeURIComponent(manifest.version)}&chunk=${index}`,
           { method: "GET" },
           `${label} chunk ${index + 1}/${total}`,
           SYNC_READ_TIMEOUT_MS
@@ -14706,6 +14737,48 @@
         parts.forEach((part, offset) => { chunks[indexes[offset]] = part.chunk || ""; });
       }
       return JSON.parse(chunks.join(""));
+    }
+
+    async function loadProductionNeonState(label = "Production Neon load") {
+      const stateKey = PRODUCTION_STATE_KEY;
+      let stateError = null;
+      try {
+        const raw = await fetchNeonJson(
+          `/api/state?key=${encodeURIComponent(stateKey)}`,
+          { method: "GET" },
+          label,
+          SYNC_READ_TIMEOUT_MS
+        );
+        if (!raw?.data) throw new Error("Production /api/state response did not include payload.data.");
+        const validated = validatedProductionPayload(raw, "production /api/state");
+        return {
+          ...validated,
+          manifest: {
+            version: Number(raw.version || 0),
+            updatedAt: raw.updatedAt || "",
+            updatedBy: raw.updatedBy || null,
+            composed: raw.composed === true
+          },
+          raw,
+          dataPathUsed: "payload.data",
+          fallbackUsed: false
+        };
+      } catch (error) {
+        stateError = error;
+        logProductionNeonLoad("primary /api/state load failed", { message: error.message });
+      }
+
+      const manifest = await fetchNeonManifest(`${label} chunk fallback manifest`, SYNC_READ_TIMEOUT_MS, stateKey);
+      if (manifest.empty || !Number(manifest.totalChunks || 0)) throw stateError || new Error("Production Neon state is empty.");
+      const chunkPayload = await downloadNeonChunks(manifest, `${label} chunk fallback`, stateKey);
+      const validated = validatedProductionPayload(chunkPayload, "production state-chunk fallback");
+      return {
+        ...validated,
+        manifest,
+        raw: chunkPayload,
+        dataPathUsed: "state-chunk",
+        fallbackUsed: true
+      };
     }
 
     async function fetchNeonStateSnapshot(label = "Neon recovery snapshot") {
@@ -14934,33 +15007,18 @@
       isPullingFromNeon = true;
       let manifest = null;
       let payload = null;
-      let chunkError = null;
+      let loadResult = null;
       try {
-        for (let attempt = 1; attempt <= 3 && !payload; attempt += 1) {
-          try {
-            manifest = await fetchNeonManifest("Neon load", SYNC_READ_TIMEOUT_MS);
-            if (manifest.empty || !manifest.totalChunks) {
-              if (logManual) setStatus("Neon database is empty. Current browser data is unchanged.", "warn");
-              return { empty: true };
-            }
-            payload = await downloadNeonChunks(manifest, "Neon load");
-          } catch (err) {
-            chunkError = err;
-            if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 600));
-          }
-        }
-        if (!payload) {
-          const fallback = await fetchNeonJson(`/api/state?key=${encodeURIComponent(neonStateKey())}`, { method: "GET" }, "Neon recovery load", SYNC_READ_TIMEOUT_MS);
-          if (!fallback.data) throw chunkError || new Error("Neon state could not be loaded.");
-          payload = fallback.data;
-          manifest = { version: Number(fallback.version || 0) };
-          setStatus("Loaded Neon data through the recovery endpoint.", "success", false);
-        }
+        loadResult = await loadProductionNeonState("Neon production load");
+        payload = loadResult.payload;
+        manifest = loadResult.manifest || { version: 0 };
         if (!options.force && !logManual && (isUserEditingForm || hasUnsavedBusinessChanges)) {
           setStatus("Editing in progress — Neon data loaded but not applied yet.", "warn", false);
           return { paused: true };
         }
         applyPayloadPreservingForms(payload);
+        state.settings.neonStateKey = PRODUCTION_STATE_KEY;
+        if ($("neonStateKey")) $("neonStateKey").value = PRODUCTION_STATE_KEY;
         state.settings.neonVersion = Number(manifest.version || 0);
         lastObservedNeonVersion = state.settings.neonVersion;
         lastObservedNeonUpdatedAt = manifest.updatedAt || new Date().toISOString();
@@ -14973,17 +15031,26 @@
           state.settings.teacherViewSyncOutdated = true;
           state.settings.teacherViewSyncMessage = "Not synced to Teacher View yet. Merge is in progress.";
         } else {
-          clearPendingSyncFlag();
-          markTeacherViewSynced(state.settings.neonVersion);
-          suppressAutoPush = true;
-          save(false, { system: true, render: false });
-          suppressAutoPush = false;
+          hasUnsavedBusinessChanges = false;
+          state.settings.businessDirty = false;
+          state.settings.pendingLocalSync = false;
+          state.settings.lastLocalChangeAt = "";
+          currentDraftPatch = null;
+          if (options.readOnly || isInitialDataLoading) {
+            state.settings.teacherViewSyncOutdated = false;
+            state.settings.teacherViewSyncMessage = "";
+            state.settings.teacherViewSyncedVersion = Number(state.settings.neonVersion || 0);
+            state.settings.teacherViewSyncedAt = new Date().toISOString();
+            lastNeonSaveFailed = false;
+          } else {
+            markTeacherViewSynced(state.settings.neonVersion);
+          }
         }
         if (logManual) logAction("Neon Loaded", "Neon Database", "", "Loaded latest app data", "Manual Neon load completed.");
         if (options.render !== false) renderAll();
-        setStatus("Loaded latest data from Neon database.");
+        setStatus(loadResult.fallbackUsed ? "Loaded latest data from Neon chunk fallback." : "Loaded latest production data from Neon.");
         setSyncMetric("fullPullMs", Math.round(performance.now() - pullStartedAt));
-        return { empty: false, version: state.settings.neonVersion };
+        return { empty: false, version: state.settings.neonVersion, fallbackUsed: Boolean(loadResult.fallbackUsed), counts: loadResult.counts };
       } finally {
         if (pullStartedAt) setSyncMetric("lastPullMs", Math.round(performance.now() - pullStartedAt));
         isPullingFromNeon = false;
@@ -15233,7 +15300,9 @@
       applySettingsInputs();
       const allowPendingSyncPush = options.allowPendingSyncPush !== false;
       if (neonConfigured()) {
+        isInitialDataLoading = true;
         if (allowPendingSyncPush && hasUnsavedBusinessChanges && state.settings.pendingLocalSync) {
+          isInitialDataLoading = false;
           setStatus("Syncing saved browser changes...", "success", false);
           try {
             keepBrowserDraftOffline = false;
@@ -15255,7 +15324,7 @@
     }
         startAutoLoadCountdown(Math.ceil(SYNC_READ_TIMEOUT_MS / 1000), "Neon database");
         try {
-          const result = await neonPull(false, { render: false });
+          const result = await neonPull(false, { render: false, force: true, readOnly: true });
           stopAutoLoadCountdown();
           if (result?.paused) {
             setStatus("Editing in progress — sync will continue after save.", "warn");
@@ -15266,11 +15335,15 @@
           }
         } catch (err) {
           stopAutoLoadCountdown();
-          setStatus(`Could not connect to Neon. Showing local cached data.`, "warn");
+          setStatus(`Unable to load production data from Neon. Existing data was not overwritten.`, "warn");
+        } finally {
+          isInitialDataLoading = false;
         }
-        initialDataLoadComplete = true;
-        processExpiredReservations();
+        hydrateSelects();
+        setupMonths();
+        initialDataLoadComplete = false;
         renderAllForStartup("Neon startup render");
+        initialDataLoadComplete = true;
         startAutoNeonRefresh();
         return;
       }
@@ -15346,6 +15419,7 @@
     }
 
     function enqueueNeonPush(successMessage = "Saved.", allowConflictPull = false) {
+      if (isInitialDataLoading) return Promise.resolve(false);
       neonPushQueue = neonPushQueue.catch(() => false).then(async () => {
         if (!hasUnsavedBusinessChanges && !state.settings.pendingLocalSync) return true;
         if (syncPerf.active?.queuedAt) setSyncMetric("debounceQueueMs", Math.round(performance.now() - syncPerf.active.queuedAt));
@@ -15358,6 +15432,7 @@
     }
 
     async function autoPushIfConfigured(successMessage, allowConflictPull = true) {
+      if (isInitialDataLoading) return false;
       clearTimeout(autoPushTimer);
       if (!hasUnsavedBusinessChanges && !state.settings.pendingLocalSync) return true;
       return enqueueNeonPush(successMessage, allowConflictPull);
@@ -18052,7 +18127,7 @@
         initializeTabLayouts();
         hydrateSelects();
         setupMonths();
-        renderAll();
+        if (!isAuthenticated()) renderAll();
         if (isAuthenticated()) unlockAuthenticatedWorkspace(sessionUser() || currentUser());
         setupCompactSearchFields();
         if (!isAuthenticated()) {
@@ -18063,7 +18138,6 @@
           .then(() => {
             hydrateSelects();
             setupMonths();
-            renderAll();
             restoreSessionActiveTab();
             setupCompactSearchFields();
             setTimeout(() => autoPullOnStart({ allowPendingSyncPush: false }), 250);
