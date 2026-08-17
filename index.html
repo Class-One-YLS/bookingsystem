@@ -2219,6 +2219,7 @@
       "users",
       "roles"
     ];
+    const STATE_ARRAY_COLLECTIONS = [...new Set([...BUSINESS_COLLECTIONS, "recurringAssignments"])];
     let teacherDirectoryPage = 1;
     const revealedTeacherPasscodes = new Set();
     let archivedTeacherPage = 1;
@@ -2956,6 +2957,30 @@
       return JSON.parse(JSON.stringify(value ?? null));
     }
 
+    function coerceArrayCollection(value) {
+      if (Array.isArray(value)) return value.filter(item => item !== undefined && item !== null);
+      if (!value || typeof value !== "object") return [];
+      if (Array.isArray(value.data)) return coerceArrayCollection(value.data);
+      if (Array.isArray(value.items)) return coerceArrayCollection(value.items);
+      if (Array.isArray(value.records)) return coerceArrayCollection(value.records);
+      return Object.values(value).filter(item => item && typeof item === "object");
+    }
+
+    function normalizeLoadedStateShape(target = state) {
+      STATE_ARRAY_COLLECTIONS.forEach(key => {
+        target[key] = coerceArrayCollection(target[key]);
+      });
+      target.settings = target.settings && typeof target.settings === "object" && !Array.isArray(target.settings) ? target.settings : {};
+      target.ui = target.ui && typeof target.ui === "object" && !Array.isArray(target.ui) ? target.ui : {};
+      target.settings.replyTemplates = coerceArrayCollection(target.settings.replyTemplates);
+      return target;
+    }
+
+    function replaceStateContents(nextState = {}) {
+      Object.keys(state).forEach(key => delete state[key]);
+      Object.assign(state, nextState);
+    }
+
     const LOCAL_ONLY_SETTING_KEYS = new Set([
       "scriptUrl", "apiKey",
       "neonApiUrl", "neonApiKey", "neonStateKey", "neonVersion",
@@ -2989,9 +3014,9 @@
     function businessPayloadFrom(value = {}) {
       const payload = {};
       BUSINESS_COLLECTIONS.forEach(key => {
-        payload[key] = stripInlineMedia(cloneJson(value[key] || []));
+        payload[key] = stripInlineMedia(cloneJson(coerceArrayCollection(value[key])));
       });
-      payload.activityLogs = compactRemoteActivityLogs(value.activityLogs || []);
+      payload.activityLogs = compactRemoteActivityLogs(coerceArrayCollection(value.activityLogs));
       payload.settings = sharedBusinessSettings(value.settings || {});
       return payload;
     }
@@ -3401,8 +3426,17 @@
         // Treat it as read-only cache so a clean device never pushes stale data.
         if (legacy) saved = legacy;
       }
-      if (saved) Object.assign(state, saved);
-      confirmedRemotePayload = saved ? businessPayloadFrom(saved) : confirmedRemotePayload;
+      let cacheApplied = false;
+      if (saved) {
+        try {
+          applyPulledPayload(saved);
+          cacheApplied = true;
+        } catch (error) {
+          console.error("[ClassOne startup] Browser cache could not be normalized.", error);
+          setStatus("Browser cache could not initialize. Loading latest data instead.", "warn");
+        }
+      }
+      confirmedRemotePayload = cacheApplied ? businessPayloadFrom(state) : confirmedRemotePayload;
       const draftPatch = await loadUnsavedDraftPatch();
       const recoveredDraft = Boolean(draftPatch);
       if (draftPatch) applyDraftPatchToWorkingState(draftPatch);
@@ -3484,24 +3518,7 @@
     }
 
     function normalizeState() {
-      state.teachers ||= [];
-      state.students ||= [];
-      state.leads ||= [];
-      state.tutorLeads ||= [];
-      state.crmHistoricalMonthlyStats ||= [];
-      state.bookings ||= [];
-      state.replacements ||= [];
-      state.replacementCredits ||= [];
-      state.teacherLeaves ||= [];
-      state.publicHolidays ||= [];
-      state.policyRules ||= [];
-      state.revenueEntries ||= [];
-      state.teacherStudentNotes ||= [];
-      state.teacherFeedback ||= [];
-      state.activityLogs ||= [];
-      state.users ||= [];
-      state.roles ||= [];
-      state.ui ||= {};
+      normalizeLoadedStateShape(state);
       hydrateUiStateOnly();
       if (!Array.isArray(state.roles) || !state.roles.length) {
         state.roles = DEFAULT_ROLES.map(role => ({ ...role, allowedTabs: [...role.allowedTabs], permissions: [...role.permissions] }));
@@ -4244,24 +4261,36 @@
 
 
     function applyPulledPayload(payload) {
+      const previousState = cloneJson(state);
       const keepSettings = { ...(state.settings || {}) };
-      Object.assign(state, payload || {});
-      state.settings = {
+      const loadedPayload = payload && typeof payload === "object" ? cloneJson(payload) : {};
+      const loadedSettings = loadedPayload.settings && typeof loadedPayload.settings === "object" && !Array.isArray(loadedPayload.settings) ? loadedPayload.settings : {};
+      const loadedReplyTemplates = coerceArrayCollection(loadedSettings.replyTemplates);
+      const keptReplyTemplates = coerceArrayCollection(keepSettings.replyTemplates);
+      loadedPayload.settings = {
         ...keepSettings,
-        ...(payload && payload.settings ? payload.settings : {}),
+        ...loadedSettings,
         scriptUrl: keepSettings.scriptUrl || DEFAULT_SYNC.scriptUrl,
         apiKey: keepSettings.apiKey || DEFAULT_SYNC.apiKey,
         neonApiUrl: keepSettings.neonApiUrl || DEFAULT_NEON.apiUrl,
         neonApiKey: keepSettings.neonApiKey || DEFAULT_NEON.apiKey,
         neonStateKey: keepSettings.neonStateKey || DEFAULT_NEON.stateKey,
         neonVersion: keepSettings.neonVersion || 0,
-        replyTemplates: payload?.settings?.replyTemplates?.length
-          ? payload.settings.replyTemplates
-          : keepSettings.replyTemplates?.length
-          ? keepSettings.replyTemplates
+        replyTemplates: loadedReplyTemplates.length
+          ? loadedReplyTemplates
+          : keptReplyTemplates.length
+          ? keptReplyTemplates
           : DEFAULT_REPLY_TEMPLATES.map(template => ({ ...template }))
       };
-      normalizeState();
+      normalizeLoadedStateShape(loadedPayload);
+      try {
+        replaceStateContents(loadedPayload);
+        normalizeState();
+      } catch (error) {
+        replaceStateContents(previousState);
+        normalizeState();
+        throw error;
+      }
     }
 
     function save(show = true, options = {}) {
@@ -4681,7 +4710,31 @@
     }
 
     function fillSelect(el, values, allLabel) {
-      el.innerHTML = (allLabel ? `<option value="all">${allLabel}</option>` : "") + values.map(v => `<option value="${escapeHtml(v.value ?? v)}">${escapeHtml(v.label ?? v)}</option>`).join("");
+      if (!el) return;
+      const safeValues = Array.isArray(values) ? values : [];
+      el.innerHTML = (allLabel ? `<option value="all">${allLabel}</option>` : "") + safeValues.map(v => `<option value="${escapeHtml(v.value ?? v)}">${escapeHtml(v.label ?? v)}</option>`).join("");
+    }
+
+    function optionTextValues(value) {
+      if (Array.isArray(value)) return value.flatMap(optionTextValues);
+      if (!value) return [];
+      if (typeof value === "string") return [value];
+      if (typeof value === "object") {
+        const direct = value.name || value.label || value.title || value.value || value.package;
+        return direct ? [direct] : Object.values(value).flatMap(optionTextValues);
+      }
+      return [String(value)];
+    }
+
+    function packageDefinitionOptions() {
+      const values = [
+        ...optionTextValues(state.settings?.packageOptions),
+        ...optionTextValues(state.settings?.packages),
+        ...optionTextValues(state.packages),
+        ...(state.students || []).map(student => student.package)
+      ];
+      return [...new Set(values.map(value => String(value || "").trim()).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
     }
 
     function hydrateSelects() {
@@ -4709,7 +4762,7 @@
       fillSelect($("assessmentStudent"), studentOptions, "Choose student");
       fillSelect($("trialStudent"), studentOptions, "Choose student");
       fillSelect($("creditStudent"), studentOptions, "Choose student");
-      $("packageOptions").innerHTML = packageOptions.map(pkg => `<option value="${escapeHtml(pkg)}"></option>`).join("");
+      if ($("packageOptions")) $("packageOptions").innerHTML = packageDefinitionOptions().map(pkg => `<option value="${escapeHtml(pkg)}"></option>`).join("");
       fillSelect($("slotDay"), DAYS);
       $("studentDayChecks").innerHTML = DAYS.map(day => `<label class="pill"><input type="checkbox" value="${day}" style="width:auto;min-height:0;margin-right:6px;"> ${day.slice(0, 3)}</label>`).join("");
       $("teacherSubjects").innerHTML = SUBJECTS.map(s => `<label class="pill"><input type="checkbox" value="${s}" style="width:auto;min-height:0;margin-right:6px;"> ${s}</label>`).join("");
@@ -12770,6 +12823,16 @@
       handleTabActivated(activeTabId());
     }
 
+    function renderAllForStartup(context = "startup render") {
+      try {
+        renderAll();
+      } catch (error) {
+        error.startupRenderError = true;
+        error.startupRenderContext = context;
+        throw error;
+      }
+    }
+
     function clearTeacherForm() {
       $("teacherId").value = "";
       $("teacherName").value = "";
@@ -14598,8 +14661,13 @@
           await autoPullOnStart({ allowPendingSyncPush: false });
         } catch (neonError) {
           postLoginWarning = true;
-          console.error("[ClassOne login] Latest Neon data could not load after sign-in.", neonError);
-          setStatus(`Signed in, but latest Neon data could not load: ${neonError.message}`, "warn");
+          if (neonError?.startupRenderError) {
+            console.error("[ClassOne login] Data loaded but startup render failed.", neonError);
+            setStatus(`Data loaded, but part of the interface could not initialize: ${neonError.message}`, "warn");
+          } else {
+            console.error("[ClassOne login] Latest Neon data could not load after sign-in.", neonError);
+            setStatus(`Signed in, but latest Neon data could not load: ${neonError.message}`, "warn");
+          }
         }
         const user = (state.users || []).find(item => String(item.email || "").toLowerCase() === email.toLowerCase());
         if (user) uiStateSet("CurrentUserId", user.id);
@@ -15089,7 +15157,7 @@
           }
           initialDataLoadComplete = true;
           processExpiredReservations();
-          renderAll();
+          renderAllForStartup("pending browser sync render");
           startAutoNeonRefresh();
       return;
     }
@@ -15110,7 +15178,7 @@
         }
         initialDataLoadComplete = true;
         processExpiredReservations();
-        renderAll();
+        renderAllForStartup("Neon startup render");
         startAutoNeonRefresh();
         return;
       }
@@ -15119,7 +15187,7 @@
       if (!jobs.length) {
         initialDataLoadComplete = true;
         processExpiredReservations();
-        renderAll();
+        renderAllForStartup("local startup render");
         return;
       }
       startAutoLoadCountdown(Math.ceil(SYNC_READ_TIMEOUT_MS / 1000), "Google Sheet data");
@@ -15132,7 +15200,7 @@
       else setStatus(`Auto-load failed. ${failed.join(" | ")}`, "error");
       initialDataLoadComplete = true;
       processExpiredReservations();
-      renderAll();
+      renderAllForStartup("Google Sheet startup render");
     }
 
     function modalIsOpen() {
