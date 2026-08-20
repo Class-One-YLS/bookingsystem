@@ -10644,6 +10644,26 @@
       });
     }
 
+    function recurringAssignmentsForStudentProfileChange(student, previousSlots = []) {
+      if (!student) return [];
+      const previousIds = new Set((previousSlots || []).map(slot => slot.id).filter(Boolean));
+      const nameKey = studentNameKey(student.name || "");
+      const assignments = [];
+      (state.teachers || []).forEach(teacher => {
+        (teacher.regularSlots || []).forEach(slot => {
+          if (!slotBelongsToStudent(slot, student, previousIds, nameKey)) return;
+          const assignment = recurringAssignmentFromTeacherSlot(teacher, slot, "regularSlots");
+          if (assignment) assignments.push(assignment);
+        });
+      });
+      const unique = new Map();
+      assignments.forEach(assignment => {
+        const key = String(assignment.assignmentId || assignment.normalizedRecurringAssignmentId || assignment.id || "");
+        if (key) unique.set(key, assignment);
+      });
+      return [...unique.values()];
+    }
+
     function normalizeDropDate(value) {
       const candidate = dateOnly(value);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(candidate)) return "";
@@ -10840,10 +10860,12 @@
       const activityLog = logAction("Student Dropped And Removed", student.name, before, studentLogSummary(student), `Last lesson date: ${formatDateFromAny(dropDate)}. Future linked classes deleted; completed history remains.`, {
         undo: makeUndoSnapshot(undoBefore, undoAfter)
       });
+      const recurringAssignments = recurringAssignmentsForStudentProfileChange(student, previousSlots);
       return {
         ok: true,
         student,
         teachers: affectedTeacherIds.map(id => teacherById(id)).filter(Boolean),
+        recurringAssignments,
         bookings: affectedBookingIds.map(id => state.bookings.find(booking => booking.id === id)).filter(Boolean),
         activityLog
       };
@@ -13816,20 +13838,10 @@
         verifyTeacherSaveStage(existing.id, "after state insert", { action: wasExisting ? "update" : "create" });
 
         const undoAfter = snapshotCollections({ teachers: [existing.id] });
-        logAction(wasExisting ? "Teacher Updated" : "Teacher Added", existing.name, before, teacherLogSummary(existing), "Teacher profile saved.", {
+        const activityLog = logAction(wasExisting ? "Teacher Updated" : "Teacher Added", existing.name, before, teacherLogSummary(existing), "Teacher profile saved.", {
           undo: makeUndoSnapshot(undoBefore, undoAfter)
         });
-        const savedLocally = save(false, { label: wasExisting ? "teacher update" : "teacher create", render: false });
-        if (!savedLocally) throw new Error("Teacher could not be created because this user cannot save changes.");
-        verifyTeacherSaveStage(existing.id, "after local save");
-
-        const teacherPatch = buildRecordPatchFromPayload(remoteStatePayload(), confirmedRemotePayload || null);
-        if (!teacherExistsInPayload(confirmedRemotePayload, existing.id) && !teacherExistsInPatch(teacherPatch, existing.id)) {
-          throw new Error("Teacher could not be created because the browser draft did not include the new teacher.");
-        }
-        await saveDraftPatch(teacherPatch);
-        verifyTeacherSaveStage(existing.id, "after browser draft", { draftIncludesTeacher: teacherExistsInPatch(teacherPatch, existing.id) });
-
+        persistState();
         renderTeachers();
         renderTeacherOverview();
         renderSyncHealth();
@@ -13837,15 +13849,15 @@
         $("teacherProfileModal").classList.add("hide");
         setStatus(`${wasExisting ? "Teacher updated" : "Teacher added"}. Syncing...`, "success", false);
 
-        const synced = await autoPushIfConfigured("Teacher profile saved.");
-        if (synced) {
-          verifyTeacherSaveStage(existing.id, "after Neon sync", { requireState: true });
-          setStatus("Teacher saved to Neon.", "success");
-        } else {
-          setStatus(`${wasExisting ? "Teacher updated" : "Teacher added"} locally. Sync pending.`, "warn");
-        }
+        await syncRecordTransaction({
+          teachers: [existing],
+          activityLogs: [activityLog]
+        }, "Teacher profile saved", { operation: wasExisting ? "teacher_update" : "teacher_create", teacherView: false });
+        verifyTeacherSaveStage(existing.id, "after Neon sync", { requireState: true });
+        setStatus("Teacher saved to Neon.", "success");
       } catch (error) {
-        setStatus(`Teacher could not be created. ${error.message}`, "error");
+        persistState();
+        setStatus(`Teacher could not be saved. ${error.message}`, "error");
         throw error;
       } finally {
         if (saveButton) {
@@ -15237,6 +15249,7 @@
       "replacements",
       "replacementCredits",
       "activityLogs",
+      "recurringAssignments",
       "teachers",
       "students",
       "teacherLeaves",
@@ -15253,9 +15266,9 @@
         const unique = new Map();
         source.forEach(item => {
           if (!item || typeof item !== "object") return;
-          const id = String(item.id || item.bookingId || item.creditId || item.replacementId || "");
-          if (!id) return;
-          unique.set(id, item);
+          const recordId = String(item.id || item.bookingId || item.assignmentId || item.normalizedRecurringAssignmentId || item.recurringAssignmentId || item.creditId || item.replacementId || "");
+          if (!recordId) return;
+          unique.set(recordId, item);
         });
         if (unique.size) records[collectionName] = [...unique.values()].map(cloneJson);
       });
@@ -15266,7 +15279,7 @@
       const parts = [];
       Object.entries(records).forEach(([collectionName, list]) => {
         (Array.isArray(list) ? list : []).forEach(record => {
-          parts.push(`${collectionName}:${record.id || record.bookingId || record.creditId || record.replacementId || ""}:${record.updatedAt || record.changedAt || record.createdAt || ""}`);
+          parts.push(`${collectionName}:${record.id || record.bookingId || record.assignmentId || record.normalizedRecurringAssignmentId || record.recurringAssignmentId || record.creditId || record.replacementId || ""}:${record.updatedAt || record.changedAt || record.createdAt || ""}`);
         });
       });
       return [operation, currentDeviceId(), ...parts.sort()].join("_").replace(/[^a-zA-Z0-9_.:-]+/g, "_").slice(0, 900);
@@ -15293,6 +15306,11 @@
         applyResponse(response) {
           Object.entries(response.records || records).forEach(([collectionName, list]) => {
             (Array.isArray(list) ? list : []).forEach(record => {
+              if (collectionName === "recurringAssignments") {
+                applyRecurringAssignmentLocal(record);
+                if (confirmedRemotePayload) upsertPayloadRecurringAssignment(confirmedRemotePayload, record);
+                return;
+              }
               upsertLocalRecord(collectionName, record);
               if (confirmedRemotePayload) upsertPayloadRecord(confirmedRemotePayload, collectionName, record);
             });
@@ -17801,22 +17819,30 @@
           renderActivityLog();
           syncRecordTransaction({
             students: [dropResult.student],
-            teachers: dropResult.teachers,
+            recurringAssignments: dropResult.recurringAssignments,
             bookings: dropResult.bookings,
             activityLogs: [dropResult.activityLog]
           }, "Student dropped", { operation: "student_drop" }).catch(error => {
             persistState();
             markTeacherViewOutdated("Student drop saved in this browser only. Not synced to Teacher View yet.");
-            setStatus(`Student drop saved locally. Sync pending: ${error.message}`, "warn");
+            setStatus(`Student could not be saved. Retry. ${error.message}`, "error");
           });
-          setStatus(`${student.name} dropped from ${formatDateFromAny(lastLessonDate)}. Future recurring classes stopped.`);
+          setStatus(`${student.name} dropped from ${formatDateFromAny(lastLessonDate)}. Syncing...`);
           return;
         }
         student[field] = registeredStudent.value;
-        logAction("Registered Student Updated", student.name, before, studentLogSummary(student), `Changed ${field}.`);
-        save(false);
+        student.updatedAt = new Date().toISOString();
+        const activityLog = logAction("Registered Student Updated", student.name, before, studentLogSummary(student), `Changed ${field}.`);
+        persistState();
         renderRegisteredStudents();
-        scheduleAutoPush();
+        renderStudents();
+        syncRecordTransaction({
+          students: [student],
+          activityLogs: [activityLog]
+        }, "Registered student saved", { operation: "registered_student_update", teacherView: false }).catch(error => {
+          persistState();
+          setStatus(`Student could not be saved. Retry. ${error.message}`, "error");
+        });
         return;
       }
 
@@ -17873,7 +17899,7 @@
     };
     $("saveTeacherBtn").onclick = () => saveTeacher().catch(err => {
       setStatus(`Teacher save sync failed: ${err.message}`, "error");
-      alert(`Teacher saved locally, but sync failed: ${err.message}`);
+      alert(`Teacher could not be saved to Neon: ${err.message}`);
     });
     $("newTeacherBtn").onclick = clearTeacherForm;
     $("toggleTeacherPasscodeBtn").onclick = () => {
@@ -17932,8 +17958,13 @@
         let teacher = teacherById(id);
         if (!teacher) { teacher = { id, name: $("teacherName").value || "New Teacher", subjects: [], regularSlots: [], overrideSlots: [] }; state.teachers.push(teacher); }
         teacher.photo = photo;
-        save(false);
-        setStatus("Profile picture compressed and saved.");
+        teacher.updatedAt = new Date().toISOString();
+        teacher.updatedBy = currentUser()?.email || currentUser()?.name || "Class One Admin";
+        teacher.deviceId = currentDeviceId();
+        persistState();
+        renderTeachers();
+        setStatus("Profile picture compressed. Syncing...");
+        syncRecordTransactionAsync({ teachers: [teacher] }, "Teacher profile picture saved", { operation: "teacher_photo_update", teacherView: false });
       } catch (error) {
         alert(error.message);
       }
@@ -17968,6 +17999,14 @@
       syncRecordTransactionAsync({ teachers: [teacher].filter(Boolean) }, "Teacher override slot added", { operation: "teacher_override_slot_add" });
     };
     $("saveStudentBtn").onclick = async () => {
+      const saveButton = $("saveStudentBtn");
+      if (saveButton?.disabled) return;
+      const originalButtonText = saveButton?.textContent || "Save Student";
+      if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.textContent = "Saving...";
+      }
+      try {
       const name = cleanStudentName($("studentName").value);
       if (!name) return alert("Student name is required.");
       const subjects = selectedStudentSubjects();
@@ -18000,16 +18039,16 @@
         try {
           await syncRecordTransaction({
             students: [dropResult.student],
-            teachers: dropResult.teachers,
+            recurringAssignments: dropResult.recurringAssignments,
             bookings: dropResult.bookings,
             activityLogs: [dropResult.activityLog]
           }, "Student dropped", { operation: "student_drop" });
+          setStatus(`${existing.name || name} dropped from ${formatDateFromAny(lastLessonDate)}. Synced.`, "success");
         } catch (error) {
           persistState();
           markTeacherViewOutdated("Student drop saved in this browser only. Not synced to Teacher View yet.");
-          setStatus(`Student drop saved locally. Sync pending: ${error.message}`, "warn");
+          setStatus(`Student could not be saved. Retry. ${error.message}`, "error");
         }
-        setStatus(`${existing.name || name} dropped from ${formatDateFromAny(lastLessonDate)}. Future recurring classes stopped.`);
         return;
       }
       Object.assign(existing, { name, subjects, subject: subjects[0] || "", package: packageName, packageAmount: Number($("studentPackageAmount").value || 0), packageClasses: Number($("studentPackageClasses").value || 0), packageNotes: $("studentPackageNotes").value.trim(), registeredStatus: $("studentRegisteredStatus").value || "active", registeredRemark: $("studentRegisteredRemark").value.trim(), status: $("studentStatus").value || "registered", regularSlots: plannedRegularSlots, updatedAt: new Date().toISOString() });
@@ -18019,14 +18058,37 @@
       if (!state.students.some(s => s.id === id)) state.students.push(existing);
       syncStudentProfileSlotsToTeachers(existing, previousRegularSlots);
       const undoAfter = snapshotCollections({ students: [existing.id], teachers: affectedTeacherIds });
-      logAction(before ? "Student Updated" : "Student Added", existing.name, before, studentLogSummary(existing), "Student profile saved.", {
+      const activityLog = logAction(before ? "Student Updated" : "Student Added", existing.name, before, studentLogSummary(existing), "Student profile saved.", {
         undo: makeUndoSnapshot(undoBefore, undoAfter)
       });
+      const recurringAssignments = recurringAssignmentsForStudentProfileChange(existing, previousRegularSlots);
       $("studentId").value = ""; $("studentName").value = ""; $("studentPackage").value = ""; $("studentPackageAmount").value = ""; $("studentPackageClasses").value = ""; $("studentPackageNotes").value = ""; $("studentRegisteredStatus").value = "active"; $("studentRegisteredRemark").value = ""; $("studentStatus").value = "registered"; $("studentTime").value = "";
       setSelectedStudentSubjects([]);
       studentRegularSlotsDraft = [];
-      save();
       $("studentProfileModal").classList.add("hide");
+      renderStudents();
+      renderTeacherOverview();
+      renderSchedule();
+      renderActivityLog();
+      setStatus(`${before ? "Student updated" : "Student added"}. Syncing...`, "success", false);
+      try {
+        await syncRecordTransaction({
+          students: [existing],
+          recurringAssignments,
+          activityLogs: [activityLog]
+        }, "Student saved", { operation: before ? "student_update" : "student_create", teacherView: Boolean(recurringAssignments.length) });
+        setStatus("Student saved.", "success");
+      } catch (error) {
+        persistState();
+        if (recurringAssignments.length) markTeacherViewOutdated("Student saved in this browser only. Not synced to Teacher View yet.");
+        setStatus(`Student could not be saved. Retry. ${error.message}`, "error");
+      }
+      } finally {
+        if (saveButton) {
+          saveButton.disabled = false;
+          saveButton.textContent = originalButtonText;
+        }
+      }
     };
     $("newStudentBtn").onclick = () => { $("studentId").value = ""; $("studentName").value = ""; $("studentPackage").value = ""; $("studentPackageAmount").value = ""; $("studentPackageClasses").value = ""; $("studentPackageNotes").value = ""; $("studentRegisteredStatus").value = "active"; $("studentRegisteredRemark").value = ""; $("studentStatus").value = "registered"; setSelectedStudentSubjects([]); studentRegularSlotsDraft = []; resetStudentRegularSlotEditor(); renderStudentRegularSlotDraft(); };
     $("openStudentModalBtn").onclick = () => {
