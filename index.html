@@ -3733,7 +3733,8 @@
         studentSlotId,
         studentName,
         startDate: dateOnly(firstRecordValue(record, ["startDate", "start_date", "effectiveFrom", "effective_from"]) || ""),
-        endDate: dateOnly(firstRecordValue(record, ["endDate", "end_date", "lastClassDate", "last_class_date", "lastLessonDate", "last_lesson_date"]) || ""),
+        endDate: dateOnly(firstRecordValue(record, ["endDate", "end_date", "lastClassDate", "last_class_date", "lastLessonDate", "last_lesson_date", "effectiveEndDate", "effective_end_date"]) || ""),
+        lastClassDate: dateOnly(firstRecordValue(record, ["lastClassDate", "last_class_date", "endDate", "end_date", "lastLessonDate", "last_lesson_date", "effectiveEndDate", "effective_end_date"]) || ""),
         locked: Boolean(recordFlagIsTrue(record, ["locked", "reserved"]) || hasStudent) && !unavailable,
         unavailable,
         active: recordFlagIsFalse(record, ["active", "isActive", "is_active"]) ? false : true,
@@ -6605,7 +6606,7 @@
           }))
         });
       }
-      return isDeletedBookingRecord(winner) ? null : winner;
+      return isPureDeletedOccurrenceRecord(winner) ? null : winner;
     }
 
     function canonicalBookingForSlot(teacherId, date, time) {
@@ -6620,7 +6621,7 @@
     }
 
     function isDisplayableBookingRecord(booking) {
-      return Boolean(booking) && (!isDeletedBookingRecord(booking) || occurrenceResolutionStatus(booking) !== "deleted");
+      return Boolean(booking) && !isPureDeletedOccurrenceRecord(booking);
     }
 
     function slotIsActiveOccurrence(slot) {
@@ -9084,16 +9085,7 @@
       const originalEndDate = recurringSlot.endDate || "";
       const openStartDate = dateOffsetISO(lastClassDate, 1);
       const student = studentById(recurringSlot.studentId) || (state.students || []).find(item => studentNameKey(item.name) === studentNameKey(recurringSlot.studentName || data.studentName));
-      const futureBookings = scheduleBookings().filter(booking =>
-        booking.teacherId === teacher.id && dateOnly(booking.date) > lastClassDate && !slotHasPassed(booking.date, booking.time) &&
-        (!booking.sourceSlotId || booking.sourceSlotId === recurringSlot.id) &&
-        (normalizeTimeValue(booking.time) || booking.time) === (normalizeTimeValue(recurringSlot.time) || recurringSlot.time) && dayFromISO(booking.date) === recurringSlot.day &&
-        studentNameKey(booking.studentName) === studentNameKey(recurringSlot.studentName || data.studentName) &&
-        (!recurringSlot.subject || !booking.subject || normalizeSubject(booking.subject) === normalizeSubject(recurringSlot.subject)) &&
-        (booking.type || "regular class") === "regular class"
-      );
-      const futureBookingIds = futureBookings.map(booking => booking.id);
-      const undoBefore = snapshotCollections({ students: student ? [student.id] : [], teachers: [teacher.id], bookings: futureBookingIds });
+      const undoBefore = snapshotCollections({ students: student ? [student.id] : [], teachers: [teacher.id] });
       let studentSlot = null;
       if (student) {
         student.regularSlots ||= [];
@@ -9204,17 +9196,13 @@
       teacher.updatedBy = currentUserEmail();
       teacher.deviceId = currentDeviceId();
 
-      futureBookings.forEach(booking => {
-        stampBookingStatus(booking, "deleted", now);
-        booking.archived = true;
-      });
-
       const studentName = recurringSlot.studentName || data.studentName || "Student";
-      const undoAfter = snapshotCollections({ students: student ? [student.id] : [], teachers: [teacher.id], bookings: futureBookingIds });
+      const undoAfter = snapshotCollections({ students: student ? [student.id] : [], teachers: [teacher.id] });
       const activityLog = logAction("Regular Class Last Day Set", studentName, `${teacher.name} | ${recurringSlot.day} ${timeLabel(recurringSlot.time)} | Previous end: ${originalEndDate || "none"}`, `Last class date: ${lastClassDate}`, "Updated from Teacher Overview. Previous history retained; no replacement credit created.", {
         undo: makeUndoSnapshot(undoBefore, undoAfter)
       });
       $("cancelFixedRegularModal").classList.add("hide");
+      renderSchedule();
       renderTeacherOverview();
       renderStudents();
       setStatus(`${studentName}'s last regular class date is ${formatDateFromAny(lastClassDate)}. Syncing...`);
@@ -9224,9 +9212,6 @@
           operation: "end_regular_assignment",
           activityLog
         });
-        if (futureBookings.length) {
-          await syncBookingCreateDeltas(futureBookings.map(booking => ({ booking })), "Future regular booking tombstones");
-        }
       } catch (error) {
         markTeacherViewOutdated("Last class date saved in this browser only. Not synced to Teacher View yet.");
         persistState();
@@ -10993,16 +10978,21 @@
 
     function isDeletedBookingRecord(booking) {
       if (!booking) return true;
+      if (booking.deleted === true || String(booking.status || "").toLowerCase() === "deleted") return true;
       const classStatus = normalizeClassStatus(booking);
       if (classStatus && classStatus !== "deleted") return false;
-      return String(booking.status || "").toLowerCase() === "deleted" || booking.deleted === true;
+      return classStatus === "deleted";
     }
 
     function isPureDeletedOccurrenceRecord(booking) {
       if (!booking) return true;
       const resolutionStatus = occurrenceResolutionStatus(booking);
       if (resolutionStatus && resolutionStatus !== "deleted") return false;
-      return booking.deleted === true || booking.archived === true || booking.active === false || normalizeClassStatus(booking) === "deleted";
+      return booking.deleted === true ||
+        booking.archived === true ||
+        booking.active === false ||
+        String(booking.status || "").toLowerCase() === "deleted" ||
+        normalizeClassStatus(booking) === "deleted";
     }
 
     function isSupersededBookingRecord(booking) {
