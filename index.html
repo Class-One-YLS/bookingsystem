@@ -598,6 +598,9 @@
     .completed-badge, .status-badge.status-completed { background: var(--class-completed-badge-bg); color: #fff; }
     .status-badge.status-cancelled, .status-badge.status-public-holiday, .status-badge.status-teacher-leave { background: #667085; color: #fff; }
     .status-badge.status-student-not-show { background: #b42318; color: #fff; }
+    .slot-sync-state { display: inline-flex; align-items: center; gap: 5px; min-height: 17px; padding: 0 7px; border-radius: 999px; background: #fff7ed; color: #9a3412; font-size: 10px; font-weight: 900; line-height: 1; margin-left: 5px; vertical-align: middle; }
+    .slot-sync-state.failed { background: #fee2e2; color: #991b1b; }
+    .slot-sync-retry { text-decoration: underline; cursor: pointer; }
     .slot.fixed { background: #e8edf1; color: var(--ink); cursor: grab; }
     .slot.reserve { background: #dceafe; }
     .teacher-cell-reserved { background: #dceafe; color: #111; }
@@ -2026,10 +2029,11 @@
       { src: "classone-mascot-transparent.png", pose: "floating", alt: "" }
     ];
     const REMEMBERED_EMAIL_KEY = "classone_remember_email";
-    const LEGACY_REMEMBERED_EMAIL_KEY = "classone_remembered_email";
-    let teacherLeaveSaveInProgress = false;
-    let outcomeSaveInProgress = false;
-    let editingTeacherLeaveId = "";
+	    const LEGACY_REMEMBERED_EMAIL_KEY = "classone_remembered_email";
+	    let teacherLeaveSaveInProgress = false;
+	    let outcomeSaveInProgress = false;
+	    const pendingBookingOutcomeMutations = new Map();
+	    let editingTeacherLeaveId = "";
     const DB_NAME = "ClassOneBookingDB";
     const DB_STORE = "state";
     const MONTHLY_LEAD_PATTERN = /^(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)[\s_-]*\d{4}/i;
@@ -10027,6 +10031,16 @@
       ].join(" | "))}</span>`;
     }
 
+    function bookingOutcomeSyncBadgeHtml(booking) {
+      const mutation = booking?.id ? pendingBookingOutcomeMutations.get(booking.id) : null;
+      if (!mutation) return "";
+      if (mutation.status === "saving") return `<span class="slot-sync-state">Syncing...</span>`;
+      if (mutation.status === "failed") {
+        return `<span class="slot-sync-state failed">Sync Failed · <span class="slot-sync-retry" data-retry-booking-outcome="${escapeHtml(booking.id)}">Retry</span></span>`;
+      }
+      return "";
+    }
+
     function slotHtml(slot, booking) {
       const teacher = teacherById(slot.teacherId);
       if (!teacher) return "";
@@ -10075,9 +10089,10 @@
         const recordRole = bookingRecordRole(booking);
         const displayStatus = booking.status === "completed" ? "Completed" : (recordRole === "move_destination" || booking.changedSlot ? "Changed Slot" : bookingStatusLabel(booking.status));
         const badgeClass = booking.status === "completed" ? "completed-badge" : `status-badge ${statusClass(booking.status)}`;
+        const syncBadge = bookingOutcomeSyncBadgeHtml(booking);
         return `<button class="slot booked${reserveClass}${typeClass} ${statusClass(booking.status)}" draggable="true" title="Drag to an open slot to move this class" data-drag-booking-id="${booking.id}" data-drag-occurrence-id="${escapeHtml(occurrenceId)}" data-booking-id="${booking.id}" data-record-id="${escapeHtml(booking.id || "")}" data-occurrence-id="${escapeHtml(occurrenceId)}" data-record-role="${escapeHtml(recordRole)}" data-move-transaction-id="${escapeHtml(booking.moveTransactionId || "")}"${cellAttr}>
           <span class="slot-teacher">${escapeHtml(teacher.name)}</span>
-          <span class="${badgeClass}">${escapeHtml(displayStatus)}</span>
+          <span class="${badgeClass}">${escapeHtml(displayStatus)}</span>${syncBadge}
           <span class="slot-student">${escapeHtml(booking.studentName || "Class")}</span>
           <span class="slot-details">${escapeHtml(booking.type || "class")} | ${escapeHtml(subject || "-")}${escapeHtml(originalText)}</span>
           ${bookingDebugLabel}
@@ -15005,16 +15020,21 @@
         return data;
       }
 
-      function send(operation) {
-        queue = queue.catch(() => null).then(() => execute(operation));
-        return queue;
-      }
+	      function send(operation) {
+	        queue = queue.catch(() => null).then(() => execute(operation));
+	        return queue;
+	      }
 
-      return {
-        send,
-        recent: () => Array.from(recentByKey.entries()).map(([key, value]) => ({ key, ...value }))
-      };
-    })();
+	      function sendNow(operation) {
+	        return execute(operation);
+	      }
+
+	      return {
+	        send,
+	        sendNow,
+	        recent: () => Array.from(recentByKey.entries()).map(([key, value]) => ({ key, ...value }))
+	      };
+	    })();
 
     async function verifyBookingOutcomeComposedState(change, deltaResponse) {
       if (!SYNC_DEBUG || !deltaResponse?.booking?.id) return null;
@@ -15069,7 +15089,7 @@
       return result;
     }
 
-    async function syncBookingOutcomeDelta(change, label = "Booking outcome") {
+    async function syncBookingOutcomeDelta(change, label = "Booking outcome", options = {}) {
       if (!change?.booking?.id) throw new Error("Booking outcome delta is missing a booking id.");
       const operation = bookingOutcomeOperation(change, label);
       const body = {
@@ -15121,7 +15141,7 @@
         };
         console.info("[ClassOne occurrence cancel/outcome request]", lastOccurrenceOutcomeDebug);
       }
-      const data = await deltaSync.send({
+	      const data = await (options.concurrent ? deltaSync.sendNow : deltaSync.send)({
         entity: "booking",
         operation,
         id: change.booking.id,
@@ -16529,11 +16549,58 @@
       }
     }
 
+    function bookingOutcomeMutationIsSaving(bookingId) {
+      return pendingBookingOutcomeMutations.get(bookingId)?.status === "saving";
+    }
+
+    function runBookingOutcomeDeltaInBackground(change, label = "Booking outcome") {
+      const bookingId = change?.booking?.id || "";
+      if (!bookingId) return false;
+      if (bookingOutcomeMutationIsSaving(bookingId)) {
+        setStatus(`${change.booking.studentName || "This class"} is already syncing. You can continue with another class.`, "warn");
+        return false;
+      }
+      pendingBookingOutcomeMutations.set(bookingId, {
+        status: "saving",
+        change,
+        label,
+        startedAt: new Date().toISOString()
+      });
+      refreshBookingOutcomeUi(label);
+      syncBookingOutcomeDelta(change, label, { concurrent: true })
+        .then(() => {
+          pendingBookingOutcomeMutations.delete(bookingId);
+          refreshBookingOutcomeUi(label);
+          setStatus(`${label} synced.`, "success");
+        })
+        .catch(error => {
+          const existing = pendingBookingOutcomeMutations.get(bookingId) || { change, label };
+          pendingBookingOutcomeMutations.set(bookingId, {
+            ...existing,
+            status: "failed",
+            error: error.message || String(error),
+            failedAt: new Date().toISOString()
+          });
+          persistState();
+          markTeacherViewOutdated(`${label} saved in this browser only. Not synced to Teacher View yet.`);
+          refreshBookingOutcomeUi(label);
+          setStatus(`${label} sync failed. Use Retry on that class. ${error.message}`, "error");
+        });
+      return true;
+    }
+
+    function retryBookingOutcomeMutation(bookingId) {
+      const mutation = pendingBookingOutcomeMutations.get(bookingId);
+      if (!mutation?.change) return setStatus("No failed sync found for this class.", "warn");
+      runBookingOutcomeDeltaInBackground(mutation.change, mutation.label || "Class outcome");
+    }
+
     async function saveOutcome() {
       if (outcomeSaveInProgress) {
         setStatus("Class outcome save is already in progress.", "warn");
         return;
       }
+      const submitStartedAt = performance.now();
       outcomeSaveInProgress = true;
       outcomeSaveCallCount += 1;
       const saveButton = $("saveOutcomeBtn");
@@ -16545,6 +16612,10 @@
       try {
         const booking = outcomeBookingFromForm({ materializeFixed: true });
         if (!booking) return;
+        if (bookingOutcomeMutationIsSaving(booking.id)) {
+          setStatus(`${booking.studentName || "This class"} is already syncing. You can continue with another class.`, "warn");
+          return;
+        }
         const nextStatus = $("outcomeStatus").value;
         if (nextStatus === "public_holiday" && !$("outcomeReplacementNeeded").value) return alert("For public holiday, choose whether replacement is needed.");
         const remark = $("outcomeRemark").value.trim();
@@ -16575,6 +16646,8 @@
           const affected = [];
           try { dates.forEach(date => affected.push(recurringBookingForDate(booking, recurringSlot, date))); }
           catch (err) { return alert(`Cannot cancel this period. ${err.message}`); }
+          const pending = affected.find(item => bookingOutcomeMutationIsSaving(item.id));
+          if (pending) return setStatus(`${pending.studentName || "One class"} is already syncing. Try that class again after it finishes.`, "warn");
           affected.forEach(item => {
             const change = applyOutcomeToBooking(item, nextStatus, remark, replacementNeeded, outcomeOptions);
             if (outcomeDeltaSupported(change?.outcome || nextStatus)) deltaChanges.push(change);
@@ -16593,6 +16666,9 @@
             const occupied = activeBookings().find(item => item.id !== affectedBooking.id && item.teacherId === affectedBooking.teacherId && item.date === affectedBooking.date && item.time === affectedBooking.time);
             if (occupied) return alert(`Cannot restore this class because the slot is now booked for ${occupied.studentName || "another student"}.`);
           }
+          if (bookingOutcomeMutationIsSaving(affectedBooking.id)) {
+            return setStatus(`${affectedBooking.studentName || "This class"} is already syncing. You can continue with another class.`, "warn");
+          }
           const change = applyOutcomeToBooking(affectedBooking, nextStatus, remark, replacementNeeded, outcomeOptions);
           if (outcomeDeltaSupported(change?.outcome || nextStatus)) deltaChanges.push(change);
           else requiresLegacyOutcomeSave = true;
@@ -16603,14 +16679,15 @@
         clearOutcomeModalDraft();
         refreshBookingOutcomeUi("Class outcome");
         if (!requiresLegacyOutcomeSave && deltaChanges.length) {
-          try {
-            await syncBookingOutcomeDeltas(deltaChanges, `Class marked as ${bookingStatusLabel(nextStatus)}`);
-          } catch (error) {
-            setStatus(`Class outcome sync failed — Retry. ${error.message}`, "error");
-            alert(`Class outcome sync failed: ${error.message}`);
-            return;
-          }
-          refreshBookingOutcomeUi(`Class marked as ${bookingStatusLabel(nextStatus)}`);
+          persistState();
+          const label = `Class marked as ${bookingStatusLabel(nextStatus)}`;
+          setStatus(`${label}. Syncing...`, "success", false);
+          deltaChanges.forEach(change => runBookingOutcomeDeltaInBackground(change, label));
+          if (SYNC_DEBUG) console.info("[ClassOne outcome UX timing]", {
+            bookingIds: deltaChanges.map(change => change.booking?.id || ""),
+            modalCloseMs: Math.round((performance.now() - submitStartedAt) * 10) / 10,
+            backgroundSync: true
+          });
         } else {
           persistState();
           const message = scope === "permanent"
@@ -17331,8 +17408,8 @@
         const data = JSON.parse(slot.dataset.slot);
         openSlotActionModal(data);
       }
-      const emptyScheduleCell = e.target.closest(".cell[data-cell-date]");
-      if (emptyScheduleCell && !e.target.closest("[data-slot], [data-booking-id], [data-fixed-slot]") && !emptyScheduleCell.querySelector("button")) {
+	      const emptyScheduleCell = e.target.closest(".cell[data-cell-date]");
+	      if (emptyScheduleCell && !e.target.closest("[data-slot], [data-booking-id], [data-fixed-slot]") && !emptyScheduleCell.querySelector("button")) {
         const teacherId = $("teacherFilter").value;
         if (teacherId && teacherId !== "all") {
           openOffSlotModal({
@@ -17342,10 +17419,17 @@
             time: emptyScheduleCell.dataset.cellTime
           });
         } else {
-          setStatus("Choose one teacher in the Weekly Timetable filter before editing an OFF slot.", "warn");
-        }
-      }
-      const bookingBtn = e.target.closest("[data-booking-id]");
+	          setStatus("Choose one teacher in the Weekly Timetable filter before editing an OFF slot.", "warn");
+	        }
+	      }
+	      const retryOutcome = e.target.closest("[data-retry-booking-outcome]");
+	      if (retryOutcome) {
+	        e.preventDefault();
+	        e.stopPropagation();
+	        retryBookingOutcomeMutation(retryOutcome.dataset.retryBookingOutcome);
+	        return;
+	      }
+	      const bookingBtn = e.target.closest("[data-booking-id]");
       if (bookingBtn) {
         const clickStartedAt = performance.now();
         const cell = bookingBtn.dataset.cellKey ? weeklyResolvedCellsByKey.get(bookingBtn.dataset.cellKey) : null;
