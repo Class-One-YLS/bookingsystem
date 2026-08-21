@@ -10561,28 +10561,88 @@
       return aStart <= bEnd && bStart <= aEnd;
     }
 
-    function studentRegularSlotConflict(studentName, candidate, ignoredStudentSlotId = "") {
-      const teacher = teacherById(candidate.teacherId);
-      if (!teacher) return "Choose a valid teacher.";
-      const conflict = (teacher.regularSlots || []).find(slot =>
+	    function studentRegularSlotConflict(studentName, candidate, ignoredStudentSlotId = "") {
+	      const teacher = teacherById(candidate.teacherId);
+	      if (!teacher) return "Choose a valid teacher.";
+	      const conflict = (teacher.regularSlots || []).find(slot =>
         slot.locked &&
         slot.day === candidate.day &&
         slot.time === candidate.time &&
         slot.studentSlotId !== ignoredStudentSlotId &&
         studentNameKey(slot.studentName || "") !== studentNameKey(studentName) &&
         regularSlotRangesOverlap(slot, candidate)
-      );
-      return conflict ? `${teacher.name} is already teaching ${conflict.studentName || "another student"} on ${candidate.day} at ${timeLabel(candidate.time)}.` : "";
-    }
+	      );
+	      return conflict ? `${teacher.name} is already teaching ${conflict.studentName || "another student"} on ${candidate.day} at ${timeLabel(candidate.time)}.` : "";
+	    }
 
-    function syncStudentProfileSlotsToTeachers(student, previousSlots = []) {
-      const nextSlots = activeSlotRecords(getStudentRegularSlots(student));
-      const nextIds = new Set(nextSlots.map(slot => slot.id).filter(Boolean));
-      const previousIds = new Set(previousSlots.map(slot => slot.id).filter(Boolean));
-      const now = new Date().toISOString();
-      nextSlots.forEach(studentSlot => {
-        const teacher = teacherById(studentSlot.teacherId);
-        if (!teacher) return;
+	    function recurringAssignmentIdFromStudentSlot(student, slot) {
+	      if (!student || !slot) return "";
+	      if (slot.normalizedRecurringAssignmentId) return String(slot.normalizedRecurringAssignmentId);
+	      if (slot.assignmentId) return String(slot.assignmentId);
+	      if (slot.recurringAssignmentId) return String(slot.recurringAssignmentId);
+	      const seed = [
+	        student.id || "",
+	        slot.id || "",
+	        slot.teacherId || "",
+	        slot.day || slot.weekday || "",
+	        normalizeTimeValue(slot.time) || slot.time || "",
+	        normalizeSubject(slot.subject || ""),
+	        dateOnly(slot.startDate || "")
+	      ].join("_");
+	      return `recurring_${seed.replace(/[^a-zA-Z0-9_.:-]+/g, "_")}`;
+	    }
+
+	    function ensureStudentRegularSlotAssignmentLink(student, slot, now = new Date().toISOString()) {
+	      const assignmentId = recurringAssignmentIdFromStudentSlot(student, slot);
+	      if (!assignmentId || !slot) return "";
+	      slot.normalizedRecurringAssignmentId = assignmentId;
+	      slot.assignmentId = assignmentId;
+	      slot.recurringAssignmentId = assignmentId;
+	      slot.studentSlotId = slot.studentSlotId || slot.id || "";
+	      slot.updatedAt ||= now;
+	      return assignmentId;
+	    }
+
+	    function recurringAssignmentFromStudentSlot(student, slot) {
+	      if (!student || !slot?.teacherId || !slot.day || !slot.time) return null;
+	      const assignmentId = ensureStudentRegularSlotAssignmentLink(student, slot);
+	      if (!assignmentId) return null;
+	      const teacher = teacherById(slot.teacherId);
+	      return {
+	        ...slot,
+	        id: slot.sourceSlotId || slot.id || assignmentId,
+	        assignmentId,
+	        normalizedRecurringAssignmentId: assignmentId,
+	        recurringAssignmentId: assignmentId,
+	        teacherId: slot.teacherId,
+	        studentId: student.id,
+	        studentName: student.name,
+	        day: slot.day || slot.weekday || "",
+	        weekday: slot.weekday || slot.day || "",
+	        time: normalizeTimeValue(slot.time) || slot.time || "",
+	        subject: normalizeSubject(slot.subject || student.subject || ""),
+	        type: slot.type || "regular class",
+	        status: slot.status || (slot.deleted ? "deleted" : slot.unavailable ? "off" : "active"),
+	        sourceCollection: "regularSlots",
+	        sourceSlotId: slot.sourceSlotId || slot.id || assignmentId,
+	        studentSlotId: slot.id || slot.studentSlotId || "",
+	        startDate: dateOnly(slot.startDate || "") || "",
+	        endDate: dateOnly(slot.endDate || "") || "",
+	        lastClassDate: dateOnly(slot.lastClassDate || slot.endDate || "") || "",
+	        teacherName: teacher?.name || slot.teacherName || "",
+	        updatedAt: slot.updatedAt || new Date().toISOString()
+	      };
+	    }
+
+	    function syncStudentProfileSlotsToTeachers(student, previousSlots = []) {
+	      const nextSlots = activeSlotRecords(getStudentRegularSlots(student));
+	      const nextIds = new Set(nextSlots.map(slot => slot.id).filter(Boolean));
+	      const previousIds = new Set(previousSlots.map(slot => slot.id).filter(Boolean));
+	      const now = new Date().toISOString();
+	      nextSlots.forEach(studentSlot => {
+	        const assignmentId = ensureStudentRegularSlotAssignmentLink(student, studentSlot, now);
+	        const teacher = teacherById(studentSlot.teacherId);
+	        if (!teacher) return;
         teacher.regularSlots ||= [];
         let teacherSlot = latestRegularSlot(activeSlotRecords(teacher.regularSlots).filter(slot => slot.studentSlotId === studentSlot.id));
         if (!teacherSlot) {
@@ -10605,12 +10665,15 @@
           studentName: student.name,
           day: studentSlot.day,
           time: studentSlot.time,
-          subject: studentSlot.subject,
-          startDate: studentSlot.startDate || "",
-          endDate: studentSlot.endDate || "",
-          locked: true,
-          unavailable: false,
-          updatedAt: now
+	          subject: studentSlot.subject,
+	          startDate: studentSlot.startDate || "",
+	          endDate: studentSlot.endDate || "",
+	          normalizedRecurringAssignmentId: assignmentId,
+	          assignmentId,
+	          recurringAssignmentId: assignmentId,
+	          locked: true,
+	          unavailable: false,
+	          updatedAt: now
         });
       });
       const today = todayISO();
@@ -10644,14 +10707,18 @@
       });
     }
 
-    function recurringAssignmentsForStudentProfileChange(student, previousSlots = []) {
-      if (!student) return [];
-      const previousIds = new Set((previousSlots || []).map(slot => slot.id).filter(Boolean));
-      const nameKey = studentNameKey(student.name || "");
-      const assignments = [];
-      (state.teachers || []).forEach(teacher => {
-        (teacher.regularSlots || []).forEach(slot => {
-          if (!slotBelongsToStudent(slot, student, previousIds, nameKey)) return;
+	    function recurringAssignmentsForStudentProfileChange(student, previousSlots = []) {
+	      if (!student) return [];
+	      const previousIds = new Set((previousSlots || []).map(slot => slot.id).filter(Boolean));
+	      const nameKey = studentNameKey(student.name || "");
+	      const assignments = [];
+	      getStudentRegularSlots(student).forEach(slot => {
+	        const assignment = recurringAssignmentFromStudentSlot(student, slot);
+	        if (assignment) assignments.push(assignment);
+	      });
+	      (state.teachers || []).forEach(teacher => {
+	        (teacher.regularSlots || []).forEach(slot => {
+	          if (!slotBelongsToStudent(slot, student, previousIds, nameKey)) return;
           const assignment = recurringAssignmentFromTeacherSlot(teacher, slot, "regularSlots");
           if (assignment) assignments.push(assignment);
         });
@@ -18023,7 +18090,13 @@
       const existing = studentById(id) || { id };
       const before = studentLogSummary(existing);
       const previousRegularSlots = getStudentRegularSlots(existing).map(slot => ({ ...slot }));
-      const plannedRegularSlots = studentRegularSlotsDraft.map(slot => ({ ...slot }));
+	      const saveTimestamp = new Date().toISOString();
+	      const plannedRegularSlots = studentRegularSlotsDraft.map(slot => {
+	        const item = { ...slot };
+	        item.updatedAt = saveTimestamp;
+	        ensureStudentRegularSlotAssignmentLink({ id, name }, item, saveTimestamp);
+	        return item;
+	      });
       const affectedTeacherIds = [...new Set([...previousRegularSlots, ...plannedRegularSlots].map(slot => slot.teacherId).filter(Boolean))];
       const undoBefore = snapshotCollections({ students: [existing.id], teachers: affectedTeacherIds });
       if (existing.id && $("studentRegisteredStatus").value === "drop") {
@@ -18051,7 +18124,7 @@
         }
         return;
       }
-      Object.assign(existing, { name, subjects, subject: subjects[0] || "", package: packageName, packageAmount: Number($("studentPackageAmount").value || 0), packageClasses: Number($("studentPackageClasses").value || 0), packageNotes: $("studentPackageNotes").value.trim(), registeredStatus: $("studentRegisteredStatus").value || "active", registeredRemark: $("studentRegisteredRemark").value.trim(), status: $("studentStatus").value || "registered", regularSlots: plannedRegularSlots, updatedAt: new Date().toISOString() });
+      Object.assign(existing, { name, subjects, subject: subjects[0] || "", package: packageName, packageAmount: Number($("studentPackageAmount").value || 0), packageClasses: Number($("studentPackageClasses").value || 0), packageNotes: $("studentPackageNotes").value.trim(), registeredStatus: $("studentRegisteredStatus").value || "active", registeredRemark: $("studentRegisteredRemark").value.trim(), status: $("studentStatus").value || "registered", regularSlots: plannedRegularSlots, updatedAt: saveTimestamp });
       delete existing.teacherId;
       delete existing.day;
       delete existing.time;
