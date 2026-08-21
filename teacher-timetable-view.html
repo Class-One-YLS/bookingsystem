@@ -2947,15 +2947,24 @@
       if (!document.hidden) autoSyncTimetable();
     });
     window.addEventListener("focus", () => autoSyncTimetable());
-    window.addEventListener("storage", event => {
-      if (event.key === "classone_teacher_view_version") autoSyncTimetable();
-    });
-    if ("BroadcastChannel" in window) {
-      const timetableChannel = new BroadcastChannel("classone_timetable_updates");
-      timetableChannel.addEventListener("message", event => {
-        if (Number(event.data?.version || 0) > lastLoadedVersion) autoSyncTimetable();
-      });
-    }
+	    window.addEventListener("storage", event => {
+	      if (event.key !== "classone_teacher_view_version") return;
+	      let message = null;
+	      try { message = JSON.parse(event.newValue || "{}"); } catch (error) {}
+	      const teacherIds = Array.isArray(message?.teacherIds) ? message.teacherIds.map(String) : [];
+	      const currentTeacherId = String(params.get("teacherId") || params.get("teacher") || "");
+	      if (teacherIds.length && currentTeacherId && !teacherIds.includes(currentTeacherId)) return;
+	      autoSyncTimetable();
+	    });
+	    if ("BroadcastChannel" in window) {
+	      const timetableChannel = new BroadcastChannel("classone_timetable_updates");
+	      timetableChannel.addEventListener("message", event => {
+	        const teacherIds = Array.isArray(event.data?.teacherIds) ? event.data.teacherIds.map(String) : [];
+	        const currentTeacherId = String(params.get("teacherId") || params.get("teacher") || "");
+	        if (teacherIds.length && currentTeacherId && !teacherIds.includes(currentTeacherId)) return;
+	        if (Number(event.data?.version || 0) > lastLoadedVersion) autoSyncTimetable();
+	      });
+	    }
 
     fillControls();
     {
