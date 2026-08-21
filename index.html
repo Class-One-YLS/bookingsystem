@@ -1730,7 +1730,7 @@
       <div class="subtle" id="editTimeSlotInfo"></div>
       <div class="grid two" style="margin-top:14px;">
         <div><label>Apply Change</label><select id="editTimeSlotMode"><option value="one_date">This Date Only</option><option value="temporary">Temporary Period</option><option value="permanent">Ongoing From Start Date</option></select></div>
-        <div><label>New Teacher</label><select id="editTimeSlotTeacher"></select></div>
+        <div><label>New Teacher <span class="subtle">(optional)</span></label><select id="editTimeSlotTeacher"></select></div>
         <div><label>New Date / Start Date</label><input id="editTimeSlotStart" type="date"></div>
         <div id="editTimeSlotEndField" class="hide"><label>End Date</label><input id="editTimeSlotEnd" type="date"></div>
         <div><label>New Time</label><input id="editTimeSlotTime" type="time" step="1800"></div>
@@ -10634,6 +10634,19 @@
 	      };
 	    }
 
+    function populateEditTimeSlotTeacherOptions(currentTeacherId = "") {
+      const select = $("editTimeSlotTeacher");
+      if (!select) return;
+      const currentTeacher = teacherById(currentTeacherId);
+      const keepLabel = currentTeacher ? `Keep current teacher (${currentTeacher.name})` : "Keep current teacher";
+      const options = [...timetableTeachers()]
+        .sort(byName)
+        .map(teacher => `<option value="${escapeHtml(teacher.id)}">${escapeHtml(teacher.name)}</option>`)
+        .join("");
+      select.innerHTML = `<option value="">${escapeHtml(keepLabel)}</option>${options}`;
+      select.value = "";
+    }
+
 	    function syncStudentProfileSlotsToTeachers(student, previousSlots = []) {
 	      const nextSlots = activeSlotRecords(getStudentRegularSlots(student));
 	      const nextIds = new Set(nextSlots.map(slot => slot.id).filter(Boolean));
@@ -12515,20 +12528,20 @@
       $("editTimeSlotEndField").classList.toggle("hide", $("editTimeSlotMode").value !== "temporary");
     }
 
-    function openEditTimeSlotForBooking(booking) {
-      if (!booking) return alert("Booking not found.");
-      const recurring = recurringSlotForBooking(booking);
-      const occurrenceId = outcomeModalDraft?.occurrenceId || occurrenceIdForBooking(booking);
-      $("editTimeSlotData").value = JSON.stringify({ kind: "booking", occurrenceId, bookingId: booking.id });
+	    function openEditTimeSlotForBooking(booking) {
+	      if (!booking) return alert("Booking not found.");
+	      const recurring = recurringSlotForBooking(booking);
+	      const occurrenceId = outcomeModalDraft?.occurrenceId || occurrenceIdForBooking(booking);
+	      $("editTimeSlotData").value = JSON.stringify({ kind: "booking", occurrenceId, bookingId: booking.id });
       $("editTimeSlotInfo").textContent = outcomeInteractionSource === "teacher_overview"
         ? `${booking.studentName || "Class"} | ${teacherById(booking.teacherId)?.name || "-"} | ${booking.day || recurring?.day || dayFromISO(booking.date)} ${timeLabel(booking.time)} | choose the effective date below`
-        : `${booking.studentName || "Class"} | ${teacherById(booking.teacherId)?.name || "-"} | ${formatClassDateTime(booking.date, booking.time)}${recurring ? " | recurring regular class" : " | one-time class"}`;
-      $("editTimeSlotMode").value = "one_date";
-      $("editTimeSlotMode").disabled = !recurring;
-      $("editTimeSlotTeacher").value = booking.teacherId;
-      $("editTimeSlotStart").value = booking.date;
-      $("editTimeSlotEnd").value = "";
-      $("editTimeSlotTime").value = booking.time;
+	        : `${booking.studentName || "Class"} | ${teacherById(booking.teacherId)?.name || "-"} | ${formatClassDateTime(booking.date, booking.time)}${recurring ? " | recurring regular class" : " | one-time class"}`;
+	      $("editTimeSlotMode").value = "one_date";
+	      $("editTimeSlotMode").disabled = !recurring;
+	      populateEditTimeSlotTeacherOptions(booking.teacherId);
+	      $("editTimeSlotStart").value = booking.date;
+	      $("editTimeSlotEnd").value = "";
+	      $("editTimeSlotTime").value = booking.time;
       $("editTimeSlotRemark").value = "";
       updateEditTimeSlotEndField();
       $("bookingOutcomeModal").classList.add("hide");
@@ -12538,40 +12551,47 @@
 
     function openEditTimeSlotForAvailability(data) {
       $("editTimeSlotData").value = JSON.stringify({ kind: "availability", slot: data });
-      $("editTimeSlotInfo").textContent = `Available slot | ${teacherById(data.teacherId)?.name || "-"} | ${formatClassDateTime(data.date, data.time)}`;
-      $("editTimeSlotMode").disabled = false;
-      $("editTimeSlotMode").value = "one_date";
-      $("editTimeSlotTeacher").value = data.teacherId;
-      $("editTimeSlotStart").value = data.date;
-      $("editTimeSlotEnd").value = "";
-      $("editTimeSlotTime").value = data.time;
+	      $("editTimeSlotInfo").textContent = `Available slot | ${teacherById(data.teacherId)?.name || "-"} | ${formatClassDateTime(data.date, data.time)}`;
+	      $("editTimeSlotMode").disabled = false;
+	      $("editTimeSlotMode").value = "one_date";
+	      populateEditTimeSlotTeacherOptions(data.teacherId);
+	      $("editTimeSlotStart").value = data.date;
+	      $("editTimeSlotEnd").value = "";
+	      $("editTimeSlotTime").value = data.time;
       $("editTimeSlotRemark").value = "";
       updateEditTimeSlotEndField();
       $("openSlotActionModal").classList.add("hide");
       $("editTimeSlotModal").classList.remove("hide");
     }
 
-    async function confirmEditTimeSlot() {
-      const data = JSON.parse($("editTimeSlotData").value || "null");
-      if (!data) return alert("Time slot information is missing.");
-      const mode = $("editTimeSlotMode").value;
-      const targetTeacherId = $("editTimeSlotTeacher").value;
-      const startDate = dateOnly($("editTimeSlotStart").value);
-      const endDate = dateOnly($("editTimeSlotEnd").value);
-      const targetTime = $("editTimeSlotTime").value;
-      const targetDay = dayFromISO(startDate);
-      const remark = $("editTimeSlotRemark").value.trim();
-      if (!targetTeacherId || !startDate || !targetTime) return alert("Choose teacher, date and time.");
-      if (mode === "temporary" && (!endDate || endDate < startDate)) return alert("Choose a valid temporary end date.");
-      const dates = mode === "one_date" ? [startDate] : (mode === "temporary" ? weeklyDatesInRange(startDate, endDate, targetDay) : [startDate]);
-      if (dates.some(date => slotHasPassed(date, targetTime))) return alert("Cannot move to a time that has already passed.");
+	    async function confirmEditTimeSlot() {
+	      const data = JSON.parse($("editTimeSlotData").value || "null");
+	      if (!data) return alert("Time slot information is missing.");
+	      const mode = $("editTimeSlotMode").value;
+	      let booking = null;
+	      let source = null;
+	      if (data.kind === "booking") booking = bookingByOccurrenceId(data.occurrenceId) || bookingByExactRecordId(data.bookingId);
+	      else source = data.slot;
+	      if (data.kind === "booking" && !booking) return alert("Booking not found.");
+	      if (data.kind !== "booking" && !source) return alert("Available slot data is missing.");
+	      const currentTeacherId = data.kind === "booking" ? booking?.teacherId : source?.teacherId;
+	      const targetTeacherId = $("editTimeSlotTeacher").value || currentTeacherId || "";
+	      const startDate = dateOnly($("editTimeSlotStart").value);
+	      const endDate = dateOnly($("editTimeSlotEnd").value);
+	      const targetTime = $("editTimeSlotTime").value;
+	      const targetDay = dayFromISO(startDate);
+	      const remark = $("editTimeSlotRemark").value.trim();
+	      if (!startDate || !targetTime) return alert("Choose date and time.");
+	      if (!targetTeacherId) return alert("Current teacher not found. Choose a teacher.");
+	      if (mode === "temporary" && (!endDate || endDate < startDate)) return alert("Choose a valid temporary end date.");
+	      const dates = mode === "one_date" ? [startDate] : (mode === "temporary" ? weeklyDatesInRange(startDate, endDate, targetDay) : [startDate]);
+	      if (dates.some(date => slotHasPassed(date, targetTime))) return alert("Cannot move to a time that has already passed.");
       const transactionTeacherIds = new Set([targetTeacherId]);
       const transactionBookings = [];
-      let activityLog = null;
+	      let activityLog = null;
 
-      if (data.kind === "booking") {
-        const booking = bookingByOccurrenceId(data.occurrenceId) || bookingByExactRecordId(data.bookingId);
-        if (!booking) return alert("Booking not found.");
+	      if (data.kind === "booking") {
+	        if (!booking) return alert("Booking not found.");
         transactionTeacherIds.add(booking.teacherId);
         const recurring = recurringSlotForBooking(booking);
         if (mode !== "one_date" && !recurring) return alert("Temporary or ongoing changes are only available for recurring regular classes.");
@@ -12624,9 +12644,9 @@
           syncStudentRegularSlotRange(booking.studentName, sourceTeacher, recurring, targetTeacher, targetSlot, startDate, endDate, mode === "temporary" ? "temporary" : "long_term");
         }
         activityLog = logAction("Time Slot Edited", booking.studentName || booking.id, before, mode === "one_date" ? bookingLogSummary(booking) : `${teacherById(targetTeacherId)?.name || ""} ${targetDay} ${timeLabel(targetTime)} from ${formatDateFromAny(startDate)}`, remark);
-      } else {
-        const source = data.slot;
-        transactionTeacherIds.add(source.teacherId);
+	      } else {
+	        if (!source) return alert("Available slot data is missing.");
+	        transactionTeacherIds.add(source.teacherId);
         if (mode === "one_date" && source.teacherId === targetTeacherId && source.date === startDate && source.time === targetTime) return alert("Choose a different date, teacher or time.");
         const validation = validateScheduleTargets({ teacherId: targetTeacherId, dates, time: targetTime, excludeSlotId: source.slotId || "" });
         if (validation.conflicts.length) return alert(conflictListMessage(validation.conflicts, "edit this available slot"));
@@ -14752,37 +14772,54 @@
       };
     }
 
-    function applyRecurringAssignmentLocal(assignment) {
-      if (!assignment?.assignmentId) return;
-      state.recurringAssignments ||= [];
-      const existingAssignmentIndex = state.recurringAssignments.findIndex(item => String(item.assignmentId || item.id || "") === String(assignment.assignmentId));
-      if (existingAssignmentIndex >= 0) state.recurringAssignments[existingAssignmentIndex] = { ...state.recurringAssignments[existingAssignmentIndex], ...assignment };
-      else state.recurringAssignments.unshift(assignment);
+	    function applyRecurringAssignmentLocal(assignment) {
+	      if (!assignment?.assignmentId) return;
+	      state.recurringAssignments ||= [];
+	      const existingAssignmentIndex = state.recurringAssignments.findIndex(item => String(item.assignmentId || item.id || "") === String(assignment.assignmentId));
+	      if (existingAssignmentIndex >= 0) state.recurringAssignments[existingAssignmentIndex] = { ...state.recurringAssignments[existingAssignmentIndex], ...assignment };
+	      else state.recurringAssignments.unshift(assignment);
 
-      const teacher = teacherById(assignment.teacherId);
-      if (teacher) {
-        const collectionName = assignment.sourceCollection === "overrideSlots" ? "overrideSlots" : "regularSlots";
-        teacher[collectionName] ||= [];
-        const sourceSlotId = assignment.sourceSlotId || assignment.id || assignment.assignmentId;
-        const teacherSlot = {
-          ...assignment,
-          id: sourceSlotId,
-          normalizedRecurringAssignmentId: assignment.assignmentId,
-          day: assignment.day || assignment.weekday || "",
-          time: normalizeTimeValue(assignment.time) || assignment.time || "",
-          teacherId: assignment.teacherId
-        };
-        const index = teacher[collectionName].findIndex(slot =>
-          String(slot.normalizedRecurringAssignmentId || slot.assignmentId || "") === String(assignment.assignmentId) ||
+	      const teacher = teacherById(assignment.teacherId);
+	      if (teacher) {
+	        const collectionName = assignment.sourceCollection === "overrideSlots" ? "overrideSlots" : "regularSlots";
+	        teacher[collectionName] ||= [];
+	        const sourceSlotId = assignment.sourceSlotId || assignment.id || assignment.assignmentId;
+	        const linkedStudent = assignment.studentId ? studentById(assignment.studentId) : null;
+	        const assignmentStudentName = assignment.studentName || linkedStudent?.name || assignment.reservationName || "";
+	        const teacherSlot = {
+	          ...assignment,
+	          id: sourceSlotId,
+	          normalizedRecurringAssignmentId: assignment.assignmentId,
+	          assignmentId: assignment.assignmentId,
+	          recurringAssignmentId: assignment.assignmentId,
+	          day: assignment.day || assignment.weekday || "",
+	          weekday: assignment.weekday || assignment.day || "",
+	          time: normalizeTimeValue(assignment.time) || assignment.time || "",
+	          teacherId: assignment.teacherId,
+	          studentId: assignment.studentId || "",
+	          studentName: assignmentStudentName,
+	          reservationName: assignment.reservationName || "",
+	          subject: assignment.subject || "",
+	          startDate: dateOnly(assignment.startDate || "") || "",
+	          endDate: dateOnly(assignment.endDate || assignment.lastClassDate || "") || "",
+	          locked: Boolean(assignment.locked || assignment.reserved || assignment.studentId || assignmentStudentName) && !assignment.unavailable,
+	          reserved: Boolean(assignment.reserved),
+	          unavailable: Boolean(assignment.unavailable),
+	          status: assignment.status || (assignment.deleted ? "deleted" : assignment.unavailable ? "off" : "active"),
+	          recordVersion: Number(assignment.recordVersion || 0),
+	          updatedAt: assignment.updatedAt || new Date().toISOString()
+	        };
+	        const index = teacher[collectionName].findIndex(slot =>
+	          String(slot.normalizedRecurringAssignmentId || slot.assignmentId || "") === String(assignment.assignmentId) ||
           (sourceSlotId && String(slot.id || "") === String(sourceSlotId))
         );
         if (index >= 0) teacher[collectionName][index] = { ...teacher[collectionName][index], ...teacherSlot };
         else teacher[collectionName].push(teacherSlot);
       }
 
-      if (assignment.studentId) {
-        const student = studentById(assignment.studentId);
-        if (student) {
+	      if (assignment.studentId) {
+	        const student = studentById(assignment.studentId);
+	        if (student) {
           student.regularSlots ||= [];
           const studentSlotId = assignment.studentSlotId || `student_slot_${assignment.assignmentId}`;
           const studentSlot = {
@@ -14802,11 +14839,20 @@
             String(slot.normalizedRecurringAssignmentId || "") === String(assignment.assignmentId) ||
             String(slot.id || "") === String(studentSlotId)
           );
-          if (index >= 0) student.regularSlots[index] = { ...student.regularSlots[index], ...studentSlot };
-          else student.regularSlots.push(studentSlot);
-        }
-      }
-    }
+	          if (index >= 0) student.regularSlots[index] = { ...student.regularSlots[index], ...studentSlot };
+	          else student.regularSlots.push(studentSlot);
+		      }
+		    }
+	    }
+
+	    function refreshRecurringAssignmentSurfaces(assignments = []) {
+	      const items = (Array.isArray(assignments) ? assignments : [assignments]).filter(Boolean);
+	      if (!items.length) return;
+	      if ($("teacherOverviewGrid")) renderTeacherOverview();
+	      if ($("scheduleGrid")) renderSchedule();
+	      if ($("studentRegularSlotDraft")) renderStudentRegularSlotDraft();
+	      if (activeTabId() === "students" && $("studentList")) renderStudents();
+	    }
 
     function upsertPayloadRecurringAssignment(payload, assignment) {
       if (!payload || !assignment?.assignmentId) return;
@@ -15282,15 +15328,17 @@
         id: items.map(item => item.assignmentId).join(","),
         endpoint: "/api/recurring-assignments/upsert",
         body,
-        label: `${label} delta sync`,
-        applyResponse(response) {
-          (response.assignments || (response.assignment ? [response.assignment] : [])).forEach(assignment => {
-            applyRecurringAssignmentLocal(assignment);
-            if (confirmedRemotePayload) upsertPayloadRecurringAssignment(confirmedRemotePayload, assignment);
-          });
-          if (response.activityLog) {
-            upsertLocalRecord("activityLogs", response.activityLog);
-            if (confirmedRemotePayload) upsertPayloadRecord(confirmedRemotePayload, "activityLogs", response.activityLog);
+	        label: `${label} delta sync`,
+	        applyResponse(response) {
+	          const returnedAssignments = response.assignments || (response.assignment ? [response.assignment] : []);
+	          returnedAssignments.forEach(assignment => {
+	            applyRecurringAssignmentLocal(assignment);
+	            if (confirmedRemotePayload) upsertPayloadRecurringAssignment(confirmedRemotePayload, assignment);
+	          });
+	          refreshRecurringAssignmentSurfaces(returnedAssignments);
+	          if (response.activityLog) {
+	            upsertLocalRecord("activityLogs", response.activityLog);
+	            if (confirmedRemotePayload) upsertPayloadRecord(confirmedRemotePayload, "activityLogs", response.activityLog);
           }
         },
         afterResponse(response) {
@@ -15370,19 +15418,22 @@
         endpoint: "/api/records/transaction",
         body,
         label: `${label} record sync`,
-        applyResponse(response) {
-          Object.entries(response.records || records).forEach(([collectionName, list]) => {
-            (Array.isArray(list) ? list : []).forEach(record => {
-              if (collectionName === "recurringAssignments") {
-                applyRecurringAssignmentLocal(record);
-                if (confirmedRemotePayload) upsertPayloadRecurringAssignment(confirmedRemotePayload, record);
-                return;
-              }
-              upsertLocalRecord(collectionName, record);
-              if (confirmedRemotePayload) upsertPayloadRecord(confirmedRemotePayload, collectionName, record);
-            });
-          });
-        },
+	        applyResponse(response) {
+	          const returnedRecurringAssignments = [];
+	          Object.entries(response.records || records).forEach(([collectionName, list]) => {
+	            (Array.isArray(list) ? list : []).forEach(record => {
+	              if (collectionName === "recurringAssignments") {
+	                applyRecurringAssignmentLocal(record);
+	                returnedRecurringAssignments.push(record);
+	                if (confirmedRemotePayload) upsertPayloadRecurringAssignment(confirmedRemotePayload, record);
+	                return;
+	              }
+	              upsertLocalRecord(collectionName, record);
+	              if (confirmedRemotePayload) upsertPayloadRecord(confirmedRemotePayload, collectionName, record);
+	            });
+	          });
+	          refreshRecurringAssignmentSurfaces(returnedRecurringAssignments);
+	        },
         afterResponse(response) {
           console.info("[ClassOne record transaction delta]", {
             marker: "RECORD TRANSACTION DELTA SYNC",
