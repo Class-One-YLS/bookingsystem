@@ -2033,6 +2033,7 @@
 	    let teacherLeaveSaveInProgress = false;
 	    let outcomeSaveInProgress = false;
 	    const pendingBookingOutcomeMutations = new Map();
+	    let bookingOutcomeMutationSequence = 0;
 	    let editingTeacherLeaveId = "";
     const DB_NAME = "ClassOneBookingDB";
     const DB_STORE = "state";
@@ -10034,7 +10035,7 @@
     function bookingOutcomeSyncBadgeHtml(booking) {
       const mutation = booking?.id ? pendingBookingOutcomeMutations.get(booking.id) : null;
       if (!mutation) return "";
-      if (mutation.status === "saving") return `<span class="slot-sync-state">Syncing...</span>`;
+      if (mutation.status === "saving" || mutation.status === "syncing") return `<span class="slot-sync-state">Syncing...</span>`;
       if (mutation.status === "failed") {
         return `<span class="slot-sync-state failed">Sync Failed · <span class="slot-sync-retry" data-retry-booking-outcome="${escapeHtml(booking.id)}">Retry</span></span>`;
       }
@@ -15092,9 +15093,11 @@
     async function syncBookingOutcomeDelta(change, label = "Booking outcome", options = {}) {
       if (!change?.booking?.id) throw new Error("Booking outcome delta is missing a booking id.");
       const operation = bookingOutcomeOperation(change, label);
+      const requestId = change.requestId || bookingOutcomeDeltaRequestId(change);
+      change.requestId = requestId;
       const body = {
         key: neonStateKey(),
-        requestId: bookingOutcomeDeltaRequestId(change),
+        requestId,
         bookingId: change.booking.id,
         expectedRecordVersion: change.expectedRecordVersion == null ? undefined : change.expectedRecordVersion,
         outcome: normalizeClassStatus(change.outcome || change.booking.status) || change.booking.status,
@@ -15145,11 +15148,12 @@
         entity: "booking",
         operation,
         id: change.booking.id,
-        endpoint: "/api/bookings/outcome",
-        body,
-        label: `${label} delta sync`,
-        applyResponse(response) {
-          let bookingForLocalState = null;
+	        endpoint: "/api/bookings/outcome",
+	        body,
+	        label: `${label} delta sync`,
+	        applyResponse(response) {
+	          if (options.shouldApplyResponse && !options.shouldApplyResponse(response, body)) return;
+	          let bookingForLocalState = null;
           if (SYNC_DEBUG && lastOccurrenceOutcomeDebug?.request?.requestId === body.requestId) {
             lastOccurrenceOutcomeDebug.response = {
               httpStatus: response.__httpStatus || 200,
@@ -15165,9 +15169,10 @@
             };
             console.info("[ClassOne occurrence cancel/outcome response]", lastOccurrenceOutcomeDebug);
           }
-          if (response.booking) {
-            const existingBooking = state.bookings.find(item => item.id === response.booking.id);
-            bookingForLocalState = { ...(existingBooking || {}), ...response.booking };
+	          if (response.booking) {
+	            const existingBooking = state.bookings.find(item => item.id === response.booking.id);
+	            bookingForLocalState = { ...(existingBooking || {}), ...response.booking };
+	            if (response.recordVersion && !bookingForLocalState.recordVersion) bookingForLocalState.recordVersion = Number(response.recordVersion || 0);
             ["sourceSlotId", "recurringSourceSlotId", "normalizedRecurringAssignmentId", "assignmentId", "recurringAssignmentId", "occurrenceKey", "sourceOccurrenceKey", "occurrenceId", "sourceOccurrenceId"].forEach(key => {
               if (!bookingForLocalState[key] && existingBooking?.[key]) bookingForLocalState[key] = existingBooking[key];
             });
@@ -16455,10 +16460,11 @@
         console.groupEnd();
       }
       return {
-        booking,
-        expectedRecordVersion,
-        outcome: nextClassStatus,
-        replacementTask: replacementSideEffects.replacementTask || null,
+	        booking,
+	        expectedRecordVersion,
+	        outcome: nextClassStatus,
+	        previousStatus: currentClassStatus,
+	        replacementTask: replacementSideEffects.replacementTask || null,
         replacementCredit: replacementSideEffects.replacementCredit || null,
         activityLog
       };
@@ -16550,7 +16556,8 @@
     }
 
     function bookingOutcomeMutationIsSaving(bookingId) {
-      return pendingBookingOutcomeMutations.get(bookingId)?.status === "saving";
+      const status = pendingBookingOutcomeMutations.get(bookingId)?.status;
+      return status === "saving" || status === "syncing";
     }
 
     function runBookingOutcomeDeltaInBackground(change, label = "Booking outcome") {
@@ -16560,20 +16567,74 @@
         setStatus(`${change.booking.studentName || "This class"} is already syncing. You can continue with another class.`, "warn");
         return false;
       }
+      const sequence = ++bookingOutcomeMutationSequence;
+      const requestId = change.requestId || bookingOutcomeDeltaRequestId(change);
+      change.requestId = requestId;
+      const previousStatus = change.previousStatus || change.booking?.previousStatus || "";
+      const desiredStatus = normalizeClassStatus(change.outcome || change.booking?.status) || change.outcome || change.booking?.status || "";
+      const occurrenceKey = occurrenceKeyForBooking(change.booking);
       pendingBookingOutcomeMutations.set(bookingId, {
-        status: "saving",
+        status: "syncing",
+        bookingId,
+        occurrenceKey,
+        mutationSequence: sequence,
+        requestId,
+        desiredStatus,
+        previousStatus,
         change,
         label,
         startedAt: new Date().toISOString()
       });
       refreshBookingOutcomeUi(label);
-      syncBookingOutcomeDelta(change, label, { concurrent: true })
-        .then(() => {
+      syncBookingOutcomeDelta(change, label, {
+        concurrent: true,
+        shouldApplyResponse() {
+          const current = pendingBookingOutcomeMutations.get(bookingId);
+          return Boolean(current && current.mutationSequence === sequence && current.requestId === requestId);
+        }
+      })
+        .then(response => {
+          const current = pendingBookingOutcomeMutations.get(bookingId);
+          const stale = !current || current.mutationSequence !== sequence || current.requestId !== requestId;
+          const rerendered = stale ? false : refreshBookingOutcomeUi(label);
+          if (SYNC_DEBUG) console.info("BOOKING OUTCOME MUTATION", {
+            occurrenceKey,
+            bookingId,
+            mutationSequence: sequence,
+            operation: bookingOutcomeOperation(change, label),
+            requestId,
+            expectedRecordVersion: change.expectedRecordVersion ?? null,
+            returnedRecordVersion: Number(response?.recordVersion || response?.booking?.recordVersion || 0),
+            httpStatus: response?.__httpStatus || 200,
+            pendingStateBefore: current?.status || "none",
+            pendingStateAfter: stale ? current?.status || "none" : "idle",
+            staleResponseIgnored: stale,
+            rerenderCompleted: rerendered
+          });
+          if (stale) return;
           pendingBookingOutcomeMutations.delete(bookingId);
           refreshBookingOutcomeUi(label);
           setStatus(`${label} synced.`, "success");
         })
         .catch(error => {
+          const current = pendingBookingOutcomeMutations.get(bookingId);
+          if (current && (current.mutationSequence !== sequence || current.requestId !== requestId)) {
+            if (SYNC_DEBUG) console.info("BOOKING OUTCOME MUTATION", {
+              occurrenceKey,
+              bookingId,
+              mutationSequence: sequence,
+              operation: bookingOutcomeOperation(change, label),
+              requestId,
+              expectedRecordVersion: change.expectedRecordVersion ?? null,
+              returnedRecordVersion: 0,
+              httpStatus: error?.status || 0,
+              pendingStateBefore: current.status || "none",
+              pendingStateAfter: current.status || "none",
+              staleResponseIgnored: true,
+              rerenderCompleted: false
+            });
+            return;
+          }
           const existing = pendingBookingOutcomeMutations.get(bookingId) || { change, label };
           pendingBookingOutcomeMutations.set(bookingId, {
             ...existing,
@@ -17000,12 +17061,16 @@
           errors.push("Replacement record not found.");
           return;
         }
-      const booking = (state.bookings || []).find(item => item.id === replacement.bookingId);
-        if (!booking) {
-          errors.push(`${replacement.studentName || replacement.id}: original booking not found.`);
-          return;
-        }
-      const occupied = activeBookings().find(item => item.id !== booking.id && item.teacherId === booking.teacherId && item.date === booking.date && item.time === booking.time);
+	      const booking = (state.bookings || []).find(item => item.id === replacement.bookingId);
+	        if (!booking) {
+	          errors.push(`${replacement.studentName || replacement.id}: original booking not found.`);
+	          return;
+	        }
+	        if (bookingOutcomeMutationIsSaving(booking.id)) {
+	          errors.push(`${replacement.studentName || replacement.id}: this class is already syncing.`);
+	          return;
+	        }
+	      const occupied = activeBookings().find(item => item.id !== booking.id && item.teacherId === booking.teacherId && item.date === booking.date && item.time === booking.time);
         if (occupied) {
           errors.push(`${replacement.studentName || replacement.id}: original slot is now booked for ${occupied.studentName || "another student"}.`);
           return;
@@ -17020,10 +17085,11 @@
       const activityLog = logAction("Cancellation Withdrawn", booking.studentName || booking.id, before, bookingLogSummary(booking), replacement.reason || "");
       if (outcomeDeltaSupported("booked")) {
         deltaChanges.push({
-          booking,
-          expectedRecordVersion,
-          outcome: "booked",
-          replacementTask: (state.replacements || []).find(item => replacementMatchesBooking(item, booking)) || replacement,
+	          booking,
+	          expectedRecordVersion,
+	          outcome: "booked",
+	          previousStatus: "cancelled",
+	          replacementTask: (state.replacements || []).find(item => replacementMatchesBooking(item, booking)) || replacement,
           replacementCredit: null,
           activityLog
         });
@@ -17034,19 +17100,14 @@
       });
       $("undoCancellationModal").classList.add("hide");
       selectedReplacementIds.clear();
-      if (changed) {
-        refreshBookingOutcomeUi("Cancellation restore");
-        if (!requiresLegacyUndoSave && deltaChanges.length) {
-          try {
-            await syncBookingOutcomeDeltas(deltaChanges, `${changed} cancellation${changed === 1 ? "" : "s"} withdrawn`);
-          } catch (error) {
-            setStatus(`Undo cancellation sync failed — Retry. ${error.message}`, "error");
-            alert(`Undo cancellation sync failed: ${error.message}`);
-            if (errors.length) alert(errors.join("\n"));
-            return;
-          }
-          refreshBookingOutcomeUi(`${changed} cancellation${changed === 1 ? "" : "s"} withdrawn`);
-        } else {
+	      if (changed) {
+	        refreshBookingOutcomeUi("Cancellation restore");
+	        if (!requiresLegacyUndoSave && deltaChanges.length) {
+	          persistState();
+	          const label = `${changed} cancellation${changed === 1 ? "" : "s"} withdrawn`;
+	          setStatus(`${label}. Syncing...`, "success", false);
+	          deltaChanges.forEach(change => runBookingOutcomeDeltaInBackground(change, label));
+	        } else {
           persistState();
           const message = "Restore cancellation is not supported by record-level sync in this browser/API combination. No full-state save was attempted.";
           markTeacherViewOutdated(message);
@@ -17440,10 +17501,14 @@
           || bookingByOccurrenceId(clickedOccurrenceId)
           || weeklyBookingsById.get(clickedRecordId);
         if (!booking && cell?.bookingId === clickedRecordId) booking = cell.booking;
-        if (!booking && clickedOccurrenceId && cell?.occurrenceId === clickedOccurrenceId) booking = cell.booking;
-        if (!booking && !clickedRecordId && !clickedOccurrenceId) booking = cell?.booking || null;
-        if (booking) {
-          openOutcomeModal(booking, bookingBtn.dataset.bookingContext || "weekly_timetable", {
+	        if (!booking && clickedOccurrenceId && cell?.occurrenceId === clickedOccurrenceId) booking = cell.booking;
+	        if (!booking && !clickedRecordId && !clickedOccurrenceId) booking = cell?.booking || null;
+	        if (booking) {
+	          if (bookingOutcomeMutationIsSaving(booking.id)) {
+	            setStatus(`${booking.studentName || "This class"} is syncing. You can continue with another class.`, "warn");
+	            return;
+	          }
+	          openOutcomeModal(booking, bookingBtn.dataset.bookingContext || "weekly_timetable", {
             cellKey: bookingBtn.dataset.cellKey || cell?.cellKey || "",
             recordId: clickedRecordId || booking.id || "",
             occurrenceId: clickedOccurrenceId || occurrenceIdForBooking(booking),
