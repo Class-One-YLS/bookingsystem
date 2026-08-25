@@ -8780,6 +8780,28 @@
       reservation.endDate = dateOffsetISO(today, -1);
       reservation.releasedAt = new Date().toISOString();
       reservation.updatedAt = reservation.releasedAt;
+      // Guard against clobbering a different, already-booked regular class that now occupies this
+      // same teacher/day/time cell (e.g. someone booked a new regular student here after this slot
+      // was reserved, before the reservation got released). Cell resolution on Weekly Timetable /
+      // Teacher View picks whichever slot record has the newest updatedAt, so blindly pushing a
+      // fresh "open" record here would silently hide that other student's class. See conversation
+      // 2026-08-25 (Saw Yik Xuan / Hoh Kar Yee Tuesday 18:00) for the incident this guards against.
+      const conflictingBooking = activeSlotRecords(teacher.regularSlots || []).find(slot =>
+        slot.id !== reservation.id &&
+        slot.locked && !slot.unavailable &&
+        slot.day === reservation.day &&
+        (normalizeTimeValue(slot.time) || slot.time) === (normalizeTimeValue(reservation.time) || reservation.time) &&
+        (!slot.startDate || slot.startDate <= today) &&
+        (!slot.endDate || slot.endDate >= today)
+      );
+      if (conflictingBooking) {
+        teacher.updatedAt = reservation.updatedAt;
+        const activityLog = logAction("Regular Slot Reservation Released", `${name} with ${teacher.name}`, reservationLabel(reservation), `${reservation.day} ${timeLabel(reservation.time)} left as booked (${conflictingBooking.studentName || "another student"})`, "Released manually before expiry. Slot was already booked by another regular class, so it was not reopened.");
+        persistState();
+        syncRecordTransactionAsync({ teachers: [teacher], activityLogs: [activityLog] }, "Regular slot reservation released", { operation: "regular_slot_reservation_release" });
+        setStatus(`Reservation for ${name} was released. ${teacher.name}'s ${reservation.day} ${timeLabel(reservation.time)} slot is already booked by ${conflictingBooking.studentName || "another student"}, so it was left as-is (not reopened).`, "warn");
+        return;
+      }
       const restored = (teacher.regularSlots || []).find(slot =>
         !slot.locked && normalizeAvailabilityStatus(slot) === "open" && slot.day === reservation.day && slot.time === reservation.time && slot.startDate && slot.startDate > today
       );
