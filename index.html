@@ -13049,18 +13049,29 @@
       } else {
         state.users.push(payload);
       }
-      logAction(existing ? "User Updated" : "User Created", payload.name || payload.email, before, cloneForUndo(payload), `Role: ${payload.role}`);
+      const activityLog = logAction(existing ? "User Updated" : "User Created", payload.name || payload.email, before, cloneForUndo(payload), `Role: ${payload.role}`);
       $("userId").value = id;
       clearUserFormDirty();
       save(false);
-      const synced = await autoPushIfConfigured(existing ? "User updated." : "User created.");
+      // Users/roles used to ride on the full app-state save (autoPushIfConfigured), which round-trips
+      // the entire multi-MB app state. As that state has grown, that path got slow enough to routinely
+      // time out / hang ("Retry Save" that never succeeds) even with nobody else on the system at the
+      // time. Sync just this one user record through the lightweight record-transaction endpoint
+      // instead, the same way bookings and recurring assignments already do.
+      let synced = false;
+      try {
+        await syncRecordTransaction({ users: [payload], activityLogs: [activityLog] }, existing ? "User updated" : "User created", { operation: existing ? "user_update" : "user_create" });
+        synced = true;
+      } catch (error) {
+        markTeacherViewOutdated(`${existing ? "User update" : "User creation"} saved in this browser only. Not synced yet: ${error.message}`);
+      }
       if (dirtyForms.users && currentUserFormDraft) restoreUserFormDraft(currentUserFormDraft);
       else selectUserForEdit(id);
       if (!dirtyForms.users) $("userProfileCard")?.classList.add("hide");
       setStatus(synced ? (existing ? "User updated and synced to Neon." : "User created and synced to Neon.") : (existing ? "User updated locally. Neon sync is still pending." : "User created locally. Neon sync is still pending."), synced ? "success" : "warn");
     }
 
-    function disableSelectedUser() {
+    async function disableSelectedUser() {
       if (currentUser()?.role !== "master_admin") return denyPermission("Only master_admin can manage users.");
       const user = (state.users || []).find(item => item.id === $("userId").value);
       if (!user) return alert("Choose a user first.");
@@ -13070,12 +13081,20 @@
       const before = cloneForUndo(user);
       user.status = "disabled";
       user.updatedAt = new Date().toISOString();
-      logAction("User Disabled", user.name || user.email, before, cloneForUndo(user), "User status changed to disabled.");
+      const activityLog = logAction("User Disabled", user.name || user.email, before, cloneForUndo(user), "User status changed to disabled.");
       save(false);
-      setStatus("User disabled.");
+      // See saveUserProfile(): user records sync through the lightweight record-transaction
+      // endpoint instead of the full app-state save, which is too large/slow for this.
+      try {
+        await syncRecordTransaction({ users: [user], activityLogs: [activityLog] }, "User disabled", { operation: "user_disable" });
+        setStatus("User disabled and synced to Neon.");
+      } catch (error) {
+        markTeacherViewOutdated(`User disable saved in this browser only. Not synced yet: ${error.message}`);
+        setStatus("User disabled locally. Neon sync is still pending.", "warn");
+      }
     }
 
-    function resetSelectedUserPassword() {
+    async function resetSelectedUserPassword() {
       if (currentUser()?.role !== "master_admin") return denyPermission("Only master_admin can manage users.");
       const user = (state.users || []).find(item => item.id === $("userId").value);
       if (!user) return alert("Choose a user first.");
@@ -13085,12 +13104,18 @@
       user.password = password;
       user.updatedAt = new Date().toISOString();
       $("userPassword").value = password;
-      logAction("Password Reset", user.name || user.email, before, cloneForUndo({ ...user, password: "[reset]" }), "Master admin reset password.");
+      const activityLog = logAction("Password Reset", user.name || user.email, before, cloneForUndo({ ...user, password: "[reset]" }), "Master admin reset password.");
       save(false);
-      setStatus("Password reset.");
+      try {
+        await syncRecordTransaction({ users: [user], activityLogs: [activityLog] }, "Password reset", { operation: "user_password_reset" });
+        setStatus("Password reset and synced to Neon.");
+      } catch (error) {
+        markTeacherViewOutdated(`Password reset saved in this browser only. Not synced yet: ${error.message}`);
+        setStatus("Password reset locally. Neon sync is still pending.", "warn");
+      }
     }
 
-    function saveRoleProfile() {
+    async function saveRoleProfile() {
       if (currentUser()?.role !== "master_admin") return denyPermission("Only master_admin can manage roles.");
       const id = $("roleId").value || uid("role");
       const name = $("roleName").value.trim();
@@ -13110,10 +13135,17 @@
       }
       if (existing) Object.assign(existing, payload);
       else state.roles.push({ ...payload, createdAt: new Date().toISOString() });
-      logAction(existing ? "Role Changed" : "Role Created", payload.name, before, cloneForUndo(payload), "Tab permission changed.");
+      const activityLog = logAction(existing ? "Role Changed" : "Role Created", payload.name, before, cloneForUndo(payload), "Tab permission changed.");
       save(false);
       selectRoleForEdit(payload.id);
-      setStatus(existing ? "Role updated." : "Role created.");
+      // See saveUserProfile(): roles sync through the lightweight record-transaction endpoint too.
+      try {
+        await syncRecordTransaction({ roles: [payload], activityLogs: [activityLog] }, existing ? "Role updated" : "Role created", { operation: existing ? "role_update" : "role_create" });
+        setStatus(existing ? "Role updated and synced to Neon." : "Role created and synced to Neon.");
+      } catch (error) {
+        markTeacherViewOutdated(`${existing ? "Role update" : "Role creation"} saved in this browser only. Not synced yet: ${error.message}`);
+        setStatus(existing ? "Role updated locally. Neon sync is still pending." : "Role created locally. Neon sync is still pending.", "warn");
+      }
     }
 
     function setAutoPager(anchorId, html) {
@@ -15335,7 +15367,9 @@
       "teacherLeaves",
       "publicHolidays",
       "teacherStudentNotes",
-      "teacherFeedback"
+      "teacherFeedback",
+      "users",
+      "roles"
     ]);
 
     function recordTransactionRecords(input = {}) {
