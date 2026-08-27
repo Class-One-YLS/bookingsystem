@@ -13052,12 +13052,16 @@
       const activityLog = logAction(existing ? "User Updated" : "User Created", payload.name || payload.email, before, cloneForUndo(payload), `Role: ${payload.role}`);
       $("userId").value = id;
       clearUserFormDirty();
-      save(false);
       // Users/roles used to ride on the full app-state save (autoPushIfConfigured), which round-trips
       // the entire multi-MB app state. As that state has grown, that path got slow enough to routinely
       // time out / hang ("Retry Save" that never succeeds) even with nobody else on the system at the
       // time. Sync just this one user record through the lightweight record-transaction endpoint
       // instead, the same way bookings and recurring assignments already do.
+      // `{ dirty: false }` is important here: save()'s default path also flags the whole app state as
+      // dirty and re-schedules that same old full-state autopush in the background -- so without this,
+      // the record-transaction sync below could succeed while a redundant full-state save still hangs
+      // and keeps showing "Retry Save" / "Still syncing" as if nothing had synced.
+      save(false, { dirty: false });
       let synced = false;
       try {
         await syncRecordTransaction({ users: [payload], activityLogs: [activityLog] }, existing ? "User updated" : "User created", { operation: existing ? "user_update" : "user_create" });
@@ -13082,9 +13086,8 @@
       user.status = "disabled";
       user.updatedAt = new Date().toISOString();
       const activityLog = logAction("User Disabled", user.name || user.email, before, cloneForUndo(user), "User status changed to disabled.");
-      save(false);
-      // See saveUserProfile(): user records sync through the lightweight record-transaction
-      // endpoint instead of the full app-state save, which is too large/slow for this.
+      // See saveUserProfile() for why { dirty: false } matters here.
+      save(false, { dirty: false });
       try {
         await syncRecordTransaction({ users: [user], activityLogs: [activityLog] }, "User disabled", { operation: "user_disable" });
         setStatus("User disabled and synced to Neon.");
@@ -13105,7 +13108,8 @@
       user.updatedAt = new Date().toISOString();
       $("userPassword").value = password;
       const activityLog = logAction("Password Reset", user.name || user.email, before, cloneForUndo({ ...user, password: "[reset]" }), "Master admin reset password.");
-      save(false);
+      // See saveUserProfile() for why { dirty: false } matters here.
+      save(false, { dirty: false });
       try {
         await syncRecordTransaction({ users: [user], activityLogs: [activityLog] }, "Password reset", { operation: "user_password_reset" });
         setStatus("Password reset and synced to Neon.");
@@ -13136,7 +13140,8 @@
       if (existing) Object.assign(existing, payload);
       else state.roles.push({ ...payload, createdAt: new Date().toISOString() });
       const activityLog = logAction(existing ? "Role Changed" : "Role Created", payload.name, before, cloneForUndo(payload), "Tab permission changed.");
-      save(false);
+      // See saveUserProfile() for why { dirty: false } matters here.
+      save(false, { dirty: false });
       selectRoleForEdit(payload.id);
       // See saveUserProfile(): roles sync through the lightweight record-transaction endpoint too.
       try {
