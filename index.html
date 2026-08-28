@@ -15514,43 +15514,51 @@
     }
 
     async function loadProductionNeonState(label = "Production Neon load") {
+      // Chunked download (via /api/state-chunk) is tried FIRST. The composed app state is now tens
+      // of MB, and /api/state-chunk's manifest/chunk responses are backed by a per-version server
+      // cache (see api/state-chunk.js), so repeated loads of the same version are fast. The plain
+      // /api/state GET has no such cache and re-serializes the *entire* state as one response on
+      // every call -- for a state this size that single request can take long enough that it just
+      // sits there with no error until the sync's own timeout gives up, which is exactly what was
+      // reported 2026-08-28 (Retry Save waiting minutes with no error text). Chunking first avoids
+      // that stall; the plain /api/state GET is kept only as a fallback if chunking itself fails.
       const stateKey = PRODUCTION_STATE_KEY;
       let stateError = null;
       try {
-        const raw = await fetchNeonJson(
-          `/api/state?key=${encodeURIComponent(stateKey)}`,
-          { method: "GET" },
-          label,
-          SYNC_READ_TIMEOUT_MS
-        );
-        if (!raw?.data) throw new Error("Production /api/state response did not include payload.data.");
-        const validated = validatedProductionPayload(raw, "production /api/state");
+        const manifest = await fetchNeonManifest(`${label} chunked`, SYNC_READ_TIMEOUT_MS, stateKey);
+        if (manifest.empty || !Number(manifest.totalChunks || 0)) throw new Error("Production Neon state is empty.");
+        const chunkPayload = await downloadNeonChunks(manifest, `${label} chunked`, stateKey);
+        const validated = validatedProductionPayload(chunkPayload, "production state-chunk");
         return {
           ...validated,
-          manifest: {
-            version: Number(raw.version || 0),
-            updatedAt: raw.updatedAt || "",
-            updatedBy: raw.updatedBy || null,
-            composed: raw.composed === true
-          },
-          raw,
-          dataPathUsed: "payload.data",
+          manifest,
+          raw: chunkPayload,
+          dataPathUsed: "state-chunk",
           fallbackUsed: false
         };
       } catch (error) {
         stateError = error;
-        logProductionNeonLoad("primary /api/state load failed", { message: error.message });
+        logProductionNeonLoad("chunked /api/state-chunk load failed", { message: error.message });
       }
 
-      const manifest = await fetchNeonManifest(`${label} chunk fallback manifest`, SYNC_READ_TIMEOUT_MS, stateKey);
-      if (manifest.empty || !Number(manifest.totalChunks || 0)) throw stateError || new Error("Production Neon state is empty.");
-      const chunkPayload = await downloadNeonChunks(manifest, `${label} chunk fallback`, stateKey);
-      const validated = validatedProductionPayload(chunkPayload, "production state-chunk fallback");
+      const raw = await fetchNeonJson(
+        `/api/state?key=${encodeURIComponent(stateKey)}`,
+        { method: "GET" },
+        `${label} full-state fallback`,
+        SYNC_READ_TIMEOUT_MS
+      );
+      if (!raw?.data) throw stateError || new Error("Production /api/state response did not include payload.data.");
+      const validated = validatedProductionPayload(raw, "production /api/state fallback");
       return {
         ...validated,
-        manifest,
-        raw: chunkPayload,
-        dataPathUsed: "state-chunk",
+        manifest: {
+          version: Number(raw.version || 0),
+          updatedAt: raw.updatedAt || "",
+          updatedBy: raw.updatedBy || null,
+          composed: raw.composed === true
+        },
+        raw,
+        dataPathUsed: "payload.data",
         fallbackUsed: true
       };
     }
@@ -16373,7 +16381,20 @@
         booking.completedAt = booking.completedAt || now;
         booking.finalizedAt = booking.finalizedAt || now;
       }
-      if (classStatus === "deleted") booking.deletedAt = booking.deletedAt || now;
+      if (classStatus === "deleted") {
+        booking.deletedAt = booking.deletedAt || now;
+        // A booking that was ever genuinely "booked" before being deleted (e.g. a future occurrence
+        // of a regular class that later got its last-class-date set, or was explicitly deleted) can
+        // be carrying a stale booking.resolutionStatus = "booked" snapshot from before the deletion.
+        // occurrenceResolutionStatus() falls back to that field whenever the booking's own
+        // status/outcome say "deleted", so an un-cleared "booked" snapshot makes the booking look
+        // resolvable as "booked" again to anything that reads it later -- including
+        // bookingCanAutoComplete(), which then lets "Finalize Passed Classes" silently resurrect a
+        // deleted class as "completed" once its time has passed. Clear it here so a deleted booking
+        // can never be read back as still-booked. Confirmed against 12 real production bookings that
+        // got resurrected this way (2026-08-27 finalize run, plus an earlier 2026-07-07 case).
+        booking.resolutionStatus = "";
+      }
       return booking;
     }
 
