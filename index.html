@@ -8332,6 +8332,10 @@
     }
 
     async function setTeacherOverviewLink(teacherId, regenerate = false) {
+      // Used to sync the new token via autoPushIfConfigured() -- the full app-state autopush -- which
+      // is why the UI used to warn "this can take up to 90 seconds." Routed through the lightweight
+      // record-transaction endpoint instead (same fix already applied to Users/Roles), so generating a
+      // teacher's link only ever has to move that one teacher record.
       const teacher = teacherById(teacherId);
       if (!teacher) return alert("Teacher not found.");
       if (teacherLinkSyncing.has(teacherId)) return;
@@ -8342,29 +8346,28 @@
       teacherLinkSyncing.add(teacherId);
       teacher.viewToken = randomShareToken();
       teacher.viewTokenUpdatedAt = new Date().toISOString();
-      save(false);
+      save(false, { dirty: false });
       renderTeacherOverviewLink(teacher);
       renderTeachers();
       setStatus(`Generating ${teacher.name}'s teacher view link and syncing it to the database...`);
-      const synced = await autoPushIfConfigured("Teacher view link generated.");
-      teacherLinkSyncing.delete(teacherId);
-      if (!synced) {
+      const activityLog = logAction(regenerate ? "Teacher View Link Regenerated" : "Teacher View Link Generated", teacher.name, regenerate ? "Previous link invalidated" : "No link", "New permanent link", "Generated and synced from Teacher Overview.");
+      try {
+        await syncRecordTransaction({ teachers: [teacher], activityLogs: [activityLog] }, "Teacher view link generated", { operation: "teacher_view_link_generate" });
+        teacherLinkFailed.delete(teacherId);
+        renderTeacherOverviewLink(teacher);
+        renderTeachers();
+        setStatus(`Teacher view link for ${teacher.name} is ready and synced.`, "success");
+      } catch (error) {
         teacher.viewToken = previousToken;
         teacher.viewTokenUpdatedAt = previousUpdatedAt;
         teacherLinkFailed.add(teacherId);
-        save(false);
+        save(false, { dirty: false });
         renderTeacherOverviewLink(teacher);
         renderTeachers();
-        setStatus("Teacher view link was not generated because database sync failed. Click Retry Generate after the connection is available.", "error");
-        return;
+        setStatus(`Teacher view link was not generated because sync failed: ${error.message}. Click Retry Generate.`, "error");
+      } finally {
+        teacherLinkSyncing.delete(teacherId);
       }
-      teacherLinkFailed.delete(teacherId);
-      logAction(regenerate ? "Teacher View Link Regenerated" : "Teacher View Link Generated", teacher.name, regenerate ? "Previous link invalidated" : "No link", "New permanent link", "Generated and synced from Teacher Overview.");
-      save(false);
-      await autoPushIfConfigured("Teacher view link audit saved.");
-      renderTeacherOverviewLink(teacher);
-      renderTeachers();
-      setStatus(`Teacher view link for ${teacher.name} is ready and synced.`);
     }
 
     async function copyOverviewTeacherLink(teacherId) {
@@ -9770,7 +9773,55 @@
       if (validation.conflicts.length) return alert(conflictListMessage(validation.conflicts, "open this slot"));
       if (mode === "permanent") {
         const conflict = permanentBookingConflict(data.teacherId, data.day, data.time, startDate);
-        if (conflict) return alert(`Cannot open this slot permanently. ${conflict}`);
+        if (conflict) {
+          // If the only thing "conflicting" is the teacher's own still-active regular class (not a
+          // different booking), the real fix is to remove whatever OFF override is currently masking
+          // it, not to layer another "open" record on top of a slot that already has a real class.
+          // That's what was permanently stuck for Tan Qian Yu / Adelyneshia Monday 20:30 (reported
+          // 2026-08-28): her regular class was valid the whole time, an unrelated OFF override
+          // (created moments after her class was booked back on 2026-08-18) just kept winning the
+          // display, and "Confirm Open Slot" could never get past this exact conflict check to fix it.
+          const targetTime = normalizeTimeValue(data.time) || data.time;
+          const ongoingRegularClass = activeSlotRecords(teacher.regularSlots || []).find(slot =>
+            slot.locked && slot.day === data.day &&
+            (normalizeTimeValue(slot.time) || slot.time) === targetTime &&
+            (!dateOnly(slot.endDate) || dateOnly(slot.endDate) >= startDate)
+          );
+          const maskingOffOverrides = ongoingRegularClass
+            ? activeSlotRecords(teacher.overrideSlots || []).filter(slot =>
+                slot.unavailable && !slot.date && slot.day === data.day &&
+                (normalizeTimeValue(slot.time) || slot.time) === targetTime &&
+                (!dateOnly(slot.endDate) || dateOnly(slot.endDate) >= startDate)
+              )
+            : [];
+          if (!ongoingRegularClass || !maskingOffOverrides.length) {
+            return alert(`Cannot open this slot permanently. ${conflict}`);
+          }
+          const studentLabel = ongoingRegularClass.studentName || "the existing regular class";
+          if (!confirm(`${teacher.name}'s ${data.day} ${timeLabel(data.time)} already has an active regular class (${studentLabel}) -- an OFF period was just hiding it.\n\nRemove that OFF period and restore ${studentLabel}'s class instead of opening a new slot?`)) return;
+          const now = new Date().toISOString();
+          const restoreBefore = teacherLogSummary(teacher);
+          const restoreUndoBefore = snapshotCollections({ teachers: [teacher.id] });
+          maskingOffOverrides.forEach(slot => markSlotRemoved(slot, now, "Stray OFF override removed; restored existing regular class."));
+          teacher.updatedAt = now;
+          const restoreActivityLog = logAction("OFF Override Removed", teacher.name, restoreBefore, teacherLogSummary(teacher), `${data.day} ${timeLabel(data.time)} | Restored ${studentLabel}'s regular class instead of opening a new slot`, {
+            undo: makeUndoSnapshot(restoreUndoBefore, snapshotCollections({ teachers: [teacher.id] }))
+          });
+          $("openSlotModal").classList.add("hide");
+          renderSchedule();
+          renderTeacherOverview();
+          renderActivityLog();
+          pendingOpenAndBook = false;
+          try {
+            await syncRecordTransaction({ teachers: [teacher], activityLogs: [restoreActivityLog] }, "OFF override removed", { operation: "availability_restore_regular" });
+            setStatus(`${studentLabel}'s class restored.`, "success");
+          } catch (error) {
+            persistState();
+            markTeacherViewOutdated("OFF override removal saved in this browser only. Not synced to Teacher View yet.");
+            setStatus(`Saved locally. Sync pending: ${error.message}`, "warn");
+          }
+          return;
+        }
       }
       const before = teacherLogSummary(teacher);
       const undoBefore = snapshotCollections({ teachers: [teacher.id] });
@@ -13827,13 +13878,26 @@
       teacher.viewTokenUpdatedAt = new Date().toISOString();
       $("teacherId").value = teacher.id;
       $("teacherViewToken").value = token;
-      logAction("Teacher View Link Generated", teacher.name, before, teacherLogSummary(teacher), "Read-only teacher timetable link generated.");
-      save(false);
+      const activityLog = logAction("Teacher View Link Generated", teacher.name, before, teacherLogSummary(teacher), "Read-only teacher timetable link generated.");
+      save(false, { dirty: false });
+      return activityLog;
     }
 
-    async function pushTeacherViewTokenWithRetry(teacherId, teacherName, token) {
-      const synced = await autoPushIfConfigured("Teacher timetable view link generated.");
-      if (!synced) throw new Error("Teacher link is saved locally but Neon has newer data. Refresh the page to merge, then generate the link again.");
+    // Used to sync via autoPushIfConfigured() -- the full app-state autopush -- which is why the
+    // caller's status message used to warn "this can take up to 90 seconds." Routed through the
+    // lightweight record-transaction endpoint instead (same fix already applied to Users/Roles and
+    // setTeacherOverviewLink()), so generating a link only ever has to move that one teacher record.
+    async function pushTeacherViewTokenWithRetry(teacherId, teacherName, token, activityLog = null) {
+      const teacher = teacherById(teacherId);
+      if (!teacher) throw new Error("Teacher not found.");
+      try {
+        await syncRecordTransaction({
+          teachers: [teacher],
+          activityLogs: activityLog ? [activityLog] : []
+        }, "Teacher view link generated", { operation: "teacher_view_link_generate" });
+      } catch (error) {
+        throw new Error(`Teacher link is saved locally but did not sync: ${error.message}. Generate the link again to retry.`);
+      }
       return teacherById(teacherId) || state.teachers.find(item => teacherNameKey(item.name) === teacherNameKey(teacherName));
     }
 
@@ -13847,12 +13911,15 @@
       copyBtn.disabled = true;
       generateBtn.textContent = "Syncing...";
       $("teacherViewLink").value = "";
-      setStatus("Generating teacher timetable view link... syncing to Neon. Please wait, this can take up to 90 seconds.", "success");
+      setStatus("Generating teacher timetable view link... syncing to Neon.", "success");
       try {
         const token = randomShareToken();
-        applyTeacherViewToken(teacher, token);
-        const syncedTeacher = await pushTeacherViewTokenWithRetry(teacher.id, teacher.name, token);
+        const activityLog = applyTeacherViewToken(teacher, token);
+        const syncedTeacher = await pushTeacherViewTokenWithRetry(teacher.id, teacher.name, token, activityLog);
         updateTeacherViewLinkField(syncedTeacher || teacher);
+        setStatus("Teacher timetable view link generated and synced.", "success");
+      } catch (error) {
+        setStatus(`Teacher timetable view link generation failed: ${error.message}`, "error");
       } finally {
         generateBtn.disabled = false;
         copyBtn.disabled = false;
