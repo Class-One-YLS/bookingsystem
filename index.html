@@ -100,6 +100,14 @@
       min-height: 40px;
     }
     input:disabled, select:disabled, textarea:disabled { background: #f4f8f6; color: #7a8797; cursor: not-allowed; }
+    /* The generic input rule above (width:100%; min-height:40px) is meant for text/date/etc. fields,
+       but with no [type] exclusion it also stretched every checkbox into a full-width bar, pushing
+       its label text onto the next line instead of sitting beside it (reported 2026-08-28: "Teachers
+       Teaching as Usual" list in the Public Holiday form). A handful of checkbox lists had already
+       worked around this with an inline style (student/teacher subject pills, weekday pills); this
+       covers every checkbox -- including the ones that hadn't been patched yet, like the public
+       holiday teacher-exemption and replacement-credit checklists -- in one place. */
+    input[type="checkbox"] { width: auto; min-height: 0; flex: 0 0 auto; }
     .inline-check { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); font-size: 12px; font-weight: 800; text-transform: none; margin: 0 0 8px; }
     .inline-check input { width: auto; min-height: 0; }
     .field-error { margin-top: 8px; color: #b42318; font-size: 12px; font-weight: 800; }
