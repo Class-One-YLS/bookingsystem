@@ -1242,6 +1242,7 @@
               <button class="btn ghost small" id="exportActivityCsvBtn">Export Excel</button>
               <button class="btn ghost small" id="exportActivityPdfBtn">Export PDF</button>
               <button class="btn ghost small" id="cleanUpUndoHistoryBtn" title="Removes the heavy 'undo' snapshot from old activity log entries (beyond the most recent 200). Their text history is kept; only very recent entries can still be undone.">Clean Up Old Undo Data</button>
+              <button class="btn danger small" id="pruneActivityLogBtn" title="Permanently deletes activity log entries older than the rolling retention window. This cannot be undone.">Delete Log Older Than 60 Days</button>
             </div>
           </div>
           <div class="grid four">
@@ -11511,6 +11512,49 @@
       }
     }
 
+    const ACTIVITY_LOG_HARD_DELETE_RETENTION_DAYS = 60;
+
+    // Real, permanent deletion (unlike cleanUpActivityLogUndoHistory(), which only strips the undo
+    // field off records it keeps). Requested 2026-08-29: keep a rolling 60-day activity log, delete
+    // anything older outright. This has to remove rows from BOTH activity_events_v2 (the per-record
+    // table most write paths insert into now) and the legacy app_state.data.activityLogs blob --
+    // loadComposedState() merges activity_events_v2 back onto the legacy blob on every read, so
+    // deleting from only one side would just have the entries reappear. The dedicated
+    // /api/activity-logs/prune endpoint does both atomically in one transaction. Runs under the
+    // calling admin's own session -- this tool does not delete data on its own initiative.
+    async function pruneOldActivityLogHistory() {
+      if (!requireActionPermission("edit")) return;
+      const cutoffDate = dateOffsetISO(todayISO(), -ACTIVITY_LOG_HARD_DELETE_RETENTION_DAYS);
+      const logs = state.activityLogs || [];
+      const toDelete = logs.filter(log => dateOnly(log.createdAt) && dateOnly(log.createdAt) < cutoffDate);
+      if (!toDelete.length) return setStatus(`No activity log entries older than ${formatDateFromAny(cutoffDate)} to delete.`);
+      if (!confirm(`Permanently delete ${toDelete.length} activity log entries older than ${formatDateFromAny(cutoffDate)} (before the last ${ACTIVITY_LOG_HARD_DELETE_RETENTION_DAYS} days)?\n\nThis cannot be undone. These entries will be gone completely, not just hidden -- including their text history, not only the undo snapshot.`)) return;
+      const pruneBtn = $("pruneActivityLogBtn");
+      if (pruneBtn) { pruneBtn.disabled = true; pruneBtn.textContent = "Deleting..."; }
+      try {
+        const response = await fetchNeonJson("/api/activity-logs/prune", {
+          method: "POST",
+          body: JSON.stringify({
+            key: neonStateKey(),
+            beforeDate: cutoffDate,
+            updatedBy: `${currentUser()?.name || safeStorageGet("classOneStaffName") || "Class One Admin"} · ${currentDeviceId().slice(0, 12)}`
+          })
+        }, "Delete old activity log history", SYNC_SAVE_TIMEOUT_MS);
+        state.activityLogs = logs.filter(log => !dateOnly(log.createdAt) || dateOnly(log.createdAt) >= cutoffDate);
+        if (response.version) {
+          state.settings.neonVersion = Number(response.version);
+          lastObservedNeonVersion = state.settings.neonVersion;
+        }
+        persistState();
+        renderActivityLog();
+        setStatus(`Deleted ${response.legacyRemovedCount ?? toDelete.length} activity log entries older than ${formatDateFromAny(cutoffDate)}.`, "success");
+      } catch (error) {
+        setStatus(`Delete failed: ${error.message}`, "error");
+      } finally {
+        if (pruneBtn) { pruneBtn.disabled = false; pruneBtn.textContent = "Delete Log Older Than 60 Days"; }
+      }
+    }
+
     function renderActivityLog() {
       const currentType = $("activityFilterType")?.value || "all";
       fillSelect($("activityFilterType"), activityTypes(), "All Types");
@@ -19204,6 +19248,9 @@
     };
     $("cleanUpUndoHistoryBtn").onclick = () => animateClick($("cleanUpUndoHistoryBtn"), cleanUpActivityLogUndoHistory).catch(err => {
       setStatus(`Cleanup failed: ${err.message}`, "error");
+    });
+    $("pruneActivityLogBtn").onclick = () => animateClick($("pruneActivityLogBtn"), pruneOldActivityLogHistory).catch(err => {
+      setStatus(`Delete failed: ${err.message}`, "error");
     });
     $("exportActivityCsvBtn").onclick = () => downloadCsv("class-one-activity-log.csv", ["No.", "Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], numbered(activityExportRows()));
     $("exportActivityPdfBtn").onclick = () => openPrintReport("Activity Log", ["No.", "Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], numbered(activityExportRows()));
