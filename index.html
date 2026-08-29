@@ -1241,6 +1241,7 @@
             <div class="row">
               <button class="btn ghost small" id="exportActivityCsvBtn">Export Excel</button>
               <button class="btn ghost small" id="exportActivityPdfBtn">Export PDF</button>
+              <button class="btn ghost small" id="cleanUpUndoHistoryBtn" title="Removes the heavy 'undo' snapshot from old activity log entries (beyond the most recent 200). Their text history is kept; only very recent entries can still be undone.">Clean Up Old Undo Data</button>
             </div>
           </div>
           <div class="grid four">
@@ -4321,6 +4322,19 @@
       return /sync|import|reset|pull|push|neon|google sheet/i.test(String(type || ""));
     }
 
+    // Undo snapshots (options.undo) copy full affected records -- a teacher's entire
+    // regularSlots/overrideSlots array, a student's full profile, etc. -- into the log entry so
+    // "Undo" can restore them later. That's the right tradeoff for recent entries, but nobody undoes
+    // something from weeks ago, and these snapshots never expired: by 2026-08-28 they made up ~53MB
+    // of a ~63MB app state (activityLogs was 87% of the whole payload; stripping undo cut the same
+    // 2500 entries from 54.76MB to 1.08MB). The existing compactRemoteActivityLogs()/
+    // MAX_REMOTE_UNDO_SNAPSHOTS mechanism was meant to cap this, but MAX_REMOTE_UNDO_SNAPSHOTS (2500)
+    // equals the activity log cap itself, so in practice it never actually excluded anything -- and
+    // it only ever applied to the older full-app-state save path, not the record-transaction delta
+    // sync most actions use now. Capping retention here, at the single place every log entry is
+    // created, fixes it for both paths at once.
+    const UNDO_SNAPSHOT_RETENTION_COUNT = 200;
+
     function logAction(type, target, beforeValue = "", afterValue = "", notes = "", options = {}) {
       state.activityLogs ||= [];
       const undo = options.undo && !undoBlockedActionType(type) ? cloneForUndo(options.undo) : null;
@@ -4337,6 +4351,9 @@
       };
       state.activityLogs.unshift(entry);
       state.activityLogs = state.activityLogs.slice(0, 2500);
+      for (let index = UNDO_SNAPSHOT_RETENTION_COUNT; index < state.activityLogs.length; index += 1) {
+        if (state.activityLogs[index].undo) delete state.activityLogs[index].undo;
+      }
       return entry;
     }
 
@@ -11445,6 +11462,53 @@
       renderActivityLog();
       scheduleAutoPush();
       setStatus("Undo completed and queued for Neon sync.");
+    }
+
+    // One-time cleanup for the historical bloat that logAction()'s UNDO_SNAPSHOT_RETENTION_COUNT
+    // now prevents going forward: entries created before that cap existed can still be carrying a
+    // full undo snapshot no matter how old they are. This strips undo from everything past the same
+    // retention window and pushes the change through /api/state-patch (the one endpoint that can
+    // actually overwrite an existing activity log record -- the newer record-transaction endpoint's
+    // activity_events_v2 table is insert-once). Text history (type/target/before/after/notes) is
+    // untouched; only the heavy snapshot is removed, and only for entries already too old to undo.
+    async function cleanUpActivityLogUndoHistory() {
+      if (!requireActionPermission("edit")) return;
+      const logs = state.activityLogs || [];
+      const now = new Date().toISOString();
+      const trimmed = [];
+      logs.forEach((log, index) => {
+        if (index >= UNDO_SNAPSHOT_RETENTION_COUNT && log.undo) {
+          const { undo, ...rest } = log;
+          trimmed.push({ ...rest, undo: null, updatedAt: now });
+        }
+      });
+      if (!trimmed.length) return setStatus("No old undo snapshots to clean up.");
+      const beforeBytes = jsonByteSize(JSON.stringify(logs));
+      if (!confirm(`Remove the old "undo" snapshot data from ${trimmed.length} activity log entries (older than the most recent ${UNDO_SNAPSHOT_RETENTION_COUNT})?\n\nTheir date/user/action/notes text stays exactly as-is -- only the heavy snapshot used for Undo is removed, and those specific entries already can't be undone anyway. This is expected to shrink the activity log from about ${(beforeBytes / 1024 / 1024).toFixed(1)} MB.`)) return;
+      const cleanupBtn = $("cleanUpUndoHistoryBtn");
+      if (cleanupBtn) { cleanupBtn.disabled = true; cleanupBtn.textContent = "Cleaning up..."; }
+      try {
+        trimmed.forEach(entry => {
+          const target = logs.find(item => item.id === entry.id);
+          if (target) { delete target.undo; target.updatedAt = now; }
+        });
+        persistState();
+        renderActivityLog();
+        const patch = {
+          format: "classone_record_patch_v1",
+          baseVersion: Number(state.settings?.neonVersion || 0),
+          deviceId: currentDeviceId(),
+          changes: { activityLogs: trimmed }
+        };
+        const afterBytes = jsonByteSize(JSON.stringify(state.activityLogs || []));
+        await uploadPatchToNeon(patch, patch.baseVersion, "Activity log undo cleanup");
+        setStatus(`Cleaned up ${trimmed.length} old activity log entries (${(beforeBytes / 1024 / 1024).toFixed(1)} MB -> ${(afterBytes / 1024 / 1024).toFixed(1)} MB) and synced.`, "success");
+      } catch (error) {
+        markTeacherViewOutdated(`Activity log cleanup saved in this browser only. Not synced yet: ${error.message}`);
+        setStatus(`Cleanup saved locally. Sync pending: ${error.message}`, "warn");
+      } finally {
+        if (cleanupBtn) { cleanupBtn.disabled = false; cleanupBtn.textContent = "Clean Up Old Undo Data"; }
+      }
     }
 
     function renderActivityLog() {
@@ -19138,6 +19202,9 @@
       $("activityToDate").value = "";
       renderActivityLog();
     };
+    $("cleanUpUndoHistoryBtn").onclick = () => animateClick($("cleanUpUndoHistoryBtn"), cleanUpActivityLogUndoHistory).catch(err => {
+      setStatus(`Cleanup failed: ${err.message}`, "error");
+    });
     $("exportActivityCsvBtn").onclick = () => downloadCsv("class-one-activity-log.csv", ["No.", "Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], numbered(activityExportRows()));
     $("exportActivityPdfBtn").onclick = () => openPrintReport("Activity Log", ["No.", "Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], numbered(activityExportRows()));
     $("currentUserSelect").onchange = () => {
