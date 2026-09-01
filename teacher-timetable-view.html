@@ -1513,6 +1513,18 @@
       return { from: localISO(monthStart), to: localISO(toDate), month, year };
     }
 
+    // selectedMonthRange()'s "from" is deliberately rewound to the Monday of the week containing day
+    // 1, so the weekly calendar grid can show full weeks -- for a month starting on, say, a Saturday
+    // (e.g. 2026-08-01), that pulls in several days from the END OF THE PREVIOUS MONTH. That's fine
+    // for the grid, but anything meant to be exactly "this calendar month" for incentive-claim
+    // purposes (the class list, the cancelled/leave list, the PDF export) needs the real 1st of the
+    // month instead (reported 2026-09-01: Chei Leng's report included late-July classes).
+    // monthlyTeachingSummary() already computed this correctly on its own; this gives the other call
+    // sites the same exact boundary without repeating the calculation.
+    function exactMonthRange(month, year) {
+      return { from: localISO(new Date(year, month, 1)), to: localISO(new Date(year, month + 1, 0)) };
+    }
+
     function teacherCacheKey(year, month) {
       const teacherId = params.get("teacherId") || params.get("teacher") || "";
       return `${teacherId}|${year}|${String(month).padStart(2, "0")}`;
@@ -2399,9 +2411,9 @@
     }
 
     function renderMonthList() {
-      const { from, month, year } = selectedMonthRange();
-      const monthEnd = localISO(new Date(year, month + 1, 0));
-      const entries = classEntries(from, monthEnd);
+      const { month, year } = selectedMonthRange();
+      const { from: monthStart, to: monthEnd } = exactMonthRange(month, year);
+      const entries = classEntries(monthStart, monthEnd);
       monthListPage = clampPage(monthListPage, entries.length);
       const monthPageData = pageSlice(entries, monthListPage);
       monthListPage = monthPageData.page;
@@ -2428,9 +2440,9 @@
     }
 
     function renderLeaveList() {
-      const { from, month, year } = selectedMonthRange();
-      const monthEnd = localISO(new Date(year, month + 1, 0));
-      const leaveEntries = classEntries(from, monthEnd)
+      const { month, year } = selectedMonthRange();
+      const { from: monthStart, to: monthEnd } = exactMonthRange(month, year);
+      const leaveEntries = classEntries(monthStart, monthEnd)
         .filter(entry => CANCELLED.includes(entryMeta(entry).status) || entryMeta(entry).status === "student_not_show");
       leaveListPage = clampPage(leaveListPage, leaveEntries.length);
       const leavePageData = pageSlice(leaveEntries, leaveListPage);
@@ -2718,9 +2730,9 @@
     }
 
     function selectedIncomeReportEntries() {
-      const { from, month, year } = selectedMonthRange();
-      const monthEnd = localISO(new Date(year, month + 1, 0));
-      return classEntries(from, monthEnd).filter(entry => incomePayForEntry(entry) > 0);
+      const { month, year } = selectedMonthRange();
+      const { from: monthStart, to: monthEnd } = exactMonthRange(month, year);
+      return classEntries(monthStart, monthEnd).filter(entry => incomePayForEntry(entry) > 0);
     }
 
     function exportIncomePdf() {
