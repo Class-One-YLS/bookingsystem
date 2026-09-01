@@ -10417,7 +10417,17 @@
             repaired += 1;
             return;
           }
-          const needsRepair = !teacherSlot.locked || !teacherSlot.studentName || teacherSlot.studentId !== student.id || teacherSlot.studentSlotId !== studentSlot.id;
+          // Compare against the field values BEFORE they get overwritten below, so a real change to
+          // day/time/date-range on the student side (e.g. "End Regular Class" setting a new endDate)
+          // is detected here too. The original check only looked at identity fields (locked/studentName/
+          // studentId/studentSlotId), so when only a date-range field drifted, needsRepair stayed false,
+          // updatedAt never got bumped, and the corrected value silently never made it into the sync
+          // diff even though it was applied to the in-memory object — the server-side teacher record
+          // stayed stale while the student-side record was correctly updated. See Catherine Mu / Mira
+          // Tuesday 17:00 phantom regular slot, 2026-09-01.
+          const needsRepair = !teacherSlot.locked || !teacherSlot.studentName || teacherSlot.studentId !== student.id || teacherSlot.studentSlotId !== studentSlot.id ||
+            teacherSlot.day !== values.day || teacherSlot.time !== values.time ||
+            (teacherSlot.startDate || "") !== values.startDate || (teacherSlot.endDate || "") !== values.endDate;
           Object.assign(teacherSlot, values);
           if (needsRepair) {
             teacherSlot.updatedAt = new Date().toISOString();
