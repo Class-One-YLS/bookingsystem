@@ -5832,12 +5832,32 @@
       return overrideTime >= regularTime;
     }
 
+    // Unified with the backend's slotRank()/uniqueSlots() (classone-booking-api/lib/calendar-resolver.js)
+    // 2026-09-01. This function used to rank "locked always wins, then startDate string, then
+    // updatedAt" -- a genuinely different rule from the backend's "latest amendment time wins, rank
+    // only breaks an EXACT tie", which Weekly Timetable / Teacher Overview and Teacher View Link both
+    // ultimately rely on their own separate copy of to decide which of several competing regularSlots
+    // records wins a given teacher/day/time cell. That divergence is why the same underlying data could
+    // show differently in the two places (see Mira tan ee / Catherine Mu Tuesday 17:00, 2026-09-01): a
+    // stray slot with an older amendment time than the real class could still out-rank it here purely
+    // by being "locked", even though the backend (and thus Teacher View Link) had already moved on.
+    // The backend's rule already has its own regression tests (test/calendar-resolver.test.js) covering
+    // the OFF-vs-booking scenarios that made this genuinely tricky; port the same rule here rather than
+    // re-deriving one, so both sides make the same call for every case, not just today's.
+    function slotRank(slot) {
+      if (slot?.unavailable) return 5;
+      if (slot?.locked && slot?.studentName) return 4;
+      if (slot?.locked) return 3;
+      if (slot?.source === "override") return 2;
+      return 1;
+    }
+
     function regularSlotRecency(a, b) {
-      if (Boolean(a?.locked) !== Boolean(b?.locked)) return a?.locked ? 1 : -1;
-      const startCompare = String(a?.startDate || "0000-01-01").localeCompare(String(b?.startDate || "0000-01-01"));
-      if (startCompare) return startCompare;
-      const updateCompare = activityTime(a?.updatedAt || a?.createdAt) - activityTime(b?.updatedAt || b?.createdAt);
-      return updateCompare || 0;
+      const aTime = bookingAmendmentTime(a);
+      const bTime = bookingAmendmentTime(b);
+      if (aTime !== bTime) return aTime > bTime ? 1 : -1;
+      const rankCompare = slotRank(a) - slotRank(b);
+      return rankCompare > 0 ? 1 : rankCompare < 0 ? -1 : 0;
     }
 
     function latestRegularSlot(slots) {
