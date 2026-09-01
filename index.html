@@ -1242,6 +1242,7 @@
               <button class="btn ghost small" id="exportActivityCsvBtn">Export Excel</button>
               <button class="btn ghost small" id="exportActivityPdfBtn">Export PDF</button>
               <button class="btn ghost small" id="cleanUpUndoHistoryBtn" title="Removes the heavy 'undo' snapshot from old activity log entries (beyond the most recent 200). Their text history is kept; only very recent entries can still be undone.">Clean Up Old Undo Data</button>
+              <button class="btn danger small" id="fixMiraStraySlotBtn" title="One-off fix: removes a stray phantom regular slot (Mira tan ee, Catherine Mu, Tuesday 17:00) left over from a mis-entered day change. Safe to click even if it was already fixed.">Fix: Mira Stray Tue 17:00 Slot</button>
               <button class="btn danger small" id="pruneActivityLogBtn" title="Permanently deletes activity log entries older than the rolling retention window. This cannot be undone.">Delete Log Older Than 60 Days</button>
             </div>
           </div>
@@ -11522,6 +11523,45 @@
       }
     }
 
+    // One-off targeted fix, 2026-09-01: Mira tan ee ended up with a phantom locked regular slot on
+    // Catherine Mu's Tuesday 17:00 (source "student-profile-repair", id slot_cm0g94yxmthvmkde) from a
+    // mis-entered day change on 2026-08-31 (see conversation for the full trace). It resolves as
+    // "booked" on the Teacher View Link (which reads straight from saved data) even though Teacher
+    // Overview's own cell resolution has moved on and no longer surfaces it as clickable -- so there is
+    // no cell left in the admin UI to click "End Regular Class" on. This button reaches the exact
+    // record by id (with a defensive day/time/name check) and marks it removed the same way "End
+    // Regular Class" would. Idempotent: reports "already fixed" if the record is gone or already ended.
+    async function fixMiraStrayTuesdaySlot() {
+      if (!requireActionPermission("edit")) return;
+      const teacher = (state.teachers || []).find(item => cleanTeacherName(item.name).toLowerCase() === "catherine mu");
+      const btn = $("fixMiraStraySlotBtn");
+      if (!teacher) { setStatus("Catherine Mu not found. Nothing to fix.", "warn"); return; }
+      const slot = (teacher.regularSlots || []).find(item => item.id === "slot_cm0g94yxmthvmkde")
+        || (teacher.regularSlots || []).find(item =>
+          item.source === "student-profile-repair" && item.day === "Tuesday" && item.time === "17:00" &&
+          studentNameKey(item.studentName) === studentNameKey("Mira tan ee") && !isDeletedSlotRecord(item)
+        );
+      if (!slot || isDeletedSlotRecord(slot)) { setStatus("Already fixed: no stray Tuesday 17:00 slot found for Mira on Catherine Mu.", "success"); return; }
+      if (!confirm(`Remove this stray regular slot?\n\nCatherine Mu | Tuesday 17:00 | ${slot.studentName || "-"} | source: ${slot.source}\n\nThis will mark it removed, matching what "End Regular Class" does. Mira's actual Friday 17:00 class is separate and will not be touched.`)) return;
+      if (btn) { btn.disabled = true; btn.textContent = "Fixing..."; }
+      try {
+        const undoBefore = snapshotCollections({ teachers: [teacher.id] });
+        const now = new Date().toISOString();
+        markSlotRemoved(slot, now, "Stray phantom regular slot from a mis-entered day change, removed via one-off admin fix.");
+        teacher.updatedAt = now;
+        const undoAfter = snapshotCollections({ teachers: [teacher.id] });
+        const activityLog = logAction("Regular Slot Removed", "Mira tan ee with Catherine Mu", "Tuesday 17:00 (stray, source: student-profile-repair)", "Removed", "One-off admin fix for a stray phantom slot left over from a mis-entered day change.", { undo: makeUndoSnapshot(undoBefore, undoAfter) });
+        persistState();
+        renderAll();
+        syncRecordTransactionAsync({ teachers: [teacher], activityLogs: [activityLog] }, "Stray regular slot fix", { operation: "stray_slot_fix" });
+        setStatus("Removed. Mira's Tuesday 17:00 slot on Catherine Mu is fixed and syncing now.", "success");
+      } catch (error) {
+        setStatus(`Fix failed: ${error.message}`, "error");
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = "Fix: Mira Stray Tue 17:00 Slot"; }
+      }
+    }
+
     const ACTIVITY_LOG_HARD_DELETE_RETENTION_DAYS = 60;
 
     // Real, permanent deletion (unlike cleanUpActivityLogUndoHistory(), which only strips the undo
@@ -19265,6 +19305,9 @@
     });
     $("pruneActivityLogBtn").onclick = () => animateClick($("pruneActivityLogBtn"), pruneOldActivityLogHistory).catch(err => {
       setStatus(`Delete failed: ${err.message}`, "error");
+    });
+    $("fixMiraStraySlotBtn").onclick = () => animateClick($("fixMiraStraySlotBtn"), fixMiraStrayTuesdaySlot).catch(err => {
+      setStatus(`Fix failed: ${err.message}`, "error");
     });
     $("exportActivityCsvBtn").onclick = () => downloadCsv("class-one-activity-log.csv", ["No.", "Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], numbered(activityExportRows()));
     $("exportActivityPdfBtn").onclick = () => openPrintReport("Activity Log", ["No.", "Date/Time", "User", "Action", "Record", "Before", "After", "Notes"], numbered(activityExportRows()));
