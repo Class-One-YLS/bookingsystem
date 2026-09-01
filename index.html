@@ -15933,6 +15933,10 @@
         console.error("[ClassOne login] Sign in failed.", { message });
         setStatus(`Sign in failed: ${message}`, "error");
         setLoginMessage(message, /taking longer|connection/i.test(message) ? "warn" : "error");
+      } finally {
+        // Previously only reset on the catch branch, so a successful sign-in left the button stuck
+        // reading "Signing in..." if the screen transition (unlockAuthenticatedWorkspace) was slow or
+        // didn't fully hide the login form. Always reset it once signInUser() settles either way.
         setLoginButtonLoading(false);
       }
     }
