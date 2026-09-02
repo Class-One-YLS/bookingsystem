@@ -5855,11 +5855,23 @@
       return 1;
     }
 
+	// 2026-09-02: added a narrower guard on top of the 2026-09-01 unification above, mirroring the
+    // same-day addition to the backend's uniqueSlots(). A rank-1 slot (plain "open" -- not locked,
+    // not unavailable, not an override) must never be able to mask a higher-rank slot (a real
+    // booking, an explicit OFF, an override) purely by having a newer updatedAt, and a higher-rank
+    // slot must always be able to reclaim a cell held only by a rank-1 slot, regardless of timestamp
+    // order. See Adelyneshia / Chi Zhong Hyi Thursday 20:30: a bulk backfill pass (2026-08-14)
+    // re-touched thousands of empty placeholder slots project-wide with no real content change,
+    // which then silently outranked a genuine July booking by timestamp alone.
     function regularSlotRecency(a, b) {
+      const aRank = slotRank(a);
+      const bRank = slotRank(b);
+      if (aRank === 1 && bRank > 1) return -1;
+      if (bRank === 1 && aRank > 1) return 1;
       const aTime = bookingAmendmentTime(a);
       const bTime = bookingAmendmentTime(b);
       if (aTime !== bTime) return aTime > bTime ? 1 : -1;
-      const rankCompare = slotRank(a) - slotRank(b);
+      const rankCompare = aRank - bRank;
       return rankCompare > 0 ? 1 : rankCompare < 0 ? -1 : 0;
     }
 
