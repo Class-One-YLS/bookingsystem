@@ -2003,7 +2003,11 @@
     const AUTO_SAVE_DEBOUNCE_MS = 650;
     const NEON_CHUNK_SIZE = 600000;
     const NEON_CHUNK_UPLOAD_CONCURRENCY = 4;
-    const NEON_CHUNK_DOWNLOAD_CONCURRENCY = 6;
+    // Server-side read chunk size (api/state-chunk.js splitText) was raised 2026-09-02 from 350KB to
+    // 2MB to cut round trips (~1-1.2s fixed cost per chunk dominated load time far more than payload
+    // size did). Raising this concurrency to match means the resulting ~12 chunks for a ~24MB state
+    // fetch in one batch instead of ~2, instead of leaving the extra headroom unused.
+    const NEON_CHUNK_DOWNLOAD_CONCURRENCY = 12;
     const MAX_NEON_AUTO_CONFLICT_RETRIES = 2;
     const DELTA_SYNC_WARN_BYTES = 100 * 1024;
     const DELTA_SYNC_ABNORMAL_BYTES = 1024 * 1024;
