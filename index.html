@@ -11558,6 +11558,64 @@
         if (cleanupBtn) { cleanupBtn.disabled = false; cleanupBtn.textContent = "Clean Up Old Undo Data"; }
       }
     }
+	  
+    // One-off cleanup, 2026-09-02: stampBookingStatus() now clears booking.resolutionStatus when a
+    // booking is marked "deleted" (see its comment for the full trace) -- but that fix only stops
+    // FUTURE resurrections. Before it shipped, "Finalize Passed Classes" read a stale
+    // resolutionStatus="booked" left over from before a booking was deleted (e.g. by Set OFF
+    // superseding a regular class occurrence) and silently re-completed it once its time had passed
+    // (confirmed against a 2026-08-27 batch run, plus an earlier 2026-07-07 case) -- e.g. Ashton Tan
+    // Jiun Hong / Catherine Mu Monday 17:00, deleted 2026-07-23 by "Set OFF", but showing as a
+    // completed class on 2026-08-03 in Teacher View Link. This finds every booking still carrying
+    // that damage (deletedAt is set, but its outcome status isn't "deleted", and it was finalized
+    // strictly after it was deleted) and restores it to properly deleted, using the exact same
+    // stampBookingStatus("deleted") path a normal delete uses -- so the original deletedAt is kept
+    // (only set if missing), only the accidental resurrection is undone. Idempotent: reports "none
+    // found" if nothing matches.
+    function resurrectedDeletedBookings() {
+      // Deliberately narrow: only completedAt/finalizedAt, NOT the generic statusChangedAt. Checked
+      // against real production data (2026-09-02) -- widening this to statusChangedAt pulled in
+      // bookings that were genuinely deleted and then legitimately edited again later by a real admin
+      // action (a different, unrelated status change reusing the same booking id), which must NOT be
+      // reverted. completedAt/finalizedAt is only ever set by a real "mark completed" action, which is
+      // specifically what the pre-fix Finalize Passed Classes bug produced -- a much tighter signal.
+      return (state.bookings || []).filter(booking => {
+        if (!booking?.deletedAt) return false;
+        const status = normalizeClassStatus(booking) || booking.status || "";
+        if (status === "deleted") return false;
+        const finalizedAt = booking.completedAt || booking.finalizedAt || "";
+        if (!finalizedAt) return false;
+        return activityTime(finalizedAt) > activityTime(booking.deletedAt);
+      });
+    }
+
+    async function fixResurrectedDeletedBookings() {
+      if (!requireActionPermission("edit")) return;
+      const affected = resurrectedDeletedBookings();
+      if (!affected.length) { setStatus("Already fixed: no resurrected deleted classes found.", "success"); return; }
+      const preview = affected.slice(0, 8).map(b => `${b.teacherId ? (teacherById(b.teacherId)?.name || b.teacherId) : "-"} | ${formatDateFromAny(b.date)} ${timeLabel(b.time)} | ${b.studentName || "-"}`).join("\n");
+      if (!confirm(`Restore ${affected.length} class${affected.length === 1 ? "" : "es"} to their correct deleted state? They were genuinely deleted before, then accidentally showed up again as a real class (usually "Completed") because of a bug fixed earlier this session.\n\n${preview}${affected.length > 8 ? `\n...and ${affected.length - 8} more` : ""}\n\nThis will not touch any class that's genuinely still active.`)) return;
+      const btn = $("fixResurrectedDeletedBookingsBtn");
+      if (btn) { btn.disabled = true; btn.textContent = "Fixing..."; }
+      try {
+        const undoBefore = snapshotCollections({ bookings: affected.map(b => b.id) });
+        const now = new Date().toISOString();
+        affected.forEach(booking => {
+          stampBookingStatus(booking, "deleted", now);
+          booking.archived = true;
+        });
+        const undoAfter = snapshotCollections({ bookings: affected.map(b => b.id) });
+        const activityLog = logAction("Resurrected Deleted Classes Fixed", `${affected.length} class${affected.length === 1 ? "" : "es"}`, "Incorrectly showing as active/completed", "Restored to deleted", "One-off admin fix for classes resurrected by the pre-fix Finalize Passed Classes bug.", { undo: makeUndoSnapshot(undoBefore, undoAfter) });
+        persistState();
+        renderAll();
+        syncRecordTransactionAsync({ bookings: affected, activityLogs: [activityLog] }, "Resurrected deleted classes fixed", { operation: "fix_resurrected_deleted_bookings" });
+        setStatus(`Restored ${affected.length} class${affected.length === 1 ? "" : "es"} to deleted and syncing now.`, "success");
+      } catch (error) {
+        setStatus(`Fix failed: ${error.message}`, "error");
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = "Fix: Resurrected Deleted Classes"; }
+      }
+    }
 
     const ACTIVITY_LOG_HARD_DELETE_RETENTION_DAYS = 60;
 
