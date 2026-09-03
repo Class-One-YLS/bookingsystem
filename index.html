@@ -19358,6 +19358,9 @@
     $("cleanUpUndoHistoryBtn").onclick = () => animateClick($("cleanUpUndoHistoryBtn"), cleanUpActivityLogUndoHistory).catch(err => {
       setStatus(`Cleanup failed: ${err.message}`, "error");
     });
+	$("fixResurrectedDeletedBookingsBtn").onclick = () => animateClick($("fixResurrectedDeletedBookingsBtn"), fixResurrectedDeletedBookings).catch(err => {
+      setStatus(`Fix failed: ${err.message}`, "error");
+    });
     $("pruneActivityLogBtn").onclick = () => animateClick($("pruneActivityLogBtn"), pruneOldActivityLogHistory).catch(err => {
       setStatus(`Delete failed: ${err.message}`, "error");
     });
