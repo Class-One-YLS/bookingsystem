@@ -1242,7 +1242,8 @@
               <button class="btn ghost small" id="exportActivityCsvBtn">Export Excel</button>
               <button class="btn ghost small" id="exportActivityPdfBtn">Export PDF</button>
               <button class="btn ghost small" id="cleanUpUndoHistoryBtn" title="Removes the heavy 'undo' snapshot from old activity log entries (beyond the most recent 200). Their text history is kept; only very recent entries can still be undone.">Clean Up Old Undo Data</button>
-              <button class="btn danger small" id="pruneActivityLogBtn" title="Permanently deletes activity log entries older than the rolling retention window. This cannot be undone.">Delete Log Older Than 60 Days</button>
+             <button class="btn danger small" id="fixResurrectedDeletedBookingsBtn" title="Finds bookings that were genuinely deleted (e.g. by Set OFF) but got their status silently overwritten back to a real outcome (e.g. Completed) by the 2026-08-27 'Finalize Passed Classes' run, before that bug was fixed. Restores them to their correct deleted state. Safe to click repeatedly.">Fix: Resurrected Deleted Classes</button>
+			<button class="btn danger small" id="pruneActivityLogBtn" title="Permanently deletes activity log entries older than the rolling retention window. This cannot be undone.">Delete Log Older Than 60 Days</button>
             </div>
           </div>
           <div class="grid four">
