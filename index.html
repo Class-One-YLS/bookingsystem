@@ -5191,6 +5191,33 @@
       clearTimeout(setStatus.toastTimer);
       setStatus.toastTimer = setTimeout(() => toast.classList.remove("show"), 5000);
     }
+	  
+    // Generic Yes/No confirm popup, replacing native confirm() for genuine yes/no questions -- the
+    // browser's own confirm() dialog always shows "OK"/"Cancel" (no way to relabel those buttons),
+    // which reads confusingly against a question like "does this class need a replacement?" (should
+    // an admin click "OK" to say yes, or "Cancel" to say... also technically declining, not
+    // cancelling the whole action?). Requested 2026-09-03. Returns a Promise<boolean> so call sites
+    // just `await confirmYesNo(...)` in place of the old synchronous `confirm(...)`.
+    function confirmYesNo(message, title = "Confirm") {
+      return new Promise(resolve => {
+        const modal = $("yesNoConfirmModal");
+        const yesBtn = $("yesNoConfirmYesBtn");
+        const noBtn = $("yesNoConfirmNoBtn");
+        $("yesNoConfirmTitle").textContent = title;
+        $("yesNoConfirmMessage").textContent = message;
+        const cleanup = (result) => {
+          modal.classList.add("hide");
+          yesBtn.removeEventListener("click", onYes);
+          noBtn.removeEventListener("click", onNo);
+          resolve(result);
+        };
+        const onYes = () => cleanup(true);
+        const onNo = () => cleanup(false);
+        yesBtn.addEventListener("click", onYes);
+        noBtn.addEventListener("click", onNo);
+        modal.classList.remove("hide");
+      });
+    }
 
     function fillSelect(el, values, allLabel) {
       if (!el) return;
