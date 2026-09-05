@@ -17004,11 +17004,11 @@
         const outcomeOptions = { createStudentNotShowReplacement: false, withdrawExistingReplacement: false };
         const existingActiveReplacement = (state.replacements || []).some(item => replacementMatchesBooking(item, booking) && !item.archived && item.status !== "Cancellation Withdrawn");
         if (nextStatus === "student_not_show") {
-          outcomeOptions.createStudentNotShowReplacement = confirm("Does this Student Not Show class need a replacement class?");
+          outcomeOptions.createStudentNotShowReplacement = await confirmYesNo("Does this Student Not Show class need a replacement class?");
           replacementNeeded = outcomeOptions.createStudentNotShowReplacement ? "yes" : "no";
           outcomeOptions.withdrawExistingReplacement = !outcomeOptions.createStudentNotShowReplacement && existingActiveReplacement;
         } else if (!replacementReasonForStatus(nextStatus) && existingActiveReplacement) {
-          outcomeOptions.withdrawExistingReplacement = confirm("This class already has a replacement record. Do you want to remove/archive the replacement record?");
+          outcomeOptions.withdrawExistingReplacement = await confirmYesNo("This class already has a replacement record. Do you want to remove/archive the replacement record?");
         }
         const recurringSlot = recurringSlotForBooking(booking);
         const scope = recurringSlot && replacementReasonForStatus(nextStatus) ? $("outcomeScope").value : "one_date";
