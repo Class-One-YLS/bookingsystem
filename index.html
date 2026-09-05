@@ -1876,17 +1876,18 @@
       </div>
     </div>
   </div>
-
-  <div id="teacherLeaveExistsModal" class="modal hide">
+  
+  <!-- Generic Yes/No confirm popup -- see confirmYesNo(). Requested 2026-09-03: native confirm()
+       always shows "OK"/"Cancel" (browsers don't allow relabeling those buttons), which read
+       confusingly against yes/no questions like "does this class need a replacement?". This gives an
+       actual "Yes"/"No" choice instead, matching the question asked. -->
+  <div id="yesNoConfirmModal" class="modal hide">
     <div class="modal-card">
-      <div class="row spread"><h2>Teacher Leave Already Exists</h2><button class="btn ghost small" data-close>Close</button></div>
-      <input id="existingTeacherLeaveId" type="hidden">
-      <div class="subtle" style="margin-top:8px;">This teacher is already marked on leave for the selected date or time period.</div>
-      <div id="existingTeacherLeaveDetails" class="card" style="margin-top:12px;"></div>
-      <div class="row" style="margin-top:14px;">
-        <button class="btn danger" id="undoExistingTeacherLeaveBtn">Undo Leave</button>
-        <button class="btn ghost" id="keepExistingTeacherLeaveBtn">Keep Leave</button>
-        <button class="btn ghost" id="cancelExistingTeacherLeaveBtn">Cancel</button>
+      <div class="row spread"><h2 id="yesNoConfirmTitle">Confirm</h2></div>
+      <div id="yesNoConfirmMessage" class="subtle" style="margin-top:10px; white-space:pre-line;"></div>
+      <div class="row" style="margin-top:16px;">
+        <button class="btn mint" id="yesNoConfirmYesBtn">Yes</button>
+        <button class="btn ghost" id="yesNoConfirmNoBtn">No</button>
       </div>
     </div>
   </div>
