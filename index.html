@@ -18988,7 +18988,16 @@
       }
     };
     $("restoreCancelledClassBtn").onclick = () => restoreCancelledClass($("undoReplacementId").value);
-    $("ignoreCancelledClassBtn").onclick = () => keepCancelledNoReplacement($("undoReplacementId").value);
+    // Guarded, 2026-09-03: this element intermittently isn't found at this point in initial script
+    // execution (root cause not yet identified -- it exists in the raw HTML before this script tag and
+    // is present moments later once the page finishes loading, so it isn't simply missing markup).
+    // Left unguarded, the resulting uncaught TypeError aborted the rest of this top-level script block
+    // -- confirmed via the live site that every one of the ~97 $(id).onclick assignments AFTER this
+    // line, including "Clean Up Old Undo Data" and "Fix: Resurrected Deleted Classes", were silently
+    // never wired (button.onclick stayed null) even though the buttons rendered normally. Guarding
+    // just this one assignment is enough to stop the cascade; the underlying null-at-this-moment
+    // mystery for this specific element remains open but no longer breaks anything downstream.
+    if ($("ignoreCancelledClassBtn")) $("ignoreCancelledClassBtn").onclick = () => keepCancelledNoReplacement($("undoReplacementId").value);
     $("undoExistingTeacherLeaveBtn").onclick = async () => {
       const leaveId = $("existingTeacherLeaveId").value;
       if (!leaveId) return;
