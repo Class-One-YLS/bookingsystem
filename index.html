@@ -15703,6 +15703,19 @@
       "roles"
     ]);
 
+        // A single activityLog's "undo" snapshot deep-clones every OTHER record it touches (see
+    // snapshotCollectionRecords/makeUndoSnapshot) -- fine for a normal one-record edit, but an action
+    // with wide blast radius (e.g. dropStudentFromSystem() capping slots across every teacher that
+    // student had classes with) can produce an undo snapshot over 1MB, tripping deltaSync's
+    // DELTA_SYNC_ABNORMAL_BYTES guard and refusing to save the WHOLE mutation -- not just losing undo,
+    // but losing the actual student/booking/teacher changes too (2026-09-07, Jovis Tan Kent Win drop).
+    // This strips an oversized "undo" blob from the copy actually sent to the server, so the real
+    // mutation always goes through; the untouched original in state.activityLogs (and everything else
+    // in this cloned log entry -- type/target/before/after/notes) is unaffected, so Undo still works
+    // instantly in this same browser tab. Same accepted trade-off as UNDO_SNAPSHOT_RETENTION_COUNT
+    // already makes for old entries: that action just can't be undone later from another device or
+    // after a reload.
+    const MAX_SYNCED_UNDO_SNAPSHOT_BYTES = 200 * 1024;
     function recordTransactionRecords(input = {}) {
       const records = {};
       Object.entries(input || {}).forEach(([collectionName, list]) => {
@@ -15715,7 +15728,14 @@
           if (!recordId) return;
           unique.set(recordId, item);
         });
-        if (unique.size) records[collectionName] = [...unique.values()].map(cloneJson);
+        if (!unique.size) return;
+        const cloned = [...unique.values()].map(cloneJson);
+        if (collectionName === "activityLogs") {
+          cloned.forEach(log => {
+            if (log && log.undo && jsonByteSize(log.undo) > MAX_SYNCED_UNDO_SNAPSHOT_BYTES) log.undo = null;
+          });
+        }
+        records[collectionName] = cloned;
       });
       return records;
     }
