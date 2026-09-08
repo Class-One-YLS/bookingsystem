@@ -7051,7 +7051,17 @@
               logWeeklyResolutionTrace({ teacher, dateISO, time, stages: traceStages });
             }
           };
-          if (normalizeAvailabilityStatus(slot) === "off" && (!booking || bookingAmendmentTime(slot) >= bookingAmendmentTime(booking))) {
+        	// EMERGENCY FIX 2026-09-08: normalizeAvailabilityStatus(slot) returns "off" as a convenience
+          // fallback when `slot` itself is undefined (see its own `if (!slot) return "off"`), which is
+          // safe for most callers that just want to know "is this currently off" -- but THIS guard also
+          // needed `!booking` to be reachable, and until leaveTimesForDate() (above) started adding
+          // times with neither a slot NOR a booking, that combination never happened, so it was never
+          // caught that this branch would call calendarCellFromSlot(undefined, teacher) and crash on
+          // `slot.status` inside it. Requiring `slot` truthy here (matching the equivalent, already-safe
+          // `slot && slot.unavailable` guard in the backend's calendar-resolver.js/teacher-view.js)
+          // lets those slot-less leave times fall through to the dedicated `if (!slot) {...}` handling
+          // further down instead.
+          if (slot && normalizeAvailabilityStatus(slot) === "off" && (!booking || bookingAmendmentTime(slot) >= bookingAmendmentTime(booking))) {
             pushResolvedCell(calendarCellFromSlot(slot, teacher));
             return;
           }
