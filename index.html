@@ -5979,7 +5979,7 @@
       };
     }
 
-    function teacherLeaveForSlot(teacherId, date, time) {
+        function teacherLeaveForSlot(teacherId, date, time) {
       const targetTime = normalizeTimeValue(time) || time;
       return (state.teacherLeaves || []).find(leave =>
         isActiveTeacherLeave(leave) &&
@@ -5989,6 +5989,31 @@
         minutes(leave.fromTime) <= minutes(targetTime) &&
         minutes(targetTime) <= minutes(leave.toTime)
       ) || null;
+    }
+
+    // teacherLeaveForSlot() (above) only ever gets checked against times that already have a slot
+    // candidate -- see resolveTeacherCalendar's `times` set below. A leave's actual covered range
+    // (leave.fromTime..leave.toTime, commonly the whole day 08:00-21:30 for a "whole day" leave)
+    // routinely extends well past whatever slots this teacher happens to have that day, so those extra
+    // half-hours were never enumerated at all and silently fell through to a generic blank/"OFF" cell
+    // on the Weekly Timetable -- with no indication a leave was ever approved for that time
+    // (2026-09-08, Tarry Pian Yee Sing: a whole-day leave correctly converted the two "Available" slots
+    // that existed that day to Teacher Leave, but every other half-hour showed as bare OFF, same as an
+    // ordinary non-working day). This enumerates every half-hour an active leave actually covers so the
+    // loop below can still emit a Teacher Leave cell even where no slot ever existed for that time.
+    function leaveTimesForDate(teacherId, dateISO) {
+      const times = new Set();
+      (state.teacherLeaves || []).forEach(leave => {
+        if (!isActiveTeacherLeave(leave) || leave.teacherId !== teacherId) return;
+        const startDate = dateOnly(leave.startDate || leave.date);
+        const endDate = dateOnly(leave.endDate || leave.startDate || leave.date);
+        if (startDate && startDate > dateISO) return;
+        if (endDate && endDate < dateISO) return;
+        const fromMinutes = minutes(leave.fromTime || "08:00");
+        const toMinutes = minutes(leave.toTime || "21:30");
+        for (let m = fromMinutes; m <= toMinutes; m += 30) times.add(timeFromMinutes(m));
+      });
+      return times;
     }
 
     function isActiveTeacherLeave(leave) {
@@ -6993,8 +7018,9 @@
         const dateISO = localISO(date);
         const slots = collectSlotsForDate(date, { teacherIds: new Set([teacherId]), occurrenceOutcomes }).filter(slot => slot.teacherId === teacherId);
         const slotByTime = new Map(slots.map(slot => [slot.time, slot]));
-        const bookingTimes = bookingTimesByDate.get(dateISO) || new Set();
+    	const bookingTimes = bookingTimesByDate.get(dateISO) || new Set();
         const times = new Set([...slotByTime.keys(), ...bookingTimes]);
+        leaveTimesForDate(teacherId, dateISO).forEach(time => times.add(time));
         times.forEach(time => {
           const slot = slotByTime.get(time);
           const booking = bookingByCell.get(teacherDateTimeKey(teacherId, dateISO, time)) || null;
@@ -7048,10 +7074,23 @@
             pushResolvedCell(calendarCellFromBooking(booking, teacher, slot));
             return;
           }
-          const leave = slot ? teacherLeaveForSlot(teacherId, dateISO, time) : null;
+                    const leave = slot ? teacherLeaveForSlot(teacherId, dateISO, time) : null;
           if (leave && slot) {
             pushResolvedCell(calendarCellFromSlot(teacherLeaveOffSlotFromCell(slot, leave, leave.updatedAt || leave.createdAt || new Date().toISOString()), teacher));
             return;
+          }
+          if (!slot) {
+            // Neither a real slot nor a booking exists for this half-hour -- normally that's just an
+            // ordinary non-working time (finalCell stays null, rendered blank/OFF downstream). But if
+            // an active teacher leave covers this exact time (see leaveTimesForDate above), surface it
+            // as a Teacher Leave cell anyway so a whole-day leave reads as "on leave" for its full
+            // span, not just for whatever slots happened to already exist that day.
+            const emptyTimeLeave = teacherLeaveForSlot(teacherId, dateISO, time);
+            if (emptyTimeLeave) {
+              const syntheticSlot = { teacherId, date: dateISO, time, day: dayFromISO(dateISO), subject: "" };
+              pushResolvedCell(calendarCellFromSlot(teacherLeaveOffSlotFromCell(syntheticSlot, emptyTimeLeave, emptyTimeLeave.updatedAt || emptyTimeLeave.createdAt || new Date().toISOString()), teacher));
+              return;
+            }
           }
           if (slot) {
             finalCell = calendarCellFromSlot(slot, teacher);
