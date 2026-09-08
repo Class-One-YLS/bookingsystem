@@ -1674,11 +1674,26 @@
       return [...values].sort((a, b) => minutes(a) - minutes(b));
     }
 
-    function cellHtml(date, time, options = {}) {
+        function cellHtml(date, time, options = {}) {
       const dateISO = localISO(date);
       const outsideClass = options.month != null && date.getMonth() !== options.month ? " outside-month" : "";
       const cell = findCell(dateISO, time);
       if (cell) {
+        // FIX 2026-09-08: the backend correctly marks a leave-covered half-hour with
+        // status:"teacher_leave" (kind stays "off" -- see api/teacher-view.js's publicCellFromSlot),
+        // but this branch used to check kind/unavailable FIRST and return plain "OFF" before the
+        // status was ever inspected, so an approved Teacher Leave was indistinguishable from an
+        // ordinary non-working half-hour on this read-only page (2026-09-08, Tarry Pian Yee Sing:
+        // admin's Weekly Timetable correctly showed "Teacher Leave", but this page showed bare "OFF"
+        // for the exact same day). Checking status:"teacher_leave" first, and reusing the same
+        // status-teacher-leave styling already used elsewhere on this page, fixes that without
+        // touching the "off" fallback for every other non-working time.
+        if (cell.status === "teacher_leave") {
+          return `<td class="cell-off status-teacher-leave${outsideClass}">
+            <span class="cell-small">${escapeHtml(statusLabel("teacher_leave"))}</span>
+            ${cell.remark ? `<span class="cell-class-details">${escapeHtml(cell.remark)}</span>` : ""}
+          </td>`;
+        }
         if (cell.kind === "off" || cell.status === "off" || cell.unavailable) {
           return `<td class="cell-off${outsideClass}">OFF</td>`;
         }
