@@ -5552,6 +5552,23 @@
       return effectiveSlotRecords(slots).filter(slot => !isDeletedSlotRecord(slot));
     }
 
+    // A schedule change (e.g. a "temporary" reschedule via syncStudentRegularSlotRange, or shortening a
+    // slot when it's replaced) only shortens the old record's endDate into the past -- it never marks
+    // it deleted/archived, by design, so the historical record stays in student.regularSlots for audit.
+    // But activeSlotRecords() (above) doesn't check endDate at all, so every one of those expired
+    // fragments still counted as "active" everywhere that used it to DISPLAY a student's current
+    // schedule: the Teacher Student Records search list and the student profile's Regular Days/Time
+    // editor both listed every never-deleted historical fragment as if it were still a live duplicate
+    // slot needing removal (2026-09-12, Hee Jynho (Ceyden): 5 near-identical "Wednesday 8:30 PM" rows,
+    // each a different past reschedule window -- removing the one actually-current row still left the
+    // other 4 expired ones showing, so the class looked like it "kept appearing"). This is a read-only,
+    // display-scoped filter: it hides slots whose endDate has already passed without touching the
+    // underlying data, so nothing is lost and Save still persists the full history untouched.
+    function currentSlotRecords(slots) {
+      const today = todayISO();
+      return activeSlotRecords(slots).filter(slot => !dateOnly(slot.endDate) || dateOnly(slot.endDate) >= today);
+    }
+
     function availabilitySlotApplies(slot, dateStr, day) {
       const slotDate = dateOnly(slot.date);
       if (slotDate) return slotDate === dateStr;
@@ -10455,7 +10472,7 @@
       const studentPageData = pageSlice(students, studentListPage);
       studentListPage = studentPageData.page;
       $("studentList").innerHTML = studentPageData.items.map(s => {
-        const regularSlots = getStudentRegularSlots(s);
+        const regularSlots = currentSlotRecords(getStudentRegularSlots(s));
         const lines = regularSlots.map(slot => {
           const t = teacherById(slot.teacherId);
           return `${slot.day} ${timeLabel(slot.time)} | ${slot.subject} | ${t ? t.name : "No teacher"}`;
@@ -10682,13 +10699,23 @@
     }
 
     function renderStudentRegularSlotDraft() {
-      $("studentRegularSlotList").innerHTML = studentRegularSlotsDraft.map(slot => {
+      // Only show slots that are still current (see currentSlotRecords()) -- studentRegularSlotsDraft
+      // itself keeps every historical fragment so Save doesn't lose past-schedule audit history, but
+      // showing those already-ended fragments here made every real removal look like it didn't work:
+      // the one live slot the admin removed was gone, yet several expired look-alikes from past
+      // reschedules remained in the list.
+      const visibleSlots = currentSlotRecords(studentRegularSlotsDraft);
+      const hiddenCount = studentRegularSlotsDraft.length - visibleSlots.length;
+      $("studentRegularSlotList").innerHTML = visibleSlots.map(slot => {
         const teacher = teacherById(slot.teacherId);
         const period = slot.startDate
           ? `From ${formatDateFromAny(slot.startDate)}${slot.endDate ? ` to ${formatDateFromAny(slot.endDate)}` : " onward"}`
           : "Existing regular schedule";
         return `<div class="card"><strong>${escapeHtml(slot.day)} ${timeLabel(slot.time)}</strong><div class="subtle">${escapeHtml(slot.subject)} | ${escapeHtml(teacher ? teacher.name : "No teacher")}<br>${escapeHtml(period)}</div><div class="row" style="margin-top:8px;"><button class="btn small ghost" data-edit-student-regular="${slot.id}">Edit</button><button class="btn small danger" data-remove-student-regular="${slot.id}">Remove</button></div></div>`;
       }).join("") || `<div class="empty">No regular slots added yet.</div>`;
+      if (hiddenCount > 0) {
+        $("studentRegularSlotList").innerHTML += `<div class="subtle" style="margin-top:6px;">${hiddenCount} ended schedule${hiddenCount === 1 ? "" : "s"} hidden (kept for history, no longer active).</div>`;
+      }
     }
 
     function selectedStudentSubjects() {
