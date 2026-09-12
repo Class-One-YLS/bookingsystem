@@ -179,14 +179,9 @@
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 14px;
-      min-height: 116px;
-      display: grid;
-      grid-template-rows: minmax(30px, auto) auto 18px;
-      align-content: start;
     }
     .metric span { display: block; color: var(--muted); font-size: 12px; font-weight: 800; }
     .metric strong { display: block; margin-top: 8px; font-size: 26px; }
-    .metric-subtitle { margin-top: 4px; min-height: 18px; font-size: 12px; line-height: 1.2; }
     section {
       margin-top: 16px;
       background: #fff;
@@ -842,13 +837,12 @@
     </div>
 
     <div class="grid metrics">
-      <div class="metric"><span>Classes In Selected Month</span><strong id="metricTotal">0</strong><div class="metric-subtitle subtle" aria-hidden="true">&nbsp;</div></div>
-      <div class="metric"><span>Today's Remaining Classes</span><strong id="metricUpcoming">0</strong><div class="metric-subtitle subtle" aria-hidden="true">&nbsp;</div></div>
-      <div class="metric"><span>Completed</span><strong id="metricCompleted">0</strong><div class="metric-subtitle subtle" aria-hidden="true">&nbsp;</div></div>
-      <div class="metric"><span>Not Show</span><strong id="metricNotShow">0</strong><div class="metric-subtitle subtle" aria-hidden="true">&nbsp;</div></div>
-      <div class="metric"><span>Cancelled</span><strong id="metricCancelled">0</strong><div class="metric-subtitle subtle" aria-hidden="true">&nbsp;</div></div>
-      <div class="metric"><span>Teacher Leave</span><strong id="metricTeacherLeave">0</strong><div class="metric-subtitle subtle">leave dates</div></div>
-      <div class="metric"><span>Income To Date</span><strong id="metricIncome">RM 0.00</strong><div class="metric-subtitle subtle" aria-hidden="true">&nbsp;</div></div>
+      <div class="metric"><span>Classes In Selected Month</span><strong id="metricTotal">0</strong></div>
+      <div class="metric"><span>Today's Remaining Classes</span><strong id="metricUpcoming">0</strong></div>
+      <div class="metric"><span>Completed</span><strong id="metricCompleted">0</strong></div>
+      <div class="metric"><span>Not Show</span><strong id="metricNotShow">0</strong></div>
+      <div class="metric"><span>Cancelled</span><strong id="metricCancelled">0</strong></div>
+      <div class="metric"><span>Income To Date</span><strong id="metricIncome">RM 0.00</strong></div>
     </div>
 
     <section id="dailyNavigatorSection">
@@ -1209,33 +1203,6 @@
       return STATUS_LABELS[status] || status || "Booked";
     }
 
-    function normalizeClassStatus(record) {
-      const values = typeof record === "string"
-        ? [record]
-        : [
-            record?.outcome,
-            record?.finalStatus,
-            record?.classOutcome,
-            record?.outcomeStatus,
-            record?.businessStatus,
-            record?.status
-          ];
-      for (const value of values) {
-        const normalized = String(value || "").trim().toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
-        if (!normalized) continue;
-        if (["cancel", "cancelled", "canceled"].includes(normalized)) return "cancelled";
-        if (["student_not_show", "student_no_show", "not_show", "no_show"].includes(normalized)) return "student_not_show";
-        if (["teacher_leave", "teacher_on_leave"].includes(normalized)) return "teacher_leave";
-        if (["public_holiday", "holiday"].includes(normalized)) return "public_holiday";
-        if (["completed", "complete", "passed", "finalized", "finalised", "finished"].includes(normalized)) return "completed";
-        if (["booked", "booking"].includes(normalized)) return "booked";
-        if (["available"].includes(normalized)) return "available";
-        if (["off", "unavailable"].includes(normalized)) return "off";
-        if (["deleted", "removed"].includes(normalized)) return "deleted";
-      }
-      return "";
-    }
-
     function statusForDisplay(booking) {
       if (!booking) return "";
       return resolvedClassStatus(booking);
@@ -1249,11 +1216,39 @@
       return `type-${String(type || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
     }
 
-    function resolvedClassStatus(record = {}) {
-      const status = normalizeClassStatus(record) || record.status || "booked";
+    function slotDateTime(date, time) {
+      const dateISO = dateOnly(date);
+      const dateMatch = dateISO.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      const normalizedTime = normalizeTime(time) || "00:00";
+      const [hour, minute] = normalizedTime.split(":").map(Number);
+      if (!dateMatch || Number.isNaN(hour) || Number.isNaN(minute)) return new Date(NaN);
+      return new Date(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3]), hour, minute, 0, 0);
+    }
+
+    function classDurationMinutes(record = {}) {
+      const value = Number(record.minutes || record.duration || record.classMinutes || 25);
+      return Number.isFinite(value) && value > 0 ? value : 25;
+    }
+
+    function slotEndDateTime(record = {}) {
+      const start = slotDateTime(record.date, record.time);
+      if (Number.isNaN(start.getTime())) return start;
+      return new Date(start.getTime() + classDurationMinutes(record) * 60 * 1000);
+    }
+
+    function slotHasPassed(date, time, record = {}) {
+      const end = slotEndDateTime({ ...record, date, time });
+      return !Number.isNaN(end.getTime()) && end <= new Date();
+    }
+
+    function resolvedClassStatus(record = {}, reference = new Date()) {
+      const status = record.status || "booked";
+      if (status !== "booked" && status !== "completed") return status;
+      const start = slotDateTime(record.date, record.time);
+      if (Number.isNaN(start.getTime()) || start > reference) return "booked";
       if (status === "completed") return "completed";
-      if (status && status !== "booked") return status;
-      return "booked";
+      const end = slotEndDateTime(record);
+      return !Number.isNaN(end.getTime()) && end <= reference ? "completed" : "booked";
     }
 
     function setStatus(message, type = "") {
@@ -1346,12 +1341,6 @@
     function normalizeLoadedTimetable(data) {
       data.regularSlots = (data.regularSlots || []).map(slot => ({ ...slot, time: normalizeTime(slot.time) || slot.time }));
       data.overrideSlots = (data.overrideSlots || []).map(slot => ({ ...slot, time: normalizeTime(slot.time) || slot.time }));
-      data.teacherLeaves = (data.teacherLeaves || []).map(leave => ({
-        ...leave,
-        date: dateOnly(leave.date || leave.startDate || ""),
-        startDate: dateOnly(leave.startDate || leave.date || ""),
-        endDate: dateOnly(leave.endDate || leave.date || leave.startDate || "")
-      }));
       data.bookings = (data.bookings || []).map(booking => ({ ...booking, time: normalizeTime(booking.time) || booking.time }));
       const seenCellKeys = new Set();
       const duplicateCellKeys = new Set();
@@ -1513,18 +1502,6 @@
       return { from: localISO(monthStart), to: localISO(toDate), month, year };
     }
 
-    // selectedMonthRange()'s "from" is deliberately rewound to the Monday of the week containing day
-    // 1, so the weekly calendar grid can show full weeks -- for a month starting on, say, a Saturday
-    // (e.g. 2026-08-01), that pulls in several days from the END OF THE PREVIOUS MONTH. That's fine
-    // for the grid, but anything meant to be exactly "this calendar month" for incentive-claim
-    // purposes (the class list, the cancelled/leave list, the PDF export) needs the real 1st of the
-    // month instead (reported 2026-09-01: Chei Leng's report included late-July classes).
-    // monthlyTeachingSummary() already computed this correctly on its own; this gives the other call
-    // sites the same exact boundary without repeating the calculation.
-    function exactMonthRange(month, year) {
-      return { from: localISO(new Date(year, month, 1)), to: localISO(new Date(year, month + 1, 0)) };
-    }
-
     function teacherCacheKey(year, month) {
       const teacherId = params.get("teacherId") || params.get("teacher") || "";
       return `${teacherId}|${year}|${String(month).padStart(2, "0")}`;
@@ -1543,14 +1520,6 @@
       }
     }
 
-    function invalidateTimetableMonthCache(range = null) {
-      if (!range) {
-        monthTimetableCache.clear();
-        return;
-      }
-      monthTimetableCache.delete(teacherCacheKey(range.year, range.month));
-    }
-
     function useCachedTimetable(range) {
       const cached = monthTimetableCache.get(teacherCacheKey(range.year, range.month));
       if (!cached?.data) return false;
@@ -1564,19 +1533,6 @@
       return true;
     }
 
-    function applyLatestTimetableData(data, range, { silent = false } = {}) {
-      invalidateTimetableMonthCache(range);
-      timetableData = normalizeLoadedTimetable(data);
-      cacheCurrentTimetable(range, timetableData);
-      lastLoadedVersion = Number(data.version || 0);
-      $("teacherChip").textContent = data.teacher?.name || "Teacher";
-      lastAutoSyncAt = new Date();
-      setSyncChip(`Auto-sync: ${clockLabel(lastAutoSyncAt)}`);
-      setStatus(`${silent ? "Auto-synced" : "Loaded latest timetable"} at ${clockLabel(lastAutoSyncAt)}.`);
-      renderAll();
-      $("teacherDataContent").classList.remove("hide");
-    }
-
     async function loadTimetable({ silent = false, force = false } = {}) {
       const teacherId = params.get("teacherId") || params.get("teacher") || "";
       const token = params.get("token") || "";
@@ -1586,7 +1542,7 @@
         throw new Error("Teacher link token is invalid or not synced yet.");
       }
       const range = selectedMonthRange();
-      if (!force) useCachedTimetable(range);
+      if (!force && useCachedTimetable(range)) return;
       const url = new URL(`${API_BASE}/api/teacher-view`);
       url.searchParams.set("key", STATE_KEY);
       url.searchParams.set("teacherId", teacherId);
@@ -1603,7 +1559,15 @@
       } catch (error) {
         throw new Error(teacherApiErrorMessage(error));
       }
-      applyLatestTimetableData(data, range, { silent });
+      timetableData = normalizeLoadedTimetable(data);
+      cacheCurrentTimetable(range, timetableData);
+      lastLoadedVersion = Number(data.version || 0);
+      $("teacherChip").textContent = data.teacher.name || "Teacher";
+      lastAutoSyncAt = new Date();
+      setSyncChip(`Auto-sync: ${clockLabel(lastAutoSyncAt)}`);
+      setStatus(`${silent ? "Auto-synced" : "Loaded latest timetable"} at ${clockLabel(lastAutoSyncAt)}.`);
+      renderAll();
+      $("teacherDataContent").classList.remove("hide");
     }
 
     async function loadTeacherVersion() {
@@ -1674,26 +1638,11 @@
       return [...values].sort((a, b) => minutes(a) - minutes(b));
     }
 
-        function cellHtml(date, time, options = {}) {
+    function cellHtml(date, time, options = {}) {
       const dateISO = localISO(date);
       const outsideClass = options.month != null && date.getMonth() !== options.month ? " outside-month" : "";
       const cell = findCell(dateISO, time);
       if (cell) {
-        // FIX 2026-09-08: the backend correctly marks a leave-covered half-hour with
-        // status:"teacher_leave" (kind stays "off" -- see api/teacher-view.js's publicCellFromSlot),
-        // but this branch used to check kind/unavailable FIRST and return plain "OFF" before the
-        // status was ever inspected, so an approved Teacher Leave was indistinguishable from an
-        // ordinary non-working half-hour on this read-only page (2026-09-08, Tarry Pian Yee Sing:
-        // admin's Weekly Timetable correctly showed "Teacher Leave", but this page showed bare "OFF"
-        // for the exact same day). Checking status:"teacher_leave" first, and reusing the same
-        // status-teacher-leave styling already used elsewhere on this page, fixes that without
-        // touching the "off" fallback for every other non-working time.
-        if (cell.status === "teacher_leave") {
-          return `<td class="cell-off status-teacher-leave${outsideClass}">
-            <span class="cell-small">${escapeHtml(statusLabel("teacher_leave"))}</span>
-            ${cell.remark ? `<span class="cell-class-details">${escapeHtml(cell.remark)}</span>` : ""}
-          </td>`;
-        }
         if (cell.kind === "off" || cell.status === "off" || cell.unavailable) {
           return `<td class="cell-off${outsideClass}">OFF</td>`;
         }
@@ -1738,14 +1687,7 @@
 
     function classEntries(fromISO, toISO) {
       const cells = scheduleCells().filter(cell => cell.date >= fromISO && cell.date <= toISO && !["open", "reserved", "off"].includes(cell.kind) && cell.status !== "off" && !cell.unavailable);
-      const seen = new Set();
       return cells.map(cell => ({ kind: "cell", date: cell.date, time: cell.time, cell }))
-        .filter(entry => {
-          const key = entryOccurrenceKey(entry);
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        })
         .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
     }
 
@@ -1956,74 +1898,6 @@
       return summary;
     }
 
-    function entryOccurrenceKey(entry) {
-      const record = entry?.cell || entry?.booking || entry?.slot || {};
-      const date = dateOnly(entry?.date || record.date || "");
-      const time = normalizeTime(entry?.time || record.time || "") || entry?.time || record.time || "";
-      return String(
-        record.occurrenceId ||
-        record.occurrenceKey ||
-        record.cellKey ||
-        record.bookingId ||
-        record.recordId ||
-        record.id ||
-        `${teacherIdForEntry(entry)}|${date}|${time}|${record.studentId || record.studentName || ""}|${record.sourceRecordId || ""}`
-      );
-    }
-
-    function teacherIdForEntry(entry) {
-      return String(
-        entry?.cell?.teacherId ||
-        entry?.booking?.teacherId ||
-        entry?.slot?.teacherId ||
-        timetableData?.teacher?.id ||
-        ""
-      );
-    }
-
-    function teacherLeaveDatesFromEntries(entries) {
-      const teacherId = String(timetableData?.teacher?.id || "");
-      const dates = new Set();
-      (entries || []).forEach(entry => {
-        const meta = entryMeta(entry);
-        if (meta.status !== "teacher_leave") return;
-        const entryTeacherId = teacherIdForEntry(entry);
-        if (teacherId && entryTeacherId && entryTeacherId !== teacherId) return;
-        const date = dateOnly(entry.date || entry.cell?.date || entry.booking?.date || entry.slot?.date || "");
-        if (date) dates.add(date);
-      });
-      return dates;
-    }
-
-    function fallbackStudentIncomeRowsFromEntries(entries) {
-      const groups = new Map();
-      entries.forEach(entry => {
-        const record = entry?.cell || entry?.booking || entry?.slot || {};
-        const meta = entryMeta(entry);
-        const key = record.studentId || meta.studentName || entryOccurrenceKey(entry);
-        const current = groups.get(key) || {
-          studentId: record.studentId || "",
-          studentName: meta.studentName || "Student",
-          packageName: "Resolved lessons",
-          packageAmount: 0,
-          packageTotalClasses: 0,
-          lessonRate: 0,
-          profitSharePercentage: Number(timetableData?.teacher?.profitShare || 0),
-          completedLessons: 0,
-          teacherRatePerLesson: 0,
-          income: 0,
-          packageIncomplete: false
-        };
-        const pay = Number(meta.estimatedPay || 0);
-        current.completedLessons += 1;
-        current.income += pay;
-        current.teacherRatePerLesson = current.completedLessons ? current.income / current.completedLessons : 0;
-        current.lessonRate = current.teacherRatePerLesson;
-        groups.set(key, current);
-      });
-      return [...groups.values()].sort((a, b) => String(a.studentName || "").localeCompare(String(b.studentName || ""), "en", { sensitivity: "base" }));
-    }
-
     function monthlyTeachingSummary(month, year) {
       const from = localISO(new Date(year, month, 1));
       const to = localISO(new Date(year, month + 1, 0));
@@ -2031,37 +1905,30 @@
       const completed = entries.filter(isPaidCompletedEntry);
       const notShows = entries.filter(isNotShowEntry);
       const cancelled = entries.filter(isCancelledEntry);
-      const teacherLeaveCount = teacherLeaveDatesFromEntries(entries).size;
+      const teacherLeaveCount = entries.filter(entry => entryMeta(entry).status === "teacher_leave").length;
       const lessonPay = completed.reduce((sum, entry) => sum + Number(entryMeta(entry).estimatedPay || 0), 0);
       const notShowPay = notShows.reduce((sum, entry) => sum + Number(entryMeta(entry).estimatedPay || 5), 0);
       const notShowRate = notShows.length ? notShowPay / notShows.length : 5;
       const apiSummary = apiIncomeSummaryFor(month, year);
-      const localIncomeTotal = lessonPay + notShowPay;
-      const apiSummaryMatchesResolvedEntries = apiSummary
-        && Number(apiSummary.completedLessons || 0) === completed.length
-        && Number(apiSummary.noShowCount ?? notShows.length) === notShows.length;
-      const incomeMode = apiSummary?.incomeMode || timetableData?.teacher?.incomeMode || "fixed_rate";
       return {
         entries,
         completed,
         notShows,
         cancelled,
-        completedCount: completed.length,
-        notShowCount: notShows.length,
+        completedCount: apiSummary ? Number(apiSummary.completedLessons || 0) : completed.length,
+        notShowCount: apiSummary ? Number(apiSummary.noShowCount ?? notShows.length) : notShows.length,
         notShowRate,
-        cancelledCount: cancelled.length,
+        cancelledCount: apiSummary ? Number(apiSummary.cancelledCount ?? cancelled.length) : cancelled.length,
         teacherLeaveCount,
-        lessonPay,
-        notShowPay,
-        incomeTotal: localIncomeTotal,
-        incomeMode,
+        lessonPay: apiSummary ? Number(apiSummary.completedIncome || 0) : lessonPay,
+        notShowPay: apiSummary ? Number(apiSummary.noShowAllowance || 0) : notShowPay,
+        incomeTotal: apiSummary ? Number(apiSummary.totalIncome || 0) : lessonPay + notShowPay,
+        incomeMode: apiSummary?.incomeMode || timetableData?.teacher?.incomeMode || "fixed_rate",
         teacherCategory: apiSummary?.teacherCategory || timetableData?.teacher?.payoutMethod || "Freelance Tutor",
         approvedClassRate: Number(apiSummary?.approvedClassRate ?? timetableData?.teacher?.rate ?? 0),
         profitSharePercentage: Number(apiSummary?.profitSharePercentage ?? timetableData?.teacher?.profitShare ?? 0),
-        studentIncomeRows: incomeMode === "profit_share" && !apiSummaryMatchesResolvedEntries
-          ? fallbackStudentIncomeRowsFromEntries(completed)
-          : (apiSummary?.studentIncomeRows || []),
-        packageWarnings: apiSummaryMatchesResolvedEntries ? (apiSummary?.packageWarnings || []) : []
+        studentIncomeRows: apiSummary?.studentIncomeRows || [],
+        packageWarnings: apiSummary?.packageWarnings || []
       };
     }
 
@@ -2167,7 +2034,7 @@
         {
           project: "Full attendance reward",
           description: automatic.teacherLeaveCount
-            ? `${automatic.teacherLeaveCount} teacher leave date${automatic.teacherLeaveCount === 1 ? "" : "s"}; not eligible`
+            ? `${automatic.teacherLeaveCount} teacher leave record${automatic.teacherLeaveCount === 1 ? "" : "s"}; not eligible`
             : `${automatic.completedCount} completed lessons; no teacher leave`,
           amount: automatic.attendancePay,
           automatic: true
@@ -2408,16 +2275,15 @@
       const data = await response.json();
       if (!response.ok || data.ok === false) throw new Error(data.error || `Save failed with HTTP ${response.status}`);
       timetableData.version = Number(data.version || timetableData.version || 0);
+      lastLoadedVersion = timetableData.version;
       $("studentSaveStatus").textContent = `Saved ${clockLabel(new Date())}`;
       setSyncChip(`Auto-sync: ${clockLabel(new Date())}`);
-      autoSyncTimetable();
     }
 
     function scheduleStudentSave() {
       clearTimeout(studentSaveTimer);
       $("studentSaveStatus").textContent = "Editing...";
       studentSaveTimer = setTimeout(() => {
-        studentSaveTimer = null;
         saveTeacherStudents().catch(error => {
           $("studentSaveStatus").textContent = "Save failed";
           setStatus(`Student note save failed: ${error.message}`, "warn");
@@ -2426,9 +2292,9 @@
     }
 
     function renderMonthList() {
-      const { month, year } = selectedMonthRange();
-      const { from: monthStart, to: monthEnd } = exactMonthRange(month, year);
-      const entries = classEntries(monthStart, monthEnd);
+      const { from, month, year } = selectedMonthRange();
+      const monthEnd = localISO(new Date(year, month + 1, 0));
+      const entries = classEntries(from, monthEnd);
       monthListPage = clampPage(monthListPage, entries.length);
       const monthPageData = pageSlice(entries, monthListPage);
       monthListPage = monthPageData.page;
@@ -2451,13 +2317,12 @@
       $("metricCompleted").textContent = summary.completedCount;
       $("metricNotShow").textContent = summary.notShowCount;
       $("metricCancelled").textContent = summary.cancelledCount;
-      $("metricTeacherLeave").textContent = summary.teacherLeaveCount;
     }
 
     function renderLeaveList() {
-      const { month, year } = selectedMonthRange();
-      const { from: monthStart, to: monthEnd } = exactMonthRange(month, year);
-      const leaveEntries = classEntries(monthStart, monthEnd)
+      const { from, month, year } = selectedMonthRange();
+      const monthEnd = localISO(new Date(year, month + 1, 0));
+      const leaveEntries = classEntries(from, monthEnd)
         .filter(entry => CANCELLED.includes(entryMeta(entry).status) || entryMeta(entry).status === "student_not_show");
       leaveListPage = clampPage(leaveListPage, leaveEntries.length);
       const leavePageData = pageSlice(leaveEntries, leaveListPage);
@@ -2745,9 +2610,9 @@
     }
 
     function selectedIncomeReportEntries() {
-      const { month, year } = selectedMonthRange();
-      const { from: monthStart, to: monthEnd } = exactMonthRange(month, year);
-      return classEntries(monthStart, monthEnd).filter(entry => incomePayForEntry(entry) > 0);
+      const { from, month, year } = selectedMonthRange();
+      const monthEnd = localISO(new Date(year, month + 1, 0));
+      return classEntries(from, monthEnd).filter(entry => incomePayForEntry(entry) > 0);
     }
 
     function exportIncomePdf() {
@@ -2973,25 +2838,15 @@
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) autoSyncTimetable();
     });
-    window.addEventListener("focus", () => autoSyncTimetable());
-	    window.addEventListener("storage", event => {
-	      if (event.key !== "classone_teacher_view_version") return;
-	      let message = null;
-	      try { message = JSON.parse(event.newValue || "{}"); } catch (error) {}
-	      const teacherIds = Array.isArray(message?.teacherIds) ? message.teacherIds.map(String) : [];
-	      const currentTeacherId = String(params.get("teacherId") || params.get("teacher") || "");
-	      if (teacherIds.length && currentTeacherId && !teacherIds.includes(currentTeacherId)) return;
-	      autoSyncTimetable();
-	    });
-	    if ("BroadcastChannel" in window) {
-	      const timetableChannel = new BroadcastChannel("classone_timetable_updates");
-	      timetableChannel.addEventListener("message", event => {
-	        const teacherIds = Array.isArray(event.data?.teacherIds) ? event.data.teacherIds.map(String) : [];
-	        const currentTeacherId = String(params.get("teacherId") || params.get("teacher") || "");
-	        if (teacherIds.length && currentTeacherId && !teacherIds.includes(currentTeacherId)) return;
-	        if (Number(event.data?.version || 0) > lastLoadedVersion) autoSyncTimetable();
-	      });
-	    }
+    window.addEventListener("storage", event => {
+      if (event.key === "classone_teacher_view_version") autoSyncTimetable();
+    });
+    if ("BroadcastChannel" in window) {
+      const timetableChannel = new BroadcastChannel("classone_timetable_updates");
+      timetableChannel.addEventListener("message", event => {
+        if (Number(event.data?.version || 0) > lastLoadedVersion) autoSyncTimetable();
+      });
+    }
 
     fillControls();
     {
